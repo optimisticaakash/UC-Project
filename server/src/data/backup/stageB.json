@@ -1,0 +1,183 @@
+{
+  "stageId": "B",
+  "stageName": "Interview",
+  "sourceSheet": "Agent Flow",
+  "questions": [
+    {
+      "id": "B1",
+      "category": "physical_health",
+      "type": "manual_check",
+      "text": "Pichli job mein ek din mein kitne ghante khade rehkar kaam hota tha? Shaam tak thakaan kaisi hoti thi?",
+      "probe": "Koi takleef jo poora din khade rehne ya bag uthane mein dikkat de?",
+      "captures": ["functional_capacity"],
+      "rule": "Manual health check. Never ask for a diagnosis."
+    },
+    {
+      "id": "B2",
+      "category": "experience",
+      "type": "info",
+      "text": "Aapka beauty ka safar kaise shuru hua? Kahan kahan kaam kiya, aur wo salon kis area mein the?",
+      "probe": "Wahan ek normal din kaisa hota tha — kitne clients aate the?",
+      "captures": ["years_experience", "salons"],
+      "rule": "Less than one year of experience: fresher flag; practical assessment confirms."
+    },
+    {
+      "id": "B3",
+      "category": "salon_tier",
+      "type": "routing",
+      "text": "Us salon mein ek normal facial ka rate kya tha, aur wahan zyada kis type ke customers aate the?",
+      "probe": "Wahan kaun si brands ke products use hote the?",
+      "captures": ["salon_tier", "product_brands"],
+      "rule": "Tier plus hard-skill results inform PR/PI routing."
+    },
+    {
+      "id": "B4",
+      "category": "experience",
+      "type": "scored",
+      "text": "Wahan se aage badhne ka kyun socha?",
+      "probe": "Agar wahi cheez UC mein bhi hui to?",
+      "captures": ["reason_for_leaving"],
+      "rule": "Flexibility or short-hours expectations may lower stickiness."
+    },
+    {
+      "id": "B5",
+      "category": "family_income",
+      "type": "scored",
+      "text": "Ghar mein kaun kaun kamata hai, aur kya kaam karte hain?",
+      "probe": "(If married) Pati abhi kaam kar rahe hain? Roughly kitna kama lete hain?",
+      "captures": [
+        "income_sources",
+        "husband_working",
+        "occupation",
+        "earnings"
+      ],
+      "rule": "Feeds need-for-money assessment."
+    },
+    {
+      "id": "B6",
+      "category": "family_income",
+      "type": "scored",
+      "text": "Mahine ka ghar ka kharcha kaise manage hota hai?",
+      "probe": null,
+      "captures": ["earner_type"],
+      "rule": "Cross-check with B5 and B7."
+    },
+    {
+      "id": "B7",
+      "category": "need_for_money",
+      "type": "scored",
+      "text": "Pichli baar ghar mein sabse bada kharcha kis cheez pe hua tha — jaise hospital ka bill, school fees, ya kuch aur? Wo kaise manage hua?",
+      "probe": "Aage aisa koi bada kharcha aane wala hai?",
+      "captures": ["need_for_money"],
+      "rule": "Specific named financial needs inform the assessment."
+    },
+    {
+      "id": "B8",
+      "category": "earnings",
+      "type": "manual_check",
+      "text": "Pichle mahine aapki kamai roughly kitni hui thi? Paisa cash mein aata hai ya online?",
+      "probe": "Proof dikha sakti hain?",
+      "captures": ["current_earnings", "proof_type"],
+      "rule": "Income proof is verified manually."
+    },
+    {
+      "id": "B9",
+      "category": "earnings",
+      "type": "scored",
+      "text": "Agle 6 mahine mein aap mahine ka kitna kamana chahti hain?",
+      "probe": null,
+      "captures": ["expected_earnings"],
+      "rule": "Expectation above approximately twice current earnings may lower stickiness."
+    },
+    {
+      "id": "B10",
+      "category": "intent",
+      "type": "scored",
+      "text": "UC ke baare mein pehli baar kisse suna, aur unhone kya bataya?",
+      "probe": "Aapko sabse achhi cheez kya lagi?",
+      "captures": ["why_uc"],
+      "rule": "Assess understanding of the home-service model."
+    },
+    {
+      "id": "B11",
+      "category": "stickiness",
+      "type": "scored",
+      "text": "Aaj se do saal baad aapka ek normal din kaisa hoga?",
+      "probe": "Uske liye kya plan hai?",
+      "captures": ["future_plans"],
+      "rule": "An exit plan within two years lowers stickiness."
+    },
+    {
+      "id": "B12",
+      "category": "stickiness",
+      "type": "scored",
+      "text": "Saal mein kitni baar gaon ya ghar jaana hota hai, aur kitne din ke liye?",
+      "probe": null,
+      "captures": ["exit_risks"],
+      "rule": "Long or frequent trips may lower stickiness."
+    },
+    {
+      "id": "B13",
+      "category": "availability",
+      "type": "scored",
+      "text": "Aapka weekend ka routine kya hota hai — Saturday-Sunday aap kya karti hain?",
+      "probe": "UC mein weekend aur shaam ko sabse zyada kaam hota hai — un dinon ghar kaise chalega? Ghar walon ki kya raay hai?",
+      "captures": ["weekend_availability"],
+      "rule": "Cannot work weekends: mandatory-check outcome defined in workbook."
+    },
+    {
+      "id": "B14",
+      "category": "availability",
+      "type": "scored",
+      "text": "Aur weekdays mein subah se raat tak aapka din kaise chalta hai?",
+      "probe": "Roz 9–11 ghante aur 4–5 jobs hon, to ye routine kaise adjust hoga?",
+      "captures": ["daily_hours"],
+      "rule": "Part-time-only availability: mandatory-check outcome defined in workbook."
+    },
+    {
+      "id": "B15",
+      "category": "training",
+      "type": "scored",
+      "text": "Training 12 din (PR) ya 25 din (PI) ki hoti hai, subah 9 se shaam 7, hafte mein 6 din. Aap roz kaise aayengi, aur ghar ka kya intezaam hoga?",
+      "probe": "Isme sabse mushkil kya lagega?",
+      "captures": ["training_willingness", "commute_plan"],
+      "rule": "Refusal to attend training: mandatory-check outcome defined in workbook."
+    },
+    {
+      "id": "B16",
+      "category": "models",
+      "type": "scored",
+      "text": "Aapke aas-paas — padosi, rishtedaar, saheliyan — kitni ladies aapse eyebrows ya waxing karwati hain?",
+      "probe": "Training ke time unme se kitni practice ke liye aa sakti hain?",
+      "captures": ["model_count"],
+      "rule": "Fewer than five models: flag for trainer support, not rejection."
+    },
+    {
+      "id": "B17",
+      "category": "recharge",
+      "type": "scored",
+      "text": "Training ke baad ₹2,000 ka kit lena hota hai — ye aap kaise arrange karengi?",
+      "probe": null,
+      "captures": ["recharge_readiness"],
+      "rule": "If more time is needed, ask for the expected date and place on hold."
+    },
+    {
+      "id": "B18",
+      "category": "timeline",
+      "type": "scored",
+      "text": "Agla batch [batch date] ko shuru ho raha hai. Kya aap us din se aa sakti hain?",
+      "probe": "Agar nahi, to exact kis date se? Koi notice period chal raha hai?",
+      "captures": ["committed_start_date"],
+      "rule": "Record the committed date. More than 30 days: re-screen."
+    },
+    {
+      "id": "B19",
+      "category": "documents",
+      "type": "manual_check",
+      "text": "Kya aapka PAN, Aadhaar se linked hai aur dono mein naam same hai?",
+      "probe": null,
+      "captures": ["pan_aadhaar_link", "name_match"],
+      "rule": "Manual verification; fix before batch, not an automatic rejection."
+    }
+  ]
+}

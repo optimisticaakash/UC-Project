@@ -1,0 +1,138 @@
+{
+  "version": "1.0",
+  "source": "UC_Soft_Skill_Bot_Structure.xlsx",
+  "status": "partial",
+  "stages": [
+    {
+      "id": "A",
+      "name": "Mandatory Basic Checks",
+      "questions": [
+        {
+          "id": "A0",
+          "type": "consent",
+          "category": "setup",
+          "text": "Namaste! Main UC ki screening assistant hoon. Ye baat-cheet sirf screening ke liye record hogi. Shuru karein? Aap Hindi mein baat karengi ya English mein?",
+          "probe": null,
+          "captures": ["consent", "language"],
+          "rule": "No consent -> manual screening, not an automatic rejection."
+        },
+        {
+          "id": "A1",
+          "type": "basic_check",
+          "category": "location_movement",
+          "text": "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?",
+          "probe": "Agar kaam thoda door ke area mein mile, ya paas shift hona pade, to aapko kaisa lagega?",
+          "captures": ["area", "movement_willingness"],
+          "rule": "Area requires manual proximity check. Far and unwilling to move -> reject according to workbook."
+        },
+        {
+          "id": "A2",
+          "type": "basic_check",
+          "category": "eligibility",
+          "text": "Aadhaar card pe aapki date of birth kya likhi hai?",
+          "probe": null,
+          "captures": ["date_of_birth", "age"],
+          "rule": "Age <= 38: pass; age 39-40: manual review; age > 40 or < 18: reject according to workbook."
+        },
+        {
+          "id": "A3",
+          "type": "scored",
+          "category": "family",
+          "text": "Apne ghar ke baare mein thoda bataiye — ghar mein kaun kaun hai, aur din bhar kaun kya karta hai?",
+          "probe": "Aapke pati kya karte hain?",
+          "captures": ["marital_status", "children", "household"],
+          "rule": "Feeds need-for-money and caregiver checks."
+        },
+        {
+          "id": "A4",
+          "type": "basic_check",
+          "category": "family",
+          "text": "Bachche kis class mein padhte hain?",
+          "probe": "Sabse chhota bachcha kitne saal ka hai?",
+          "captures": ["children_age", "youngest_child_age"],
+          "rule": "Youngest child under 3 years -> defer according to workbook."
+        },
+        {
+          "id": "A5",
+          "type": "basic_check",
+          "category": "family",
+          "text": "Jab aap kaam pe hoti hain, tab bachchon ka din kaise chalta hai — school ke baad unke saath kaun hota hai?",
+          "probe": "Jab pehle aap kaam karti thi, tab bhi wahi sambhalte the?",
+          "captures": ["caregiver", "caregiver_experience"],
+          "rule": "Workbook requires a named family-member caregiver; unresolved cases need review."
+        },
+        {
+          "id": "A6",
+          "type": "basic_check",
+          "category": "eligibility",
+          "text": "Aane wale ek saal mein ghar mein koi badi cheez plan hai — jaise shaadi, family badhana, ya shift hona?",
+          "probe": "Agar abhi aap expecting hain to bata dijiye — training aur kaam physically heavy hote hain, isliye poochna zaroori hai.",
+          "captures": ["family_plans", "pregnancy_disclosure", "baby_plan"],
+          "rule": "Workbook specifies defer for pregnancy or a baby plan within 6 months; a plan within 6-12 months is flagged. Preserve privacy and review requirements."
+        },
+        {
+          "id": "A7",
+          "type": "basic_check",
+          "category": "own_salon",
+          "text": "Abhi aapka kaam kaise chal raha hai — kisi salon mein hain, ya ghar pe bhi clients aate hain?",
+          "probe": "UC join karne ke baad un clients ka kya karengi?",
+          "captures": ["own_salon", "freelance_clients", "willing_to_stop"],
+          "rule": "If salon is closed, manual proof check. Workbook flags continuing own-salon/client work as a rejection condition."
+        },
+        {
+          "id": "A8",
+          "type": "basic_check",
+          "category": "services",
+          "text": "Pichli jagah aap sabse zyada kaun si services karti thi? Pedicure-manicure kitni baar karti thi?",
+          "probe": "Agar pedicure kam kiya hai, to seekhne mein kaisa lagega?",
+          "captures": ["service_experience", "pedicure_willingness"],
+          "rule": "Pedicure refusal without willingness to learn is a rejection condition. Bikini-wax response is noted only."
+        },
+        {
+          "id": "A9",
+          "type": "basic_check",
+          "category": "travel",
+          "text": "Abhi aap kaam pe ya market kaise jaati hain?",
+          "probe": "Agar job 3–4 km door ho to kaise pahunchengi — scooty se khud, ya koi chhodega?",
+          "captures": [
+            "travel_willingness",
+            "two_wheeler",
+            "travel_independence"
+          ],
+          "rule": "Refusal to travel or learn two-wheeler use is a rejection condition; dependence on husband for travel is flagged."
+        },
+        {
+          "id": "A10",
+          "type": "basic_check",
+          "category": "reading",
+          "text": "(Tablet shows card) Ye address aur service card zor se padhiye.",
+          "probe": null,
+          "captures": ["english_reading"],
+          "rule": "Record fluent, with mistakes, or unable; unable to read English words triggers the workbook's rejection rule."
+        },
+        {
+          "id": "A11",
+          "type": "basic_check",
+          "category": "spoken_language",
+          "text": "Maan lijiye aap customer ke ghar pahunchi hain. Mujhe customer samajhkar Hindi ya English mein apna introduction dijiye.",
+          "probe": "Ab batayiye aap aaj kya service karengi.",
+          "captures": ["spoken_language", "politeness", "communication"],
+          "rule": "Cannot converse in Hindi or English triggers the workbook's rejection rule; also contributes to communication scoring."
+        },
+        {
+          "id": "A12",
+          "type": "manual_check",
+          "category": "uc_history",
+          "text": "Kya kabhi pehle UC, Yes Madam ya kisi aur app ke through kaam kiya hai? Unme kaun se phone number use kiye the?",
+          "probe": "Koi purana number ya doosra sim? Kaunsi category mein thi?",
+          "captures": [
+            "platform_history",
+            "all_registered_phone_numbers",
+            "category_history"
+          ],
+          "rule": "All numbers and relevant details go to a manual profile check."
+        }
+      ]
+    }
+  ]
+}

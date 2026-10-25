@@ -1,0 +1,220 @@
+@keyframes orbFloat {
+  0%,
+  100% {
+    border-radius: 48% 52% 50% 50%;
+  }
+  50% {
+    border-radius: 53% 47% 46% 54%;
+  }
+}
+@keyframes orbShine {
+  0%,
+  100% {
+    transform: translate(-4%, -3%) rotate(-15deg);
+  }
+  50% {
+    transform: translate(5%, 4%) rotate(15deg);
+  }
+}
+@keyframes ripple {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+.uc-brand {
+  position: absolute;
+  top: 26px;
+  left: 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #111;
+}
+.uc-logo-mark {
+  width: 36px;
+  height: 36px;
+  border: 2px solid #111;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: -1px;
+}
+.uc-wordmark {
+  text-align: left;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 0.95;
+  letter-spacing: -0.6px;
+}
+.uc-orb-stage {
+  position: relative;
+  isolation: isolate;
+  width: min(580px, 94vw);
+  height: 195px;
+  margin: 4px auto 0;
+  display: grid;
+  place-items: center;
+}
+.uc-liquid-orb {
+  position: relative;
+  z-index: 2;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(
+    ellipse at 32% 20%,
+    #a9b6d8 0%,
+    #303b58 9%,
+    #080c18 31%,
+    #010207 67%,
+    #11182c 100%
+  );
+  box-shadow:
+    inset -18px -20px 32px #000,
+    inset 5px 6px 16px rgba(220, 230, 255, 0.7),
+    0 0 8px rgba(90, 125, 255, 0.9),
+    0 0 30px rgba(75, 95, 255, 0.48),
+    0 22px 55px rgba(50, 65, 160, 0.25);
+  animation: orbFloat 6s ease-in-out infinite;
+  transition:
+    transform 80ms linear,
+    box-shadow 100ms linear;
+}
+.uc-liquid-orb::before {
+  content: "";
+  position: absolute;
+  inset: -25%;
+  border-radius: 45%;
+  background:
+    radial-gradient(
+      ellipse at 35% 30%,
+      rgba(255, 255, 255, 0.9),
+      rgba(155, 180, 255, 0.28) 12%,
+      transparent 34%
+    ),
+    linear-gradient(
+      130deg,
+      transparent 35%,
+      rgba(65, 105, 255, 0.35) 48%,
+      rgba(175, 80, 255, 0.65) 52%,
+      transparent 65%
+    );
+  filter: blur(5px);
+  animation: orbShine 5s ease-in-out infinite;
+  pointer-events: none;
+}
+.uc-liquid-orb::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  border: 1px solid rgba(180, 200, 255, 0.45);
+  box-shadow: inset 0 0 18px rgba(95, 125, 255, 0.25);
+  pointer-events: none;
+}
+.uc-ripple {
+  position: absolute;
+  z-index: 1;
+  width: 160px;
+  height: 160px;
+  border: 1px solid rgba(91, 110, 255, 0.6);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+.uc-ripple.active {
+  animation: ripple 1.8s ease-out infinite;
+}
+.uc-ripple.delay-1 {
+  animation-delay: 0.6s;
+}
+.uc-ripple.delay-2 {
+  animation-delay: 1.2s;
+}
+.uc-floor-glow {
+  position: absolute;
+  width: 190px;
+  height: 30px;
+  bottom: 14px;
+  border-radius: 50%;
+  background: rgba(75, 85, 220, 0.28);
+  filter: blur(26px);
+  pointer-events: none;
+}
+.uc-action {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.uc-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(20, 25, 45, 0.1);
+}
+.uc-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.uc-primary {
+  color: #fff;
+  background: #111318;
+  border: 1px solid #111318;
+}
+.uc-secondary {
+  color: #111318;
+  background: #fff;
+  border: 1px solid #d8dce6;
+}
+@media (max-width: 600px) {
+  .uc-brand {
+    position: relative;
+    top: auto;
+    left: auto;
+    justify-content: center;
+    margin-bottom: 28px;
+  }
+  .uc-heading {
+    margin-top: 0 !important;
+  }
+  .uc-orb-stage {
+    height: 180px;
+  }
+  .uc-liquid-orb,
+  .uc-ripple {
+    width: 145px;
+    height: 145px;
+  }
+  .uc-actions {
+    flex-direction: column;
+    max-width: 280px;
+    margin: 0 auto;
+  }
+  .uc-action {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .uc-liquid-orb,
+  .uc-liquid-orb::before,
+  .uc-ripple.active {
+    animation: none;
+  }
+}

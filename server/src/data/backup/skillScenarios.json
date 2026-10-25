@@ -1,0 +1,124 @@
+{
+  "sourceSheet": "Agent Flow",
+  "status": "draft_rubrics_require_trainer_validation",
+  "selectionRules": {
+    "technical": {
+      "required": ["K1"],
+      "rotateFrom": ["K2", "K3", "K4", "K5", "K6", "K7"],
+      "rotateCount": 3
+    },
+    "customerCentricity": {
+      "rotateFrom": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8"],
+      "rotateCount": 3
+    }
+  },
+  "technicalQuestions": [
+    {
+      "id": "K1",
+      "text": "Aapne kaun kaun se wax use kiye hain — jaise Rica, honey, peel-off? Aur facial mein kaun se kits — O3+, Casmara, Lotus, VLCC ya koi aur?",
+      "probe": "Kaunsa wax kis body part pe use karti thi?",
+      "scoring": {
+        "good": 10,
+        "average": 4,
+        "bad": -10
+      }
+    },
+    {
+      "id": "K2",
+      "text": "Rica jaise lipo wax aur normal honey wax mein kya farak hota hai? Aap kaunsa kab use karti hain?",
+      "probe": "Wax ke baad bachi chipchipahat kaise saaf karti hain?",
+      "scoring": { "good": 10, "average": 4, "bad": -10 }
+    },
+    {
+      "id": "K3",
+      "text": "Peel-off wax kahan use karte hain, aur kyun?",
+      "probe": null,
+      "scoring": { "good": 10, "average": 4, "bad": -10 }
+    },
+    {
+      "id": "K4",
+      "text": "Waxing se pehle aur baad mein skin pe kya lagati hain?",
+      "probe": "Customer ko baad mein kya dhyan rakhne ko kehti hain?",
+      "scoring": { "good": 10, "average": 4, "bad": -10 }
+    },
+    {
+      "id": "K5",
+      "text": "Ek normal facial ke steps bataiye — shuru se end tak.",
+      "probe": null,
+      "scoring": { "good": 10, "average": 4, "bad": -10 }
+    },
+    {
+      "id": "K6",
+      "text": "Oily aur pimple wali skin ke liye facial mein aap kya dhyan rakhti hain?",
+      "probe": null,
+      "scoring": { "good": 10, "average": 4, "bad": -10 }
+    },
+    {
+      "id": "K7",
+      "text": "Pedicure ke baad tools aur baaki saamaan ka kya karti hain?",
+      "probe": null,
+      "scoring": { "good": 10, "average": 4, "bad": -10 }
+    }
+  ],
+  "customerScenarios": [
+    {
+      "id": "C1",
+      "text": "Facial mask ke time acne wali customer kehti hai jalan ho rahi hai. Aap kya karengi?",
+      "probe": "Aur uske baad?"
+    },
+    {
+      "id": "C2",
+      "text": "Customer ne thick eyebrows bola tha, par ek eyebrow zyada patli ho gayi. Customer gussa hai. Kya karengi?",
+      "probe": "Agli baar ye na ho, uske liye kya karengi?"
+    },
+    {
+      "id": "C3",
+      "text": "Honey wax ke time customer baar baar bol rahi hai wax bahut garam hai. Kya karengi?",
+      "probe": null
+    },
+    {
+      "id": "C4",
+      "text": "Service ke time customer ka bachcha baar baar beech mein aa raha hai. Kya karengi?",
+      "probe": null
+    },
+    {
+      "id": "C5",
+      "text": "Cleanup ke baad customer chhota back massage maangti hai jo service mein nahi hai. Kya karengi?",
+      "probe": null
+    },
+    {
+      "id": "C6",
+      "text": "Customer app ke bahar discount maang rahi hai. Kya karengi?",
+      "probe": "Agar wo zid kare to?"
+    },
+    {
+      "id": "C7",
+      "text": "Customer ek service add karna chahti hai jo book nahi ki. Kya karengi?",
+      "probe": "Payment kaise hoga?"
+    },
+    {
+      "id": "C8",
+      "text": "Traffic ki wajah se aap job pe 20 minute late ho rahi hain. Kya karengi?",
+      "probe": "Pahunchne ke baad kya karengi?"
+    }
+  ],
+  "closingQuestions": [
+    {
+      "id": "D1",
+      "type": "scored_light",
+      "text": "Kya aapko UC ke baare mein kuch poochna hai?",
+      "probe": null
+    },
+    {
+      "id": "D2",
+      "type": "info",
+      "text": "Dhanyavaad! Hamari team aapko agla step batayegi.",
+      "probe": null,
+      "rule": "Bot never states pass or fail."
+    }
+  ],
+  "openIssues": [
+    "Scoring rubrics require trainer validation.",
+    "Random selection must use a defined reproducible policy before production."
+  ]
+}

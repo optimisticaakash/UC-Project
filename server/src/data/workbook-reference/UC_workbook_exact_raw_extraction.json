@@ -1,0 +1,4141 @@
+{
+  "source_file": "UC_Soft_Skill_Bot_Structure (7)(5).xlsx",
+  "sheets": {
+    "Tasks": [
+      {
+        "excel_row": 2,
+        "cells": [
+          null,
+          "API, tools. platform to be used"
+        ]
+      },
+      {
+        "excel_row": 3,
+        "cells": [
+          null,
+          "Cost Estimate"
+        ]
+      },
+      {
+        "excel_row": 4,
+        "cells": [
+          null,
+          "Timeline of project - Prototype"
+        ]
+      },
+      {
+        "excel_row": 5,
+        "cells": [
+          null,
+          "Intregrate senstivity (px Behaviour) "
+        ]
+      },
+      {
+        "excel_row": 6,
+        "cells": [
+          null,
+          "How much Bandwidth of mine"
+        ]
+      }
+    ],
+    "Overview": [
+      {
+        "excel_row": 1,
+        "cells": [
+          "UC Salon (Women) – Soft Skill Screening Voice Bot | Bangalore",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "Changes ",
+          "Hub level area level changes ",
+          null,
+          null,
+          "Data Input"
+        ]
+      },
+      {
+        "excel_row": 2,
+        "cells": [
+          "In-person voice agent · Hindi / English · Structure v3 · Orange = Mandatory Basic Check · Blue = feeds a Manual Check · Yellow = open decision",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "hub level data input",
+          null,
+          null,
+          "Hub level"
+        ]
+      },
+      {
+        "excel_row": 3,
+        "cells": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "technical question need from trainer check ",
+          null,
+          null,
+          "Salon type bifurcation"
+        ]
+      },
+      {
+        "excel_row": 4,
+        "cells": [
+          "Area",
+          "Item",
+          "Detail",
+          "Status",
+          null,
+          null,
+          null,
+          null,
+          "scoring metric has to be made sure / with fix metrics & judgement criterias",
+          null,
+          null,
+          "she is saying minus for -"
+        ]
+      },
+      {
+        "excel_row": 5,
+        "cells": [
+          "1. Objective & scope",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "600 - 700, 750 low facial cost"
+        ]
+      },
+      {
+        "excel_row": 6,
+        "cells": [
+          "Objective",
+          "Remove subjectivity and disputes from soft-skill screening",
+          "Soft-skill outcome comes only from the bot + rule-based manual checks. Trainer judges hard skills only. Same answers → same score, every time.",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "50 rs threading"
+        ]
+      },
+      {
+        "excel_row": 7,
+        "cells": [
+          "Success label (what bot predicts)",
+          "Stays on UC ≥ 3 months with rating ≥ 4.7–4.8",
+          "Model learns from this outcome, not from past screening verdicts.",
+          "Exact cut-off open",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "240 - 300 waxing min sku"
+        ]
+      },
+      {
+        "excel_row": 8,
+        "cells": [
+          "Bot owns",
+          "Mandatory Basic Checks, family & income, experience & salon tier, need for money, intent & stickiness, availability, customer-centricity scenarios, spoken technical knowledge (products, wax types, care, hygiene), spoken Hindi/English, English reading",
+          "Questions are natural and indirect (routines, last big expense, school class) rather than yes/no.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "600 - 700 pedicure"
+        ]
+      },
+      {
+        "excel_row": 9,
+        "cells": [
+          "Trainer owns",
+          "Hard skills only — threading, waxing, pedicure",
+          "No soft-skill input from trainer.",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "a, b , c salon judgement basis name & prices"
+        ]
+      },
+      {
+        "excel_row": 10,
+        "cells": [
+          "Manual checks (offline)",
+          "Age 39–40, weight, health, grooming, income proof, UC profile check on every number, area proximity, salon closure proof, PAN–Aadhaar",
+          "Rule-based; see 'Manual Checks' tab.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "र जो weekends और शाम को काम करती हैं, उनकी ₹70,000–80,000 तक हो जाती - this is wrong "
+        ]
+      },
+      {
+        "excel_row": 11,
+        "cells": [
+          "Not part of screening",
+          "Google Maps / smartphone usage",
+          "Taught in training.",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "high earning potential is 70 to 80 k "
+        ]
+      },
+      {
+        "excel_row": 12,
+        "cells": [
+          "2. Format",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "refine cash earning questions - objectivity more - people won't answer seems unnenescary & irritating - what is even the point?"
+        ]
+      },
+      {
+        "excel_row": 13,
+        "cells": [
+          "Mode",
+          "In-person voice bot on tablet at Krimson / Marathahalli",
+          "Tablet shows the read-aloud card. Headset recommended.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "2x current earning metric remove - / capping should be 45,000 to 50,000 then earning scope can be upto 80,000 but it has be made sure partner knows minimum earning amount"
+        ]
+      },
+      {
+        "excel_row": 14,
+        "cells": [
+          "Language",
+          "Bot converses in Hindi / English",
+          "Pro must be able to converse in Hindi or English (Mandatory Basic Check). Kannada used only to clarify an instruction if she's stuck. Reading test in English.",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "arrogance / verbatam - check "
+        ]
+      },
+      {
+        "excel_row": 15,
+        "cells": [
+          "Duration",
+          "≈ 28.5 min (≈ 33 min with probes)",
+          "Per-step estimates and totals at the bottom of 'Agent Flow'.",
+          "See Agent Flow",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "Calling से सुना — घर जाकर service और कमाई की बात हुई, यही UC है! अब बताइए — आज से 2 साल बाद आपका एक normal दिन कैसा होगा? / is this even valid?"
+        ]
+      },
+      {
+        "excel_row": 16,
+        "cells": [
+          "Order in the day",
+          "Stage A Mandatory Basic Checks (bot, ≈ 9 min) → Hard-skill practical (trainer) → Stage B interview (bot, ≈ 19 min) → Manual checks → Final decision",
+          "Cheap checks first save practical slots.",
+          "Recommended",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "mention 11- 13 hours kaam karenge saturday ko?"
+        ]
+      },
+      {
+        "excel_row": 17,
+        "cells": [
+          "3. Mandatory Basic Checks (fixed rules, no judgment)",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "give psp  metric"
+        ]
+      },
+      {
+        "excel_row": 18,
+        "cells": [
+          "Age",
+          "≤ 38 pass · 39–40 manual review · > 40 reject",
+          null,
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "60 + again don't tell me very clear on 40,000 for bronze to 50K for goldl"
+        ]
+      },
+      {
+        "excel_row": 19,
+        "cells": [
+          "Youngest child",
+          "Under 3 years → defer",
+          "Reapply when child turns 3.",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "screening pass hone ke baad 2,000 not after training - not a hard reject"
+        ]
+      },
+      {
+        "excel_row": 20,
+        "cells": [
+          "Child 3 years or older",
+          "Pass only with a named family member as caregiver",
+          "'Main manage kar lungi' is not a caregiver.",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "don't say brand name ask them brand names "
+        ]
+      },
+      {
+        "excel_row": 21,
+        "cells": [
+          "Pregnant / baby plan ≤ 6 months",
+          "Defer — reapply later",
+          "Told: daily office training + carrying weighted bags.",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "objective answers about technical"
+        ]
+      },
+      {
+        "excel_row": 22,
+        "cells": [
+          "Spoken Hindi / English",
+          "Cannot converse in Hindi or English → reject",
+          "Tested via intro role-play (A11).",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "remove lipo "
+        ]
+      },
+      {
+        "excel_row": 23,
+        "cells": [
+          "English reading",
+          "Cannot read address / product card → reject",
+          null,
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "just ask hands vs face wax difference / intimate wax difference"
+        ]
+      },
+      {
+        "excel_row": 24,
+        "cells": [
+          "Pedicure",
+          "Refuses pedicure and won't learn → reject",
+          "Bikini wax is noted, not a check.",
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 25,
+        "cells": [
+          "Travel on 2-wheeler (3–4 km per job)",
+          "Won't travel, or no 2-wheeler and won't learn → reject",
+          null,
+          "Decided",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 26,
+        "cells": [
+          "Own salon / own clients",
+          "Won't close or stop → reject; closure proof checked manually",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 27,
+        "cells": [
+          "Blocked UC pro",
+          "Reject",
+          "Manual profile check on all numbers.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 28,
+        "cells": [
+          "Availability",
+          "Part-time only, no weekends, won't attend training → reject",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 29,
+        "cells": [
+          "4. Scoring",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 30,
+        "cells": [
+          "Dimensions",
+          "Need for money · Intent & stickiness · Availability & logistics · Customer centricity · Technical knowledge · Communication",
+          "Weights on 'Scoring & Basic Checks' tab; re-fit on outcome data.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 31,
+        "cells": [
+          "Routing",
+          "Salon tier (location + rates + brands) + technical knowledge + hard skills → PR vs PI",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 32,
+        "cells": [
+          "Evidence",
+          "Every dimension score carries 1 transcript quote",
+          "Every decision auditable.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 33,
+        "cells": [
+          "Output",
+          "Pass probability % + band + top 3 reasons",
+          "Weighted score until ~300–500 outcomes, then a calibrated model.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 34,
+        "cells": [
+          "Bands",
+          "≥ 75 auto-pass · 45–74 manual review by screening lead · < 45 reject",
+          "Cut-offs tuned in shadow phase.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 35,
+        "cells": [
+          "5. Testing metrics",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 36,
+        "cells": [
+          "Baseline",
+          "Screener-vs-screener agreement today",
+          "Re-screen 30 candidates twice. Bot must beat this.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 37,
+        "cells": [
+          "Agreement",
+          "Bot vs senior-screener consensus",
+          "≥ 85% pass/fail match; Cohen's kappa ≥ 0.6",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 38,
+        "cells": [
+          "Consistency",
+          "Same scripted answers × 10 runs",
+          "Score variance within ± 5 pts",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 39,
+        "cells": [
+          "Predictive validity",
+          "Score vs 3-month-retention-with-rating label",
+          "AUC ≥ 0.70 after 3 months",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 40,
+        "cells": [
+          "False reject rate",
+          "Weekly audit of 10% of bot rejects",
+          "< 10%",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 41,
+        "cells": [
+          "Basic Check accuracy",
+          "Rule extraction correct",
+          "≥ 99%",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 42,
+        "cells": [
+          "Voice quality",
+          "ASR accuracy on accented Hindi / English; completion rate",
+          "Completion ≥ 90%",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 43,
+        "cells": [
+          "6. Rollout",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 44,
+        "cells": [
+          "Phase 0 – Codify (2–3 wks)",
+          "Lock rubric, scenario bank, basic checks; label historical data; pick voice vendor",
+          "Rubric signed off",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 45,
+        "cells": [
+          "Phase 1 – Shadow (4–6 wks)",
+          "Bot runs alongside current screening; decision not used",
+          "Kappa ≥ 0.6",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 46,
+        "cells": [
+          "Phase 2 – Assisted (4–6 wks)",
+          "Bot scores first; screening lead decides with evidence",
+          "Override rate < 15%",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 47,
+        "cells": [
+          "Phase 3 – Partial auto",
+          "Auto-pass / reject at high confidence; middle band reviewed",
+          "Retention ≥ manual cohort",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 48,
+        "cells": [
+          "Phase 4 – Steady state",
+          "5–10% random audit; quarterly refit",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    ],
+    "Agent Flow": [
+      {
+        "excel_row": 1,
+        "cells": [
+          "Agent Flow – step by step",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 2,
+        "cells": [
+          "Bot converses in Hindi / English (Kannada only to clarify). Never reads out answer options. Never reveals verdict. Orange = Mandatory Basic Check · Blue = feeds a Manual Check · Yellow = open decision",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 4,
+        "cells": [
+          "Step",
+          "Block",
+          "Type",
+          "Bot says (primary)",
+          "Follow-up probe",
+          "Signal captured → sheet field",
+          "Good answer looks like",
+          "Red flags",
+          "Rule",
+          "Est. time (sec)"
+        ]
+      },
+      {
+        "excel_row": 5,
+        "cells": [
+          "STAGE A — Mandatory Basic Checks (before practical)",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 6,
+        "cells": [
+          "A0",
+          "Setup",
+          "Consent",
+          "Namaste! Main UC ki screening assistant hoon. Ye baat-cheet sirf screening ke liye record hogi. Shuru karein? Aap Hindi mein baat karengi ya English mein?",
+          "—",
+          "Consent, language",
+          "Yes + Hindi/English",
+          "Declines recording",
+          "No consent → manual screening (not a reject)",
+          30.0
+        ]
+      },
+      {
+        "excel_row": 7,
+        "cells": [
+          "A1",
+          "Location & movement",
+          "Info → Manual Check",
+          "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?",
+          "Agar kaam thoda door ke area mein mile, ya paas shift hona pade, to aapko kaisa lagega?",
+          "Area; aligned on movement Y/N",
+          "Named area; open to moving / travelling",
+          "'Sirf apne area mein'",
+          "Area → manual proximity check. Far + not aligned → reject",
+          50.0
+        ]
+      },
+      {
+        "excel_row": 8,
+        "cells": [
+          "A2",
+          "Eligibility",
+          "Mandatory Basic Check",
+          "Aadhaar card pe aapki date of birth kya likhi hai?",
+          "—",
+          "Age",
+          "18–38",
+          null,
+          "≤38 pass · 39–40 manual review · >40 or <18 reject",
+          20.0
+        ]
+      },
+      {
+        "excel_row": 9,
+        "cells": [
+          "A3",
+          "Family",
+          "Scored",
+          "Apne ghar ke baare mein thoda bataiye — ghar mein kaun kaun hai, aur din bhar kaun kya karta hai?",
+          "(If unclear) Aapke pati kya karte hain?",
+          "Marital status, kids, household",
+          "Clear description",
+          null,
+          "Feeds need for money & caregiver check",
+          55.0
+        ]
+      },
+      {
+        "excel_row": 10,
+        "cells": [
+          "A4",
+          "Family",
+          "Mandatory Basic Check",
+          "(If kids) Bachche kis class mein padhte hain?",
+          "Sabse chhota bachcha kitne saal ka hai?",
+          "Kids age",
+          "3 years or older",
+          null,
+          "Under 3 years → defer",
+          25.0
+        ]
+      },
+      {
+        "excel_row": 11,
+        "cells": [
+          "A5",
+          "Family",
+          "Mandatory Basic Check",
+          "Jab aap kaam pe hoti hain, tab bachchon ka din kaise chalta hai — school ke baad unke saath kaun hota hai?",
+          "Jab pehle aap kaam karti thi, tab bhi wahi sambhalte the?",
+          "Family member caregiver",
+          "Named family member who has done it before",
+          "'Main manage kar lungi'",
+          "No named family member → reject",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 12,
+        "cells": [
+          "A6",
+          "Eligibility",
+          "Mandatory Basic Check",
+          "Aane wale ek saal mein ghar mein koi badi cheez plan hai — jaise shaadi, family badhana, ya shift hona?",
+          "Agar abhi aap expecting hain to bata dijiye — training aur kaam physically heavy hote hain, isliye poochna zaroori hai.",
+          "Pregnancy; baby plan",
+          "No / not within 12 months",
+          "Plan within 6 months",
+          "Pregnant or plan ≤ 6 months → defer with script. Plan 6–12 months → stickiness down",
+          35.0
+        ]
+      },
+      {
+        "excel_row": 13,
+        "cells": [
+          "A7",
+          "Own salon",
+          "Mandatory Basic Check",
+          "Abhi aapka kaam kaise chal raha hai — kisi salon mein hain, ya ghar pe bhi clients aate hain?",
+          "UC join karne ke baad un clients ka kya karengi?",
+          "Own salon / freelance clients",
+          "None, or closed",
+          "Won't leave salon / clients",
+          "Won't close / stop → reject. Closed → manual proof check",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 14,
+        "cells": [
+          "A8",
+          "Services",
+          "Mandatory Basic Check",
+          "Pichli jagah aap sabse zyada kaun si services karti thi? Pedicure-manicure kitni baar karti thi?",
+          "Agar pedicure kam kiya hai, to seekhne mein kaisa lagega?",
+          "Pedicure willingness; bikini wax noted",
+          "Does pedicure or ready to learn",
+          "Refuses pedicure",
+          "Refuses pedicure & won't learn → reject. Bikini wax → note only",
+          35.0
+        ]
+      },
+      {
+        "excel_row": 15,
+        "cells": [
+          "A9",
+          "Travel",
+          "Mandatory Basic Check",
+          "Abhi aap kaam pe ya market kaise jaati hain?",
+          "Agar job 3–4 km door ho to kaise pahunchengi — scooty se khud, ya koi chhodega?",
+          "Travel willingness; 2-wheeler; self vs husband",
+          "Rides or will learn; travels on her own",
+          "Refuses travel; depends on husband to drop",
+          "Won't travel / no 2-wheeler and won't learn → reject. Depends on husband → flag",
+          50.0
+        ]
+      },
+      {
+        "excel_row": 16,
+        "cells": [
+          "A10",
+          "Reading",
+          "Mandatory Basic Check",
+          "(Tablet shows card) Ye address aur service card zor se padhiye.",
+          "—",
+          "English reading",
+          "Reads address + product names fluently",
+          "Can't read English words",
+          "Fluent / with mistakes / unable. Unable → reject",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 17,
+        "cells": [
+          "A11",
+          "Spoken language",
+          "Mandatory Basic Check",
+          "Maan lijiye aap customer ke ghar pahunchi hain. Mujhe customer samajhkar Hindi ya English mein apna introduction dijiye.",
+          "Ab batayiye aap aaj kya service karengi.",
+          "Converses in Hindi / English; politeness",
+          "Greets, introduces self + UC, explains service",
+          "Can't form sentences in Hindi or English",
+          "Can't converse → reject. Also scores Communication",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 18,
+        "cells": [
+          "A12",
+          "UC history",
+          "Info → Manual Check",
+          "Kya kabhi pehle UC, Yes Madam ya kisi aur app ke through kaam kiya hai? Unme kaun se phone number use kiye the?",
+          "Koi purana number ya doosra sim? Kaunsi category mein thi?",
+          "All numbers ever used on UC",
+          "Shares all numbers",
+          "Says no, later mentions UC",
+          "Numbers → manual profile check (blocked → reject)",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 19,
+        "cells": [
+          "STAGE B — Interview (after practical clears)",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 20,
+        "cells": [
+          "B1",
+          "Physical / health",
+          "Info → Manual Check",
+          "Pichli job mein ek din mein kitne ghante khade rehkar kaam hota tha? Shaam tak thakaan kaisi hoti thi?",
+          "Koi takleef jo poora din khade rehne ya bag uthane mein dikkat de?",
+          "Functional capacity",
+          "Has done full-day standing work",
+          "Says she can't stand long / lift",
+          "Goes to manual health check. Bot never asks for a diagnosis",
+          35.0
+        ]
+      },
+      {
+        "excel_row": 21,
+        "cells": [
+          "B2",
+          "Experience",
+          "Info",
+          "Aapka beauty ka safar kaise shuru hua? Kahan kahan kaam kiya, aur wo salon kis area mein the?",
+          "Wahan ek normal din kaisa hota tha — kitne clients aate the?",
+          "Years exp, salons",
+          "Salon names + day detail",
+          "Vague; course only",
+          "< 1 yr → fresher flag (practical confirms)",
+          65.0
+        ]
+      },
+      {
+        "excel_row": 22,
+        "cells": [
+          "B3",
+          "Salon tier",
+          "Info → routing",
+          "Us salon mein ek normal facial ka rate kya tha, aur wahan zyada kis type ke customers aate the?",
+          "Wahan kaun si brands ke products use hote the?",
+          "Basic (local) / Mid (B-type) / High-end (A/A+ chain)",
+          "High-end: chain names, premium brands, higher rates",
+          "Only local rates, no brand names",
+          "Tier + hard skill → PR vs PI. Price bands to be set by UC",
+          40.0
+        ]
+      },
+      {
+        "excel_row": 23,
+        "cells": [
+          "B4",
+          "Experience",
+          "Scored",
+          "Wahan se aage badhne ka kyun socha?",
+          "Agar wahi cheez UC mein bhi hui to?",
+          "Reason for leaving",
+          "Growth, pay, travel",
+          "Wants flexibility / short hours",
+          "Conflicts with UC reality → stickiness down",
+          40.0
+        ]
+      },
+      {
+        "excel_row": 24,
+        "cells": [
+          "B5",
+          "Family income",
+          "Scored",
+          "Ghar mein kaun kaun kamata hai, aur kya kaam karte hain?",
+          "(If married) Pati abhi kaam kar rahe hain? Roughly kitna kama lete hain?",
+          "Income sources, husband working Y/N, occupation, earnings",
+          "Clear picture",
+          "Refuses to share",
+          "Feeds need for money",
+          55.0
+        ]
+      },
+      {
+        "excel_row": 25,
+        "cells": [
+          "B6",
+          "Family income",
+          "Scored",
+          "Mahine ka ghar ka kharcha kaise manage hota hai?",
+          "—",
+          "Earner type",
+          "Self primary, or household needs 2nd income",
+          "Spouse earns very well + no need",
+          "Cross-check with B5, B7",
+          25.0
+        ]
+      },
+      {
+        "excel_row": 26,
+        "cells": [
+          "B7",
+          "Need for money",
+          "Scored (hard check)",
+          "Pichli baar ghar mein sabse bada kharcha kis cheez pe hua tha — jaise hospital ka bill, school fees, ya kuch aur? Wo kaise manage hua?",
+          "Aage aisa koi bada kharcha aane wala hai?",
+          "Need for money",
+          "Loan EMI, fees, house, treatment",
+          "'Apne liye', 'time pass'",
+          "Specific named need = High",
+          50.0
+        ]
+      },
+      {
+        "excel_row": 27,
+        "cells": [
+          "B8",
+          "Earnings",
+          "Info → Manual Check",
+          "Pichle mahine aapki kamai roughly kitni hui thi? Paisa cash mein aata hai ya online?",
+          "Proof dikha sakti hain?",
+          "Current earnings, proof type",
+          "Number + proof",
+          null,
+          "Verified manually",
+          30.0
+        ]
+      },
+      {
+        "excel_row": 28,
+        "cells": [
+          "B9",
+          "Earnings",
+          "Scored",
+          "Agle 6 mahine mein aap mahine ka kitna kamana chahti hain?",
+          "—",
+          "Expected earnings",
+          "Within ~2× current",
+          "> 2× current",
+          "Gap → stickiness down",
+          20.0
+        ]
+      },
+      {
+        "excel_row": 29,
+        "cells": [
+          "B10",
+          "Intent",
+          "Scored (hard check)",
+          "UC ke baare mein pehli baar kisse suna, aur unhone kya bataya?",
+          "Aapko sabse achhi cheez kya lagi?",
+          "Why UC",
+          "Knows home-service model",
+          "No idea of model",
+          "—",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 30,
+        "cells": [
+          "B11",
+          "Stickiness",
+          "Scored",
+          "Aaj se do saal baad aapka ek normal din kaisa hoga?",
+          "Uske liye kya plan hai?",
+          "Future plans",
+          "Growing in UC, house, kids' education",
+          "Own salon / shaadi / gaon within 2 yrs",
+          "Exit ≤ 2 yrs → stickiness Low",
+          40.0
+        ]
+      },
+      {
+        "excel_row": 31,
+        "cells": [
+          "B12",
+          "Stickiness",
+          "Scored",
+          "Saal mein kitni baar gaon ya ghar jaana hota hai, aur kitne din ke liye?",
+          "—",
+          "Exit risks",
+          "None / short planned leave",
+          "Long or frequent trips",
+          "—",
+          30.0
+        ]
+      },
+      {
+        "excel_row": 32,
+        "cells": [
+          "B13",
+          "Availability",
+          "Scored",
+          "Aapka weekend ka routine kya hota hai — Saturday-Sunday aap kya karti hain?",
+          "UC mein weekend aur shaam ko sabse zyada kaam hota hai — un dinon ghar kaise chalega? Ghar walon ki kya raay hai?",
+          "Weekend 12–13 hrs",
+          "Plan + family OK",
+          "Can't do Sundays",
+          "Can't do weekends → reject",
+          55.0
+        ]
+      },
+      {
+        "excel_row": 33,
+        "cells": [
+          "B14",
+          "Availability",
+          "Scored",
+          "Aur weekdays mein subah se raat tak aapka din kaise chalta hai?",
+          "Roz 9–11 ghante aur 4–5 jobs hon, to ye routine kaise adjust hoga?",
+          "Daily hours",
+          "Accepts",
+          "Part-time only",
+          "Part-time only → reject",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 34,
+        "cells": [
+          "B15",
+          "Training",
+          "Scored",
+          "Training 12 din (PR) ya 25 din (PI) ki hoti hai, subah 9 se shaam 7, hafte mein 6 din. Aap roz kaise aayengi, aur ghar ka kya intezaam hoga?",
+          "Isme sabse mushkil kya lagega?",
+          "Willing for training",
+          "Accepts + commute plan",
+          "Distance complaints",
+          "Won't attend → reject",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 35,
+        "cells": [
+          "B16",
+          "Models",
+          "Scored",
+          "Aapke aas-paas — padosi, rishtedaar, saheliyan — kitni ladies aapse eyebrows ya waxing karwati hain?",
+          "Training ke time unme se kitni practice ke liye aa sakti hain?",
+          "Model count",
+          "5–10 named",
+          "0 / new to city",
+          "< 5 → flag: trainer helps (not a reject)",
+          40.0
+        ]
+      },
+      {
+        "excel_row": 36,
+        "cells": [
+          "B17",
+          "Recharge",
+          "Scored",
+          "Training ke baad ₹2,000 ka kit lena hota hai — ye aap kaise arrange karengi?",
+          "—",
+          "Recharge readiness",
+          "Yes",
+          "'Abhi paise nahi'",
+          "—",
+          20.0
+        ]
+      },
+      {
+        "excel_row": 37,
+        "cells": [
+          "B18",
+          "Timeline",
+          "Scored",
+          "Agla batch [batch date] ko shuru ho raha hai. Kya aap us din se aa sakti hain?",
+          "Agar nahi, to exact kis date se? Koi notice period chal raha hai?",
+          "Committed start date",
+          "Confirms batch date",
+          "Vague: 'dekhte hain', > 30 days",
+          "Date locked in record. > 30 days → re-screen",
+          30.0
+        ]
+      },
+      {
+        "excel_row": 38,
+        "cells": [
+          "B19",
+          "Docs",
+          "Info → Manual Check",
+          "Kya aapka PAN, Aadhaar se linked hai aur dono mein naam same hai?",
+          "—",
+          "Doc readiness",
+          "Yes",
+          "Not linked / mismatch",
+          "Verified manually; fix before batch",
+          20.0
+        ]
+      },
+      {
+        "excel_row": 39,
+        "cells": [
+          "Technical knowledge (spoken) — K1 always + 3 of K2–K7 (rotate). Rubrics are DRAFT; trainer team to validate.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 40,
+        "cells": [
+          "K1",
+          "Technical knowledge",
+          "Scored",
+          "Aapne kaun kaun se wax use kiye hain — jaise Rica, honey, peel-off? Aur facial mein kaun se kits — O3+, Casmara, Lotus, VLCC ya koi aur?",
+          "Kaunsa wax kis body part pe use karti thi?",
+          "Technical score",
+          "Names specific products and where each is used (e.g. Rica lipo for arms/legs, peel-off for bikini/underarms, specific facial kits)",
+          "Can't name any product / only 'normal wax'",
+          "10 / 4 / −10 (draft rubric)",
+          55.0
+        ]
+      },
+      {
+        "excel_row": 41,
+        "cells": [
+          "K2",
+          "Technical knowledge",
+          "Scored",
+          "Rica jaise lipo wax aur normal honey wax mein kya farak hota hai? Aap kaunsa kab use karti hain?",
+          "Wax ke baad bachi chipchipahat kaise saaf karti hain?",
+          "Technical score",
+          "Lipo is oil-based, thin layer, removed with strip, residue cleaned with post-wax oil; honey / water-soluble wax residue cleans with water; lipo gentler on skin",
+          "No idea / says both are the same",
+          "10 / 4 / −10 (draft rubric)",
+          50.0
+        ]
+      },
+      {
+        "excel_row": 42,
+        "cells": [
+          "K3",
+          "Technical knowledge",
+          "Scored",
+          "Peel-off wax kahan use karte hain, aur kyun?",
+          "—",
+          "Technical score",
+          "Sensitive areas (bikini, underarms, face / upper lip); no strip; grips short or coarse hair; less pain",
+          "No idea",
+          "10 / 4 / −10 (draft rubric)",
+          40.0
+        ]
+      },
+      {
+        "excel_row": 43,
+        "cells": [
+          "K4",
+          "Technical knowledge",
+          "Scored",
+          "Waxing se pehle aur baad mein skin pe kya lagati hain?",
+          "Customer ko baad mein kya dhyan rakhne ko kehti hain?",
+          "Technical score",
+          "Before: clean, dry skin + talc; after: post-wax oil for residue, soothing gel/aloe; advises avoiding sun / hot water / scrubbing for a day",
+          "Nothing / no idea",
+          "10 / 4 / −10 (draft rubric)",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 44,
+        "cells": [
+          "K5",
+          "Technical knowledge",
+          "Scored",
+          "Ek normal facial ke steps bataiye — shuru se end tak.",
+          "—",
+          "Technical score",
+          "Cleanse → scrub/exfoliate → steam (+extraction) → massage → mask → toner/serum → moisturiser/sunscreen, in a sensible order",
+          "Can't list steps",
+          "10 / 4 / −10 (draft rubric)",
+          50.0
+        ]
+      },
+      {
+        "excel_row": 45,
+        "cells": [
+          "K6",
+          "Technical knowledge",
+          "Scored",
+          "Oily aur pimple wali skin ke liye facial mein aap kya dhyan rakhti hain?",
+          "—",
+          "Technical score",
+          "Avoids heavy massage and harsh scrub on active acne, uses oil-control/gel products, patch test, strict hygiene",
+          "Treats it like any other skin / no idea",
+          "10 / 4 / −10 (draft rubric)",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 46,
+        "cells": [
+          "K7",
+          "Technical knowledge",
+          "Scored",
+          "Pedicure ke baad tools aur baaki saamaan ka kya karti hain?",
+          "—",
+          "Technical score",
+          "Disposables thrown away, metal tools cleaned and sterilised, fresh towel/liner for every customer",
+          "Reuses without cleaning / no idea",
+          "10 / 4 / −10 (draft rubric)",
+          35.0
+        ]
+      },
+      {
+        "excel_row": 47,
+        "cells": [
+          "Customer centricity — bot picks 3 of 8 (rotate). Read scenario only, never options. One probe: 'Aur uske baad?'",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 48,
+        "cells": [
+          "C1",
+          "Customer centricity",
+          "Scored",
+          "Facial mask ke time acne wali customer kehti hai jalan ho rahi hai. Aap kya karengi?",
+          "Aur uske baad?",
+          "Scenario score",
+          "Stop, sorry, remove, cold compress + aloe",
+          "'Theek ho jayega'",
+          "10 / 4 / −10",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 49,
+        "cells": [
+          "C2",
+          "Customer centricity",
+          "Scored",
+          "Customer ne thick eyebrows bola tha, par ek eyebrow zyada patli ho gayi. Customer gussa hai. Kya karengi?",
+          "Agli baar ye na ho, uske liye kya karengi?",
+          "Scenario score",
+          "Owns it; consultation + mirror checks",
+          "Blames customer",
+          "10 / 4 / −10",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 50,
+        "cells": [
+          "C3",
+          "Customer centricity",
+          "Scored",
+          "Honey wax ke time customer baar baar bol rahi hai wax bahut garam hai. Kya karengi?",
+          "—",
+          "Scenario score",
+          "Stop, sorry, adjust, confirm comfort",
+          "'Garam hota hi hai'",
+          "10 / 4 / −10",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 51,
+        "cells": [
+          "C4",
+          "Customer centricity",
+          "Scored",
+          "Service ke time customer ka bachcha baar baar beech mein aa raha hai. Kya karengi?",
+          "—",
+          "Scenario score",
+          "Explains safety risk, asks customer to engage child",
+          "Does nothing",
+          "10 / 4 / −10",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 52,
+        "cells": [
+          "C5",
+          "Customer centricity",
+          "Scored",
+          "Cleanup ke baad customer chhota back massage maangti hai jo service mein nahi hai. Kya karengi?",
+          "—",
+          "Scenario score",
+          "Explains politely; offers to add on app if time allows",
+          "Rude, or off-app cash",
+          "10 / 4 / −10",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 53,
+        "cells": [
+          "C6",
+          "Customer centricity",
+          "Scored",
+          "Customer app ke bahar discount maang rahi hai. Kya karengi?",
+          "Agar wo zid kare to?",
+          "Scenario score",
+          "Price fixed on app, no cash deals",
+          "Off-app discount, argues",
+          "10 / 4 / −10",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 54,
+        "cells": [
+          "C7",
+          "Customer centricity",
+          "Scored",
+          "Customer ek service add karna chahti hai jo book nahi ki. Kya karengi?",
+          "Payment kaise hoga?",
+          "Scenario score",
+          "Adds on app, checks next job time",
+          "Cash off-app, rude",
+          "10 / 4 / −10",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 55,
+        "cells": [
+          "C8",
+          "Customer centricity",
+          "Scored (new)",
+          "Traffic ki wajah se aap job pe 20 minute late ho rahi hain. Kya karengi?",
+          "Pahunchne ke baad kya karengi?",
+          "Scenario score",
+          "Informs customer early with ETA, apologises, doesn't rush the service",
+          "No information, rushes service, blames traffic",
+          "10: informs early + apologises + full service · 4: apologises on arrival only · −10: no info / rushes / argues",
+          60.0
+        ]
+      },
+      {
+        "excel_row": 56,
+        "cells": [
+          "Close",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 57,
+        "cells": [
+          "D1",
+          "Close",
+          "Scored (light)",
+          "Kya aapko UC ke baare mein kuch poochna hai?",
+          "—",
+          "Engagement",
+          "Asks about earnings, training, jobs",
+          "Only flexibility / leave",
+          "Small intent signal",
+          45.0
+        ]
+      },
+      {
+        "excel_row": 58,
+        "cells": [
+          "D2",
+          "Close",
+          "Info",
+          "Dhanyavaad! Hamari team aapko agla step batayegi.",
+          "—",
+          "—",
+          null,
+          null,
+          "Bot never states pass / fail",
+          10.0
+        ]
+      },
+      {
+        "excel_row": 60,
+        "cells": [
+          null,
+          "Time estimate",
+          null,
+          "Formula basis",
+          null,
+          null,
+          null,
+          null,
+          "Seconds",
+          "Minutes"
+        ]
+      },
+      {
+        "excel_row": 61,
+        "cells": [
+          null,
+          "Stage A – Mandatory Basic Checks",
+          null,
+          "Sum of A0–A12",
+          null,
+          null,
+          null,
+          null,
+          555,
+          9.3
+        ]
+      },
+      {
+        "excel_row": 62,
+        "cells": [
+          null,
+          "Stage B – Interview questions",
+          null,
+          "Sum of B1–B19",
+          null,
+          null,
+          null,
+          null,
+          730,
+          12.2
+        ]
+      },
+      {
+        "excel_row": 63,
+        "cells": [
+          null,
+          "Technical knowledge (K1 + 3 of K2–K7)",
+          null,
+          "K1 + 3 × average",
+          null,
+          null,
+          null,
+          null,
+          187.5,
+          3.1
+        ]
+      },
+      {
+        "excel_row": 64,
+        "cells": [
+          null,
+          "Scenarios (3 of 8 asked)",
+          null,
+          "3 × average scenario time",
+          null,
+          null,
+          null,
+          null,
+          180,
+          3
+        ]
+      },
+      {
+        "excel_row": 65,
+        "cells": [
+          null,
+          "Close",
+          null,
+          "D1–D2",
+          null,
+          null,
+          null,
+          null,
+          55,
+          0.9
+        ]
+      },
+      {
+        "excel_row": 66,
+        "cells": [
+          null,
+          "TOTAL (bot time)",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          1707.5,
+          28.5
+        ]
+      },
+      {
+        "excel_row": 67,
+        "cells": [
+          null,
+          "Buffer for probes / repeats",
+          0.15,
+          "Assumption: ~15% extra for follow-ups, repeats, language clarifications",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 68,
+        "cells": [
+          null,
+          "TOTAL incl. buffer",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          1964,
+          32.7
+        ]
+      },
+      {
+        "excel_row": 69,
+        "cells": [
+          null,
+          "Per-step seconds are estimates (simple yes/no ≈ 15–30s, open-ended ≈ 40–60s, reading / role-play ≈ 60s). Replace with measured times from the pilot.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    ],
+    "Response Buckets": [
+      {
+        "excel_row": 1,
+        "cells": [
+          "Response Buckets – if the pro says THIS, the bot does THAT",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 2,
+        "cells": [
+          "Pass (full points) · Flag (score down / note in report) · Hold (needs info) · Manual (goes to offline check) · Defer (reapply later) · Reject (Mandatory Basic Check fails) · Info (no score)",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 4,
+        "cells": [
+          "Step",
+          "Question (short)",
+          "Response bucket",
+          "Example responses",
+          "Bot does next",
+          "Outcome / score impact",
+          "Result"
+        ]
+      },
+      {
+        "excel_row": 5,
+        "cells": [
+          "STAGE A — Mandatory Basic Checks",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 6,
+        "cells": [
+          "A0",
+          "Consent & language",
+          "Agrees, Hindi / English",
+          "Haan, Hindi mein",
+          "Continue",
+          "Proceed",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 7,
+        "cells": [
+          "A0",
+          null,
+          "Speaks only Kannada",
+          "Kannada mein bolti hoon",
+          "Clarify once in Kannada that interview is in Hindi/English; continue",
+          "A11 decides",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 8,
+        "cells": [
+          "A0",
+          null,
+          "Refuses recording",
+          "Record mat karo",
+          "Thank her; hand over",
+          "Manual screening (not a reject)",
+          "Hold"
+        ]
+      },
+      {
+        "excel_row": 9,
+        "cells": [
+          "A1",
+          "Where do you stay + movement",
+          "Named area, open to travel / shift",
+          "Bellandur; haan, door bhi jaungi",
+          "Continue",
+          "Area → proximity check",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 10,
+        "cells": [
+          "A1",
+          null,
+          "Far, open to moving",
+          "Hoskote, par shift ho sakti hoon",
+          "Ask: 'Kab tak?'",
+          "Proximity check + move date",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 11,
+        "cells": [
+          "A1",
+          null,
+          "Far, not open to moving",
+          "Sirf apne area mein",
+          "Note",
+          "Proximity check; likely reject",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 12,
+        "cells": [
+          "A2",
+          "Age (Aadhaar)",
+          "18–38",
+          "32",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 13,
+        "cells": [
+          "A2",
+          null,
+          "39–40",
+          "39",
+          "Continue",
+          "Manual review",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 14,
+        "cells": [
+          "A2",
+          null,
+          "Above 40 / below 18",
+          "42 / 17",
+          "Polite close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 15,
+        "cells": [
+          "A3",
+          "Who lives at home / married",
+          "Clear description",
+          "Pati, saas, 2 bachche",
+          "Capture marital status, kids",
+          "Fields captured",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 16,
+        "cells": [
+          "A3",
+          null,
+          "Marital status unclear",
+          "Main aur bachche",
+          "Ask gently: 'Aap shaadi-shuda hain?'",
+          "Captured",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 17,
+        "cells": [
+          "A4",
+          "Youngest child's age",
+          "3 years or older",
+          "5 saal",
+          "Go to A5",
+          "Continue",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 18,
+        "cells": [
+          "A4",
+          null,
+          "Under 3 years",
+          "2 saal",
+          "Defer script: reapply when child turns 3",
+          "Defer",
+          "Defer"
+        ]
+      },
+      {
+        "excel_row": 19,
+        "cells": [
+          "A5",
+          "Who looks after kids",
+          "Named family member, done before",
+          "Saas sambhalti hain, pehle bhi",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 20,
+        "cells": [
+          "A5",
+          null,
+          "Named, not confirmed",
+          "Mummy sambhal lengi shayad",
+          "Probe: 'Unse baat ho gayi hai?'",
+          "Pass if confirmed, else hold",
+          "Hold"
+        ]
+      },
+      {
+        "excel_row": 21,
+        "cells": [
+          "A5",
+          null,
+          "Non-family (maid / daycare) only",
+          "Daycare mein chhodti hoon",
+          "Ask: 'Weekend aur late evening?'",
+          "Hold; screening lead decides",
+          "Hold"
+        ]
+      },
+      {
+        "excel_row": 22,
+        "cells": [
+          "A5",
+          null,
+          "No one",
+          "Main manage kar lungi",
+          "Polite close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 23,
+        "cells": [
+          "A6",
+          "Pregnant / baby plan",
+          "No plan in 12 months",
+          "Abhi koi plan nahi",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 24,
+        "cells": [
+          "A6",
+          null,
+          "Pregnant / plan ≤ 6 months",
+          "Haan / 4 mahine baad",
+          "Defer script",
+          "Defer",
+          "Defer"
+        ]
+      },
+      {
+        "excel_row": 25,
+        "cells": [
+          "A6",
+          null,
+          "Plan in 6–12 months",
+          "Agle saal",
+          "Continue",
+          "Stickiness down",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 26,
+        "cells": [
+          "A6",
+          null,
+          "Prefers not to say",
+          "Nahi batana",
+          "Accept",
+          "No penalty",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 27,
+        "cells": [
+          "A7",
+          "Own salon / own clients",
+          "Neither",
+          "Nahi",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 28,
+        "cells": [
+          "A7",
+          null,
+          "Had salon, closed",
+          "Covid mein band",
+          "Ask her to bring proof",
+          "Closure proof check",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 29,
+        "cells": [
+          "A7",
+          null,
+          "Freelance, will stop",
+          "5–6 clients, chhod dungi",
+          "Continue",
+          "Stickiness slightly down",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 30,
+        "cells": [
+          "A7",
+          null,
+          "Won't close / stop",
+          "Salon bhi chalega, UC bhi",
+          "Polite close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 31,
+        "cells": [
+          "A8",
+          "Pedicure (bikini noted)",
+          "Does pedicure / ready to learn",
+          "Karti hoon",
+          "Ask bikini wax; note answer",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 32,
+        "cells": [
+          "A8",
+          null,
+          "Hesitant on pedicure",
+          "Pedicure kam kiya hai",
+          "Explain it's taught in training; ask again",
+          "Pass if agrees",
+          "Hold"
+        ]
+      },
+      {
+        "excel_row": 33,
+        "cells": [
+          "A8",
+          null,
+          "Refuses pedicure",
+          "Pedicure nahi karungi",
+          "Polite close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 34,
+        "cells": [
+          "A9",
+          "Travel 3–4 km / 2-wheeler",
+          "Has 2-wheeler, travels herself",
+          "Scooty hai, khud jaungi",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 35,
+        "cells": [
+          "A9",
+          null,
+          "No 2-wheeler, will learn",
+          "Seekh lungi",
+          "Continue",
+          "Pass; training note",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 36,
+        "cells": [
+          "A9",
+          null,
+          "Depends on husband to drop",
+          "Pati chhod denge",
+          "Probe: 'Jab wo kaam pe hon tab?'",
+          "Flag: availability risk",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 37,
+        "cells": [
+          "A9",
+          null,
+          "Won't travel / won't ride",
+          "Paas mein hi / scooty nahi chalaungi",
+          "Polite close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 38,
+        "cells": [
+          "A10",
+          "Read address + product card",
+          "Fluent",
+          "Reads O3+, Casmara cleanly",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 39,
+        "cells": [
+          "A10",
+          null,
+          "Mistakes on long words",
+          "Slow on product names",
+          "Continue",
+          "Pass; communication medium",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 40,
+        "cells": [
+          "A10",
+          null,
+          "Can't read English",
+          "Stops",
+          "Polite close: practise, reapply",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 41,
+        "cells": [
+          "A11",
+          "Intro role-play in Hindi / English",
+          "Fluent",
+          "Namaste ma'am, main UC se Priya, aaj waxing hai…",
+          "Continue",
+          "Pass; communication full",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 42,
+        "cells": [
+          "A11",
+          null,
+          "Basic but understandable",
+          "Main… UC se… waxing",
+          "Continue",
+          "Pass; communication medium",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 43,
+        "cells": [
+          "A11",
+          null,
+          "Can't converse in Hindi / English",
+          "Only Kannada / silence",
+          "Repeat simpler once; then close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 44,
+        "cells": [
+          "A12",
+          "Past UC work + all numbers",
+          "Never worked with UC",
+          "Nahi",
+          "Continue",
+          "Registered number → profile check",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 45,
+        "cells": [
+          "A12",
+          null,
+          "Worked, shares numbers",
+          "2 number the",
+          "Ask category for each",
+          "All numbers → profile check",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 46,
+        "cells": [
+          "A12",
+          null,
+          "Can't recall number",
+          "Purana sim band",
+          "Ask name, category, year",
+          "Profile check by details",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 47,
+        "cells": [
+          "STAGE B — Interview",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 48,
+        "cells": [
+          "B1",
+          "Standing / lifting",
+          "No issues",
+          "10 ghante kaam kiya hai",
+          "Continue",
+          "Health check: clear",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 49,
+        "cells": [
+          "B1",
+          null,
+          "Mentions an issue",
+          "Back pain, thyroid",
+          "Note only — no diagnosis",
+          "Manual health check",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 50,
+        "cells": [
+          "B2",
+          "Where & how long worked",
+          "≥ 1 yr, names + day detail",
+          "Green Trends 3 saal",
+          "Continue",
+          "Captured",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 51,
+        "cells": [
+          "B2",
+          null,
+          "< 1 yr / course only",
+          "3 mahine course",
+          "Continue",
+          "Fresher flag; practical confirms",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 52,
+        "cells": [
+          "B2",
+          null,
+          "Doesn't add up",
+          "10 saal… naam yaad nahi",
+          "Probe day-in-life, gaps",
+          "Inflated-experience flag",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 53,
+        "cells": [
+          "B3",
+          "Salon tier",
+          "High-end",
+          "Lakme / Naturals, Casmara / O3+, higher rates",
+          "Continue",
+          "High-end → PR candidate",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 54,
+        "cells": [
+          "B3",
+          null,
+          "Mid (B-type)",
+          "Unisex chain, mid rates",
+          "Continue",
+          "Mid → PR / PI per hard skill",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 55,
+        "cells": [
+          "B3",
+          null,
+          "Basic (local)",
+          "Local parlour, low rates, no brand names",
+          "Continue",
+          "Basic → PI candidate",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 56,
+        "cells": [
+          "B4",
+          "Why left last job",
+          "Growth / pay / travel",
+          "Salary kam thi",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 57,
+        "cells": [
+          "B4",
+          null,
+          "Wanted flexibility",
+          "Timing zyada tha",
+          "Probe: 'UC mein 9–11 ghante?'",
+          "Stickiness down",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 58,
+        "cells": [
+          "B5",
+          "Income sources / husband working",
+          "Husband working, modest income",
+          "Pati driver, 20–25k",
+          "Continue",
+          "Supports need for money",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 59,
+        "cells": [
+          "B5",
+          null,
+          "Husband not working / unwell",
+          "Kaam chhoot gaya",
+          "Continue",
+          "Raises need for money",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 60,
+        "cells": [
+          "B5",
+          null,
+          "Widow / single mother / divorced",
+          "Main hi kamaati hoon",
+          "Continue",
+          "High need for money",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 61,
+        "cells": [
+          "B5",
+          null,
+          "Unmarried, family earns",
+          "Papa farmer, bhai driver",
+          "Ask who depends on her",
+          "Medium",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 62,
+        "cells": [
+          "B5",
+          null,
+          "Husband / family earns very well",
+          "Pati 1.5 lakh",
+          "Continue",
+          "Need for money likely LOW",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 63,
+        "cells": [
+          "B5",
+          null,
+          "Refuses to share",
+          "Nahi bata sakti",
+          "Move on",
+          "Flag",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 64,
+        "cells": [
+          "B6",
+          "Who runs the house",
+          "Self",
+          "Main hi",
+          "Continue",
+          "Raises need-for-money weight",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 65,
+        "cells": [
+          "B6",
+          null,
+          "Fully spouse / family",
+          "Pati hi",
+          "Continue",
+          "Cross-check with B7",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 66,
+        "cells": [
+          "B7",
+          "₹10,000 extra – where first",
+          "Specific liability",
+          "EMI, fees, ilaaj",
+          "Continue",
+          "HIGH",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 67,
+        "cells": [
+          "B7",
+          null,
+          "General ambition",
+          "Kabhi ghar lena hai",
+          "Probe: 'Kab tak, kitna?'",
+          "MEDIUM",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 68,
+        "cells": [
+          "B7",
+          null,
+          "No real need",
+          "Apne liye, time pass",
+          "Probe once",
+          "LOW – heavy score down",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 69,
+        "cells": [
+          "B8",
+          "Current earnings",
+          "Figure + proof",
+          "25k, GPay",
+          "Note",
+          "Income proof check",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 70,
+        "cells": [
+          "B8",
+          null,
+          "Cash / refuses",
+          "Cash milta hai",
+          "Note",
+          "Income proof check",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 71,
+        "cells": [
+          "B9",
+          "Expected UC earnings",
+          "Within ~2× current",
+          "20k → 40k",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 72,
+        "cells": [
+          "B9",
+          null,
+          "Above 2× current",
+          "15k → 1 lakh",
+          "Share realistic early range",
+          "Stickiness down",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 73,
+        "cells": [
+          "B10",
+          "Why UC",
+          "Knows the model",
+          "Ghar jaake service, achhi kamai",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 74,
+        "cells": [
+          "B10",
+          null,
+          "Referred, little idea",
+          "Dost ne bola",
+          "Explain in 2 lines; ask what appeals",
+          "Medium",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 75,
+        "cells": [
+          "B10",
+          null,
+          "Learn then leave",
+          "Training lekar parlour kholungi",
+          "Probe timeline",
+          "Stickiness LOW",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 76,
+        "cells": [
+          "B11",
+          "Where in 2 years",
+          "Grow in UC / house / kids",
+          "Ghar banana hai",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 77,
+        "cells": [
+          "B11",
+          null,
+          "Exit within 2 yrs",
+          "Shaadi, gaon, apna salon",
+          "Probe: 'Kab tak?'",
+          "Stickiness LOW",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 78,
+        "cells": [
+          "B12",
+          "Anything that may make you stop",
+          "Nothing / short leave",
+          "Puja mein 10 din",
+          "Note dates",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 79,
+        "cells": [
+          "B12",
+          null,
+          "Long / frequent trips",
+          "Har 2 mahine gaon",
+          "Probe",
+          "Stickiness down",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 80,
+        "cells": [
+          "B13",
+          "Weekend till 8 pm",
+          "Plan + family OK",
+          "Saas ghar dekh legi",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 81,
+        "cells": [
+          "B13",
+          null,
+          "Fixed short commitment",
+          "Sunday 8–10 church",
+          "Note",
+          "Pass with calendar note",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 82,
+        "cells": [
+          "B13",
+          null,
+          "Needs family permission",
+          "Pati se poochna padega",
+          "Callback within 2 days",
+          "Hold",
+          "Hold"
+        ]
+      },
+      {
+        "excel_row": 83,
+        "cells": [
+          "B13",
+          null,
+          "Can't do weekends",
+          "Sunday nahi",
+          "Polite close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 84,
+        "cells": [
+          "B14",
+          "9–11 hrs daily",
+          "Accepts",
+          "Theek hai",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 85,
+        "cells": [
+          "B14",
+          null,
+          "Part-time only",
+          "4–5 ghante hi",
+          "Polite close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 86,
+        "cells": [
+          "B15",
+          "Training 12 / 25 days",
+          "Accepts + commute plan",
+          "Metro se aa jaungi",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 87,
+        "cells": [
+          "B15",
+          null,
+          "Refuses",
+          "Itne din nahi",
+          "Polite close",
+          "Reject",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 88,
+        "cells": [
+          "B16",
+          "Practice models",
+          "5–10 named",
+          "Padosi, bhabhi",
+          "Continue",
+          "Full points",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 89,
+        "cells": [
+          "B16",
+          null,
+          "Fewer than 5 / none",
+          "2–3 / kisi ko nahi",
+          "Note",
+          "Flag: trainer helps",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 90,
+        "cells": [
+          "B17",
+          "₹2,000 recharge",
+          "Yes",
+          "Ho jayega",
+          "Continue",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 91,
+        "cells": [
+          "B17",
+          null,
+          "Needs time",
+          "Salary ke baad",
+          "Ask date",
+          "Hold",
+          "Hold"
+        ]
+      },
+      {
+        "excel_row": 92,
+        "cells": [
+          "B17",
+          null,
+          "Can't arrange",
+          "Paise nahi",
+          "Note",
+          "Flag",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 93,
+        "cells": [
+          "B18",
+          "Start date",
+          "Confirms batch date",
+          "Haan, aa jaungi",
+          "Lock date",
+          "Pass",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 94,
+        "cells": [
+          "B18",
+          null,
+          "Specific later date ≤ 30 days",
+          "15 tareekh se",
+          "Lock that date",
+          "Hold for next batch",
+          "Hold"
+        ]
+      },
+      {
+        "excel_row": 95,
+        "cells": [
+          "B18",
+          null,
+          "Vague / > 30 days",
+          "Dekhte hain / 2 mahine baad",
+          "Ask for exact date once",
+          "Flag; re-screen if > 30 days",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 96,
+        "cells": [
+          "B19",
+          "PAN–Aadhaar",
+          "Yes / not sure",
+          "Haan / pata nahi",
+          "Share fix steps if needed",
+          "Manual verification",
+          "Manual"
+        ]
+      },
+      {
+        "excel_row": 97,
+        "cells": [
+          "Technical knowledge — vague answer: probe once. Still blank = 'Did not answer' (0).",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 98,
+        "cells": [
+          "K1",
+          "Aapne kaun kaun se wax use kiye hain — jaise Rica, honey, pe…",
+          "Good",
+          "Names specific products and where each is used (e.g. Rica lipo for arms/legs, peel-off for bikini/underarms, specific facial kits)",
+          "—",
+          "+10",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 99,
+        "cells": [
+          "K1",
+          null,
+          "Average",
+          "Names a few products generally, no clear usage",
+          "—",
+          "+4",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 100,
+        "cells": [
+          "K1",
+          null,
+          "Bad",
+          "Can't name any product / only 'normal wax'",
+          "—",
+          "−10",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 101,
+        "cells": [
+          "K2",
+          "Rica jaise lipo wax aur normal honey wax mein kya farak hota…",
+          "Good",
+          "Lipo is oil-based, thin layer, removed with strip, residue cleaned with post-wax oil; honey / water-soluble wax residue cleans with water; lipo gentler on skin",
+          "—",
+          "+10",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 102,
+        "cells": [
+          "K2",
+          null,
+          "Average",
+          "Knows one difference (e.g. oil vs water cleanup)",
+          "—",
+          "+4",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 103,
+        "cells": [
+          "K2",
+          null,
+          "Bad",
+          "No idea / says both are the same",
+          "—",
+          "−10",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 104,
+        "cells": [
+          "K3",
+          "Peel-off wax kahan use karte hain, aur kyun?",
+          "Good",
+          "Sensitive areas (bikini, underarms, face / upper lip); no strip; grips short or coarse hair; less pain",
+          "—",
+          "+10",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 105,
+        "cells": [
+          "K3",
+          null,
+          "Average",
+          "Knows the areas but not why",
+          "—",
+          "+4",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 106,
+        "cells": [
+          "K3",
+          null,
+          "Bad",
+          "No idea",
+          "—",
+          "−10",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 107,
+        "cells": [
+          "K4",
+          "Waxing se pehle aur baad mein skin pe kya lagati hain?",
+          "Good",
+          "Before: clean, dry skin + talc; after: post-wax oil for residue, soothing gel/aloe; advises avoiding sun / hot water / scrubbing for a day",
+          "—",
+          "+10",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 108,
+        "cells": [
+          "K4",
+          null,
+          "Average",
+          "Mentions powder or oil only",
+          "—",
+          "+4",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 109,
+        "cells": [
+          "K4",
+          null,
+          "Bad",
+          "Nothing / no idea",
+          "—",
+          "−10",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 110,
+        "cells": [
+          "K5",
+          "Ek normal facial ke steps bataiye — shuru se end tak.",
+          "Good",
+          "Cleanse → scrub/exfoliate → steam (+extraction) → massage → mask → toner/serum → moisturiser/sunscreen, in a sensible order",
+          "—",
+          "+10",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 111,
+        "cells": [
+          "K5",
+          null,
+          "Average",
+          "Several steps, order mixed",
+          "—",
+          "+4",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 112,
+        "cells": [
+          "K5",
+          null,
+          "Bad",
+          "Can't list steps",
+          "—",
+          "−10",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 113,
+        "cells": [
+          "K6",
+          "Oily aur pimple wali skin ke liye facial mein aap kya dhyan …",
+          "Good",
+          "Avoids heavy massage and harsh scrub on active acne, uses oil-control/gel products, patch test, strict hygiene",
+          "—",
+          "+10",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 114,
+        "cells": [
+          "K6",
+          null,
+          "Average",
+          "One sensible precaution",
+          "—",
+          "+4",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 115,
+        "cells": [
+          "K6",
+          null,
+          "Bad",
+          "Treats it like any other skin / no idea",
+          "—",
+          "−10",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 116,
+        "cells": [
+          "K7",
+          "Pedicure ke baad tools aur baaki saamaan ka kya karti hain?",
+          "Good",
+          "Disposables thrown away, metal tools cleaned and sterilised, fresh towel/liner for every customer",
+          "—",
+          "+10",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 117,
+        "cells": [
+          "K7",
+          null,
+          "Average",
+          "Cleans tools but no sterilising / reuses some disposables",
+          "—",
+          "+4",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 118,
+        "cells": [
+          "K7",
+          null,
+          "Bad",
+          "Reuses without cleaning / no idea",
+          "—",
+          "−10",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 119,
+        "cells": [
+          "Customer centricity — vague answer: probe once 'Aur uske baad?'. Still blank = 'Did not answer'.",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 120,
+        "cells": [
+          "C1",
+          "Acne, burning in mask",
+          "Good / Avg / Bad",
+          "Rok ke aloe lagaungi / mask hata dungi / theek ho jayega",
+          "—",
+          "+10 / +4 / −10",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 121,
+        "cells": [
+          "C2",
+          "Eyebrow too thin",
+          "Good / Avg / Bad",
+          "Pehle shape poochungi, mirror / sorry next time / aapne hi bola",
+          "—",
+          "+10 / +4 / −10",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 122,
+        "cells": [
+          "C3",
+          "Honey wax too hot",
+          "Good / Avg / Bad",
+          "Rok ke temp kam, poochke / temp kam / garam hota hi hai",
+          "—",
+          "+10 / +4 / −10",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 123,
+        "cells": [
+          "C4",
+          "Child interrupting",
+          "Good / Avg / Bad",
+          "Safety batake busy rakhne ko kahungi / doosre room / kuch nahi",
+          "—",
+          "+10 / +4 / −10",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 124,
+        "cells": [
+          "C5",
+          "Back massage not in cleanup",
+          "Good / Avg / Bad",
+          "App pe add karte hain / mana kar dungi / cash lekar",
+          "—",
+          "+10 / +4 / −10",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 125,
+        "cells": [
+          "C6",
+          "Discount outside app",
+          "Good / Avg / Bad",
+          "Price app pe fix, offers dikhaungi / nahi ho sakta / cash mein kam",
+          "—",
+          "+10 / +4 / −10",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 126,
+        "cells": [
+          "C7",
+          "Extra service not booked",
+          "Good / Avg / Bad",
+          "App pe add / agli baar book / cash mein",
+          "—",
+          "+10 / +4 / −10",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 127,
+        "cells": [
+          "C8",
+          "Running 20 min late",
+          "Good",
+          "Pehle hi customer ko call karke ETA bataungi, sorry bolungi, service jaldi nahi karungi",
+          "—",
+          "+10",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 128,
+        "cells": [
+          "C8",
+          null,
+          "Average",
+          "Pahunch ke sorry bol dungi",
+          "—",
+          "+4",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 129,
+        "cells": [
+          "C8",
+          null,
+          "Bad",
+          "Kuch nahi bataungi / traffic tha, kya karun / service jaldi khatam",
+          "—",
+          "−10",
+          "Reject"
+        ]
+      },
+      {
+        "excel_row": 130,
+        "cells": [
+          "Close & rules across the call",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 131,
+        "cells": [
+          "D1",
+          "Questions for UC",
+          "Earnings / training / jobs",
+          "Pehle mahine kitne jobs?",
+          "Answer from FAQ",
+          "Positive intent",
+          "Pass"
+        ]
+      },
+      {
+        "excel_row": 132,
+        "cells": [
+          "D1",
+          null,
+          "Only flexibility / leave",
+          "Chhutti kab?",
+          "Answer from FAQ",
+          "Mild intent flag",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 133,
+        "cells": [
+          "ALL",
+          "Silence > 8 sec",
+          "—",
+          "—",
+          "Repeat simpler; Kannada clarification if needed",
+          "—",
+          "Info"
+        ]
+      },
+      {
+        "excel_row": 134,
+        "cells": [
+          "ALL",
+          "Contradicts earlier answer",
+          "—",
+          "A5 'saas' vs B13 'ghar pe koi nahi'",
+          "Ask gently once",
+          "Consistency flag",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 135,
+        "cells": [
+          "ALL",
+          "Argues / rude to bot",
+          "—",
+          "—",
+          "Stay calm, continue",
+          "Note in report",
+          "Flag"
+        ]
+      },
+      {
+        "excel_row": 136,
+        "cells": [
+          "ALL",
+          "Asks 'Am I selected?'",
+          "—",
+          "—",
+          "'Hamari team aapko agla step batayegi'",
+          "Never shares verdict",
+          "Info"
+        ]
+      }
+    ],
+    "Manual Checks": [
+      {
+        "excel_row": 1,
+        "cells": [
+          "Manual Checks – done offline, rule-based",
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 2,
+        "cells": [
+          "Each check has a fixed rule so the outcome doesn't depend on who does it.",
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 4,
+        "cells": [
+          "#",
+          "Check",
+          "Input from bot",
+          "How to check",
+          "Rule",
+          "When"
+        ]
+      },
+      {
+        "excel_row": 5,
+        "cells": [
+          1.0,
+          "Age verification",
+          "A2",
+          "Aadhaar date of birth",
+          "≤ 38 pass · 39–40 review · > 40 reject",
+          "Before practical"
+        ]
+      },
+      {
+        "excel_row": 6,
+        "cells": [
+          2.0,
+          "UC profile check",
+          "A12 – every number, name, category",
+          "UC partner records: blocked? L20 / L100, churn reason",
+          "Blocked → reject · below threshold → review",
+          "Before practical"
+        ]
+      },
+      {
+        "excel_row": 7,
+        "cells": [
+          3.0,
+          "Area proximity & hub",
+          "A1",
+          "Residence vs operating hubs",
+          "Inside → assign hub · outside + open to moving → nearest hub + move date · outside + not open → reject",
+          "Before batch"
+        ]
+      },
+      {
+        "excel_row": 8,
+        "cells": [
+          4.0,
+          "Weight",
+          "—",
+          "Weighing scale at centre",
+          "Rule to be set by UC (band / fitness)",
+          "Before practical"
+        ]
+      },
+      {
+        "excel_row": 9,
+        "cells": [
+          5.0,
+          "Health",
+          "B1 – any issue mentioned",
+          "Ask for relevant note only if issue mentioned",
+          "Review against job demands (9–11 hrs standing, 10–12 kg bag)",
+          "After interview"
+        ]
+      },
+      {
+        "excel_row": 10,
+        "cells": [
+          6.0,
+          "Grooming",
+          "—",
+          "Fixed checklist: clean clothes, hair tied, nails trimmed, personal hygiene",
+          "All 4 = pass · 1 miss = note · 2+ misses = flag",
+          "On arrival"
+        ]
+      },
+      {
+        "excel_row": 11,
+        "cells": [
+          7.0,
+          "Income proof",
+          "B8",
+          "GPay / bank statement / salary slip",
+          "Matches → verified · none / mismatch → flag",
+          "After interview"
+        ]
+      },
+      {
+        "excel_row": 12,
+        "cells": [
+          8.0,
+          "Salon closure proof",
+          "A7",
+          "Closure / handover proof",
+          "Proof → pass · none → hold",
+          "Before batch"
+        ]
+      },
+      {
+        "excel_row": 13,
+        "cells": [
+          9.0,
+          "PAN–Aadhaar link & name match",
+          "B19",
+          "Portal / documents",
+          "Fix before batch (not a reject)",
+          "Before batch"
+        ]
+      },
+      {
+        "excel_row": 14,
+        "cells": [
+          10.0,
+          "Hold follow-ups",
+          "Any 'Hold' bucket",
+          "Callback",
+          "Resolved → re-run decision · unresolved in 7 days → close",
+          "Within 7 days"
+        ]
+      }
+    ],
+    "Scoring & Basic Checks": [
+      {
+        "excel_row": 1,
+        "cells": [
+          "Scoring model (v1 hypothesis) & Mandatory Basic Checks",
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 2,
+        "cells": [
+          "Yellow = weights to tune; total must be 100%.",
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 4,
+        "cells": [
+          "Dimension",
+          "Weight",
+          "Flow steps",
+          "Sub-signals",
+          "High (full points)",
+          "Low (zero points)"
+        ]
+      },
+      {
+        "excel_row": 5,
+        "cells": [
+          "Need for money",
+          0.25,
+          "A3, B5, B6, B7, B9",
+          "Marital status, income sources, husband working, earner type, last major expense",
+          "Named liability / recent big expense; primary earner",
+          "No need; family earns very well"
+        ]
+      },
+      {
+        "excel_row": 6,
+        "cells": [
+          "Intent & stickiness",
+          0.15,
+          "A6, A7, B4, B10, B11, B12",
+          "Why UC, 2-yr picture, exit risks, own clients, family plans",
+          "Clear UC future",
+          "Exit within 2 yrs"
+        ]
+      },
+      {
+        "excel_row": 7,
+        "cells": [
+          "Availability & logistics",
+          0.2,
+          "A1, A9, B13–B18",
+          "Weekend & weekday routine fit, travel independence, training, models, recharge, start date",
+          "Routine fits, travels herself, date locked",
+          "Routine clashes on several"
+        ]
+      },
+      {
+        "excel_row": 8,
+        "cells": [
+          "Customer centricity",
+          0.2,
+          "C1–C8 (3 rotated)",
+          "Avg scenario score → 0–100",
+          "Avg ≥ 8",
+          "Avg ≤ 0"
+        ]
+      },
+      {
+        "excel_row": 9,
+        "cells": [
+          "Technical knowledge",
+          0.15,
+          "K1 + 3 of K2–K7",
+          "Product (SKU) experience, wax types, pre/post care, facial steps, skin care, hygiene",
+          "Avg ≥ 8",
+          "Avg ≤ 0"
+        ]
+      },
+      {
+        "excel_row": 10,
+        "cells": [
+          "Communication",
+          0.05,
+          "A10, A11",
+          "Reading, spoken Hindi / English",
+          "Fluent read + clear intro",
+          "Struggles on both"
+        ]
+      },
+      {
+        "excel_row": 11,
+        "cells": [
+          "Total",
+          1,
+          "Starting hypothesis; re-fit on 3-month retention label",
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 13,
+        "cells": [
+          "Band",
+          "Score",
+          "Action",
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 14,
+        "cells": [
+          "Auto-pass",
+          "≥ 75",
+          "Send to batch (PR / PI per hard-skill result)",
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 15,
+        "cells": [
+          "Manual review",
+          "45 – 74",
+          "Screening lead reads transcript + evidence (~4 min), decides",
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 16,
+        "cells": [
+          "Reject",
+          "< 45",
+          "Reject with top-3 reasons logged",
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 17,
+        "cells": [
+          "Defer",
+          "Basic Check = defer",
+          "Auto re-engage at eligibility date",
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 19,
+        "cells": [
+          "Mandatory Basic Check",
+          "Outcome",
+          "Step",
+          "Source",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 20,
+        "cells": [
+          "Age > 40 or < 18 (39–40 → manual review)",
+          "Reject",
+          "A2",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 21,
+        "cells": [
+          "Youngest child under 3 years",
+          "Defer",
+          "A4",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 22,
+        "cells": [
+          "Child 3+ with no named family member caregiver",
+          "Reject",
+          "A5",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 23,
+        "cells": [
+          "Pregnant, or baby planned within 6 months",
+          "Defer",
+          "A6",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 24,
+        "cells": [
+          "Running own salon / clients, won't stop",
+          "Reject",
+          "A7",
+          "Rejection data",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 25,
+        "cells": [
+          "Refuses pedicure, won't learn",
+          "Reject",
+          "A8",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 26,
+        "cells": [
+          "Won't travel 3–4 km / no 2-wheeler and won't learn",
+          "Reject",
+          "A9",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 27,
+        "cells": [
+          "Cannot read English address / product card",
+          "Reject",
+          "A10",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 28,
+        "cells": [
+          "Cannot converse in Hindi or English",
+          "Reject",
+          "A11",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 29,
+        "cells": [
+          "Blocked UC pro (manual profile check)",
+          "Reject",
+          "A12",
+          "Rejection data",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 30,
+        "cells": [
+          "Far from operating area, not open to moving (manual)",
+          "Reject",
+          "A1",
+          "Decided",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 31,
+        "cells": [
+          "Can't do weekends / part-time only",
+          "Reject",
+          "B13, B14",
+          "Rejection data",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 32,
+        "cells": [
+          "Won't attend training",
+          "Reject",
+          "B15",
+          "Rejection data",
+          null,
+          null
+        ]
+      }
+    ],
+    "Open Decisions": [
+      {
+        "excel_row": 1,
+        "cells": [
+          "Decisions log",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 2,
+        "cells": [
+          "All closed. 'Assumed' = set to close the item; validate in pilot.",
+          null,
+          null
+        ]
+      },
+      {
+        "excel_row": 4,
+        "cells": [
+          "#",
+          "Question",
+          "Decision"
+        ]
+      },
+      {
+        "excel_row": 5,
+        "cells": [
+          1.0,
+          "Age cap",
+          "DECIDED: ≤ 38 pass · 39–40 manual review · > 40 reject"
+        ]
+      },
+      {
+        "excel_row": 6,
+        "cells": [
+          2.0,
+          "Training length",
+          "DECIDED: PR 12 days / PI 25 days"
+        ]
+      },
+      {
+        "excel_row": 7,
+        "cells": [
+          3.0,
+          "Minimum models",
+          "DECIDED: 5–10 typical; below that trainer helps"
+        ]
+      },
+      {
+        "excel_row": 8,
+        "cells": [
+          4.0,
+          "Kit recharge amount",
+          "DECIDED: ₹2,000"
+        ]
+      },
+      {
+        "excel_row": 9,
+        "cells": [
+          5.0,
+          "Rating threshold for success label",
+          "DECIDED (assumed): 4.7"
+        ]
+      },
+      {
+        "excel_row": 10,
+        "cells": [
+          6.0,
+          "Scenario C5 (back massage) rewrite",
+          "DECIDED: offer to add on app = Good"
+        ]
+      },
+      {
+        "excel_row": 11,
+        "cells": [
+          7.0,
+          "Pregnancy",
+          "DECIDED: defer; reapply later"
+        ]
+      },
+      {
+        "excel_row": 12,
+        "cells": [
+          8.0,
+          "Baby plan",
+          "DECIDED: ≤ 6 months defer · 6–12 months score down"
+        ]
+      },
+      {
+        "excel_row": 13,
+        "cells": [
+          9.0,
+          "NE batch routing",
+          "DECIDED (assumed): fresher-quality hard skills but passes all soft checks"
+        ]
+      },
+      {
+        "excel_row": 14,
+        "cells": [
+          10.0,
+          "Language",
+          "DECIDED: converse in Hindi / English; Kannada only to clarify"
+        ]
+      },
+      {
+        "excel_row": 15,
+        "cells": [
+          11.0,
+          "Kids",
+          "DECIDED: youngest under 3 → defer; 3+ needs named family member"
+        ]
+      },
+      {
+        "excel_row": 16,
+        "cells": [
+          12.0,
+          "Services check",
+          "DECIDED: pedicure only; bikini wax noted"
+        ]
+      },
+      {
+        "excel_row": 17,
+        "cells": [
+          13.0,
+          "Travel",
+          "DECIDED: 3–4 km per job, 2-wheeler (own or learn)"
+        ]
+      },
+      {
+        "excel_row": 18,
+        "cells": [
+          14.0,
+          "Weight, health, grooming",
+          "DECIDED: manual checks"
+        ]
+      },
+      {
+        "excel_row": 19,
+        "cells": [
+          15.0,
+          "Salon tier bands (B3)",
+          "DECIDED (assumed): facial rate < ₹800 basic · ₹800–1,999 mid · ≥ ₹2,000 high-end"
+        ]
+      },
+      {
+        "excel_row": 20,
+        "cells": [
+          16.0,
+          "Weight rule",
+          "DECIDED (assumed): < 40 kg or > 85 kg → review"
+        ]
+      },
+      {
+        "excel_row": 21,
+        "cells": [
+          17.0,
+          "Under-3 child",
+          "DECIDED: defer"
+        ]
+      },
+      {
+        "excel_row": 22,
+        "cells": [
+          18.0,
+          "Depends on husband to travel",
+          "DECIDED: flag only"
+        ]
+      },
+      {
+        "excel_row": 23,
+        "cells": [
+          19.0,
+          "'Did not answer' on a scenario",
+          "DECIDED: 0 points"
+        ]
+      },
+      {
+        "excel_row": 24,
+        "cells": [
+          20.0,
+          "Who runs manual checks",
+          "DECIDED (assumed): screening ops"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,4353 @@
+{
+  "sourceFile": "UC_Soft_Skill_Bot_Structure (7)(5).xlsx",
+  "sourceAuthority": "Workbook cell contents are preserved verbatim in the fields below; no scoring or conflicting notes have been reconciled.",
+  "agentFlowInstructions": "Bot converses in Hindi / English (Kannada only to clarify). Never reads out answer options. Never reveals verdict. Orange = Mandatory Basic Check · Blue = feeds a Manual Check · Yellow = open decision",
+  "questionFlow": [
+    {
+      "Step": "A0",
+      "Block": "Setup",
+      "Type": "Consent",
+      "Bot says (primary)": "Namaste! Main UC ki screening assistant hoon. Ye baat-cheet sirf screening ke liye record hogi. Shuru karein? Aap Hindi mein baat karengi ya English mein?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Consent, language",
+      "Good answer looks like": "Yes + Hindi/English",
+      "Red flags": "Declines recording",
+      "Rule": "No consent → manual screening (not a reject)",
+      "Est. time (sec)": 30.0,
+      "_excel_row": 6,
+      "responseBuckets": [
+        {
+          "Step": "A0",
+          "Question (short)": "Consent & language",
+          "Response bucket": "Agrees, Hindi / English",
+          "Example responses": "Haan, Hindi mein",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Proceed",
+          "Result": "Info",
+          "_excel_row": 6
+        },
+        {
+          "Step": "A0",
+          "Response bucket": "Speaks only Kannada",
+          "Example responses": "Kannada mein bolti hoon",
+          "Bot does next": "Clarify once in Kannada that interview is in Hindi/English; continue",
+          "Outcome / score impact": "A11 decides",
+          "Result": "Info",
+          "_excel_row": 7
+        },
+        {
+          "Step": "A0",
+          "Response bucket": "Refuses recording",
+          "Example responses": "Record mat karo",
+          "Bot does next": "Thank her; hand over",
+          "Outcome / score impact": "Manual screening (not a reject)",
+          "Result": "Hold",
+          "_excel_row": 8
+        }
+      ]
+    },
+    {
+      "Step": "A1",
+      "Block": "Location & movement",
+      "Type": "Info → Manual Check",
+      "Bot says (primary)": "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?",
+      "Follow-up probe": "Agar kaam thoda door ke area mein mile, ya paas shift hona pade, to aapko kaisa lagega?",
+      "Signal captured → sheet field": "Area; aligned on movement Y/N",
+      "Good answer looks like": "Named area; open to moving / travelling",
+      "Red flags": "'Sirf apne area mein'",
+      "Rule": "Area → manual proximity check. Far + not aligned → reject",
+      "Est. time (sec)": 50.0,
+      "_excel_row": 7,
+      "responseBuckets": [
+        {
+          "Step": "A1",
+          "Question (short)": "Where do you stay + movement",
+          "Response bucket": "Named area, open to travel / shift",
+          "Example responses": "Bellandur; haan, door bhi jaungi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Area → proximity check",
+          "Result": "Manual",
+          "_excel_row": 9
+        },
+        {
+          "Step": "A1",
+          "Response bucket": "Far, open to moving",
+          "Example responses": "Hoskote, par shift ho sakti hoon",
+          "Bot does next": "Ask: 'Kab tak?'",
+          "Outcome / score impact": "Proximity check + move date",
+          "Result": "Manual",
+          "_excel_row": 10
+        },
+        {
+          "Step": "A1",
+          "Response bucket": "Far, not open to moving",
+          "Example responses": "Sirf apne area mein",
+          "Bot does next": "Note",
+          "Outcome / score impact": "Proximity check; likely reject",
+          "Result": "Manual",
+          "_excel_row": 11
+        }
+      ]
+    },
+    {
+      "Step": "A2",
+      "Block": "Eligibility",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "Aadhaar card pe aapki date of birth kya likhi hai?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Age",
+      "Good answer looks like": "18–38",
+      "Rule": "≤38 pass · 39–40 manual review · >40 or <18 reject",
+      "Est. time (sec)": 20.0,
+      "_excel_row": 8,
+      "responseBuckets": [
+        {
+          "Step": "A2",
+          "Question (short)": "Age (Aadhaar)",
+          "Response bucket": "18–38",
+          "Example responses": "32",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 12
+        },
+        {
+          "Step": "A2",
+          "Response bucket": "39–40",
+          "Example responses": "39",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Manual review",
+          "Result": "Manual",
+          "_excel_row": 13
+        },
+        {
+          "Step": "A2",
+          "Response bucket": "Above 40 / below 18",
+          "Example responses": "42 / 17",
+          "Bot does next": "Polite close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 14
+        }
+      ]
+    },
+    {
+      "Step": "A3",
+      "Block": "Family",
+      "Type": "Scored",
+      "Bot says (primary)": "Apne ghar ke baare mein thoda bataiye — ghar mein kaun kaun hai, aur din bhar kaun kya karta hai?",
+      "Follow-up probe": "(If unclear) Aapke pati kya karte hain?",
+      "Signal captured → sheet field": "Marital status, kids, household",
+      "Good answer looks like": "Clear description",
+      "Rule": "Feeds need for money & caregiver check",
+      "Est. time (sec)": 55.0,
+      "_excel_row": 9,
+      "responseBuckets": [
+        {
+          "Step": "A3",
+          "Question (short)": "Who lives at home / married",
+          "Response bucket": "Clear description",
+          "Example responses": "Pati, saas, 2 bachche",
+          "Bot does next": "Capture marital status, kids",
+          "Outcome / score impact": "Fields captured",
+          "Result": "Info",
+          "_excel_row": 15
+        },
+        {
+          "Step": "A3",
+          "Response bucket": "Marital status unclear",
+          "Example responses": "Main aur bachche",
+          "Bot does next": "Ask gently: 'Aap shaadi-shuda hain?'",
+          "Outcome / score impact": "Captured",
+          "Result": "Info",
+          "_excel_row": 16
+        }
+      ]
+    },
+    {
+      "Step": "A4",
+      "Block": "Family",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "(If kids) Bachche kis class mein padhte hain?",
+      "Follow-up probe": "Sabse chhota bachcha kitne saal ka hai?",
+      "Signal captured → sheet field": "Kids age",
+      "Good answer looks like": "3 years or older",
+      "Rule": "Under 3 years → defer",
+      "Est. time (sec)": 25.0,
+      "_excel_row": 10,
+      "responseBuckets": [
+        {
+          "Step": "A4",
+          "Question (short)": "Youngest child's age",
+          "Response bucket": "3 years or older",
+          "Example responses": "5 saal",
+          "Bot does next": "Go to A5",
+          "Outcome / score impact": "Continue",
+          "Result": "Pass",
+          "_excel_row": 17
+        },
+        {
+          "Step": "A4",
+          "Response bucket": "Under 3 years",
+          "Example responses": "2 saal",
+          "Bot does next": "Defer script: reapply when child turns 3",
+          "Outcome / score impact": "Defer",
+          "Result": "Defer",
+          "_excel_row": 18
+        }
+      ]
+    },
+    {
+      "Step": "A5",
+      "Block": "Family",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "Jab aap kaam pe hoti hain, tab bachchon ka din kaise chalta hai — school ke baad unke saath kaun hota hai?",
+      "Follow-up probe": "Jab pehle aap kaam karti thi, tab bhi wahi sambhalte the?",
+      "Signal captured → sheet field": "Family member caregiver",
+      "Good answer looks like": "Named family member who has done it before",
+      "Red flags": "'Main manage kar lungi'",
+      "Rule": "No named family member → reject",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 11,
+      "responseBuckets": [
+        {
+          "Step": "A5",
+          "Question (short)": "Who looks after kids",
+          "Response bucket": "Named family member, done before",
+          "Example responses": "Saas sambhalti hain, pehle bhi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 19
+        },
+        {
+          "Step": "A5",
+          "Response bucket": "Named, not confirmed",
+          "Example responses": "Mummy sambhal lengi shayad",
+          "Bot does next": "Probe: 'Unse baat ho gayi hai?'",
+          "Outcome / score impact": "Pass if confirmed, else hold",
+          "Result": "Hold",
+          "_excel_row": 20
+        },
+        {
+          "Step": "A5",
+          "Response bucket": "Non-family (maid / daycare) only",
+          "Example responses": "Daycare mein chhodti hoon",
+          "Bot does next": "Ask: 'Weekend aur late evening?'",
+          "Outcome / score impact": "Hold; screening lead decides",
+          "Result": "Hold",
+          "_excel_row": 21
+        },
+        {
+          "Step": "A5",
+          "Response bucket": "No one",
+          "Example responses": "Main manage kar lungi",
+          "Bot does next": "Polite close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 22
+        }
+      ]
+    },
+    {
+      "Step": "A6",
+      "Block": "Eligibility",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "Aane wale ek saal mein ghar mein koi badi cheez plan hai — jaise shaadi, family badhana, ya shift hona?",
+      "Follow-up probe": "Agar abhi aap expecting hain to bata dijiye — training aur kaam physically heavy hote hain, isliye poochna zaroori hai.",
+      "Signal captured → sheet field": "Pregnancy; baby plan",
+      "Good answer looks like": "No / not within 12 months",
+      "Red flags": "Plan within 6 months",
+      "Rule": "Pregnant or plan ≤ 6 months → defer with script. Plan 6–12 months → stickiness down",
+      "Est. time (sec)": 35.0,
+      "_excel_row": 12,
+      "responseBuckets": [
+        {
+          "Step": "A6",
+          "Question (short)": "Pregnant / baby plan",
+          "Response bucket": "No plan in 12 months",
+          "Example responses": "Abhi koi plan nahi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 23
+        },
+        {
+          "Step": "A6",
+          "Response bucket": "Pregnant / plan ≤ 6 months",
+          "Example responses": "Haan / 4 mahine baad",
+          "Bot does next": "Defer script",
+          "Outcome / score impact": "Defer",
+          "Result": "Defer",
+          "_excel_row": 24
+        },
+        {
+          "Step": "A6",
+          "Response bucket": "Plan in 6–12 months",
+          "Example responses": "Agle saal",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Stickiness down",
+          "Result": "Flag",
+          "_excel_row": 25
+        },
+        {
+          "Step": "A6",
+          "Response bucket": "Prefers not to say",
+          "Example responses": "Nahi batana",
+          "Bot does next": "Accept",
+          "Outcome / score impact": "No penalty",
+          "Result": "Info",
+          "_excel_row": 26
+        }
+      ]
+    },
+    {
+      "Step": "A7",
+      "Block": "Own salon",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "Abhi aapka kaam kaise chal raha hai — kisi salon mein hain, ya ghar pe bhi clients aate hain?",
+      "Follow-up probe": "UC join karne ke baad un clients ka kya karengi?",
+      "Signal captured → sheet field": "Own salon / freelance clients",
+      "Good answer looks like": "None, or closed",
+      "Red flags": "Won't leave salon / clients",
+      "Rule": "Won't close / stop → reject. Closed → manual proof check",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 13,
+      "responseBuckets": [
+        {
+          "Step": "A7",
+          "Question (short)": "Own salon / own clients",
+          "Response bucket": "Neither",
+          "Example responses": "Nahi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 27
+        },
+        {
+          "Step": "A7",
+          "Response bucket": "Had salon, closed",
+          "Example responses": "Covid mein band",
+          "Bot does next": "Ask her to bring proof",
+          "Outcome / score impact": "Closure proof check",
+          "Result": "Manual",
+          "_excel_row": 28
+        },
+        {
+          "Step": "A7",
+          "Response bucket": "Freelance, will stop",
+          "Example responses": "5–6 clients, chhod dungi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Stickiness slightly down",
+          "Result": "Flag",
+          "_excel_row": 29
+        },
+        {
+          "Step": "A7",
+          "Response bucket": "Won't close / stop",
+          "Example responses": "Salon bhi chalega, UC bhi",
+          "Bot does next": "Polite close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 30
+        }
+      ]
+    },
+    {
+      "Step": "A8",
+      "Block": "Services",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "Pichli jagah aap sabse zyada kaun si services karti thi? Pedicure-manicure kitni baar karti thi?",
+      "Follow-up probe": "Agar pedicure kam kiya hai, to seekhne mein kaisa lagega?",
+      "Signal captured → sheet field": "Pedicure willingness; bikini wax noted",
+      "Good answer looks like": "Does pedicure or ready to learn",
+      "Red flags": "Refuses pedicure",
+      "Rule": "Refuses pedicure & won't learn → reject. Bikini wax → note only",
+      "Est. time (sec)": 35.0,
+      "_excel_row": 14,
+      "responseBuckets": [
+        {
+          "Step": "A8",
+          "Question (short)": "Pedicure (bikini noted)",
+          "Response bucket": "Does pedicure / ready to learn",
+          "Example responses": "Karti hoon",
+          "Bot does next": "Ask bikini wax; note answer",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 31
+        },
+        {
+          "Step": "A8",
+          "Response bucket": "Hesitant on pedicure",
+          "Example responses": "Pedicure kam kiya hai",
+          "Bot does next": "Explain it's taught in training; ask again",
+          "Outcome / score impact": "Pass if agrees",
+          "Result": "Hold",
+          "_excel_row": 32
+        },
+        {
+          "Step": "A8",
+          "Response bucket": "Refuses pedicure",
+          "Example responses": "Pedicure nahi karungi",
+          "Bot does next": "Polite close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 33
+        }
+      ]
+    },
+    {
+      "Step": "A9",
+      "Block": "Travel",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "Abhi aap kaam pe ya market kaise jaati hain?",
+      "Follow-up probe": "Agar job 3–4 km door ho to kaise pahunchengi — scooty se khud, ya koi chhodega?",
+      "Signal captured → sheet field": "Travel willingness; 2-wheeler; self vs husband",
+      "Good answer looks like": "Rides or will learn; travels on her own",
+      "Red flags": "Refuses travel; depends on husband to drop",
+      "Rule": "Won't travel / no 2-wheeler and won't learn → reject. Depends on husband → flag",
+      "Est. time (sec)": 50.0,
+      "_excel_row": 15,
+      "responseBuckets": [
+        {
+          "Step": "A9",
+          "Question (short)": "Travel 3–4 km / 2-wheeler",
+          "Response bucket": "Has 2-wheeler, travels herself",
+          "Example responses": "Scooty hai, khud jaungi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 34
+        },
+        {
+          "Step": "A9",
+          "Response bucket": "No 2-wheeler, will learn",
+          "Example responses": "Seekh lungi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass; training note",
+          "Result": "Pass",
+          "_excel_row": 35
+        },
+        {
+          "Step": "A9",
+          "Response bucket": "Depends on husband to drop",
+          "Example responses": "Pati chhod denge",
+          "Bot does next": "Probe: 'Jab wo kaam pe hon tab?'",
+          "Outcome / score impact": "Flag: availability risk",
+          "Result": "Flag",
+          "_excel_row": 36
+        },
+        {
+          "Step": "A9",
+          "Response bucket": "Won't travel / won't ride",
+          "Example responses": "Paas mein hi / scooty nahi chalaungi",
+          "Bot does next": "Polite close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 37
+        }
+      ]
+    },
+    {
+      "Step": "A10",
+      "Block": "Reading",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "(Tablet shows card) Ye address aur service card zor se padhiye.",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "English reading",
+      "Good answer looks like": "Reads address + product names fluently",
+      "Red flags": "Can't read English words",
+      "Rule": "Fluent / with mistakes / unable. Unable → reject",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 16,
+      "responseBuckets": [
+        {
+          "Step": "A10",
+          "Question (short)": "Read address + product card",
+          "Response bucket": "Fluent",
+          "Example responses": "Reads O3+, Casmara cleanly",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 38
+        },
+        {
+          "Step": "A10",
+          "Response bucket": "Mistakes on long words",
+          "Example responses": "Slow on product names",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass; communication medium",
+          "Result": "Flag",
+          "_excel_row": 39
+        },
+        {
+          "Step": "A10",
+          "Response bucket": "Can't read English",
+          "Example responses": "Stops",
+          "Bot does next": "Polite close: practise, reapply",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 40
+        }
+      ]
+    },
+    {
+      "Step": "A11",
+      "Block": "Spoken language",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "Maan lijiye aap customer ke ghar pahunchi hain. Mujhe customer samajhkar Hindi ya English mein apna introduction dijiye.",
+      "Follow-up probe": "Ab batayiye aap aaj kya service karengi.",
+      "Signal captured → sheet field": "Converses in Hindi / English; politeness",
+      "Good answer looks like": "Greets, introduces self + UC, explains service",
+      "Red flags": "Can't form sentences in Hindi or English",
+      "Rule": "Can't converse → reject. Also scores Communication",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 17,
+      "responseBuckets": [
+        {
+          "Step": "A11",
+          "Question (short)": "Intro role-play in Hindi / English",
+          "Response bucket": "Fluent",
+          "Example responses": "Namaste ma'am, main UC se Priya, aaj waxing hai…",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass; communication full",
+          "Result": "Pass",
+          "_excel_row": 41
+        },
+        {
+          "Step": "A11",
+          "Response bucket": "Basic but understandable",
+          "Example responses": "Main… UC se… waxing",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass; communication medium",
+          "Result": "Flag",
+          "_excel_row": 42
+        },
+        {
+          "Step": "A11",
+          "Response bucket": "Can't converse in Hindi / English",
+          "Example responses": "Only Kannada / silence",
+          "Bot does next": "Repeat simpler once; then close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 43
+        }
+      ]
+    },
+    {
+      "Step": "A12",
+      "Block": "UC history",
+      "Type": "Info → Manual Check",
+      "Bot says (primary)": "Kya kabhi pehle UC, Yes Madam ya kisi aur app ke through kaam kiya hai? Unme kaun se phone number use kiye the?",
+      "Follow-up probe": "Koi purana number ya doosra sim? Kaunsi category mein thi?",
+      "Signal captured → sheet field": "All numbers ever used on UC",
+      "Good answer looks like": "Shares all numbers",
+      "Red flags": "Says no, later mentions UC",
+      "Rule": "Numbers → manual profile check (blocked → reject)",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 18,
+      "responseBuckets": [
+        {
+          "Step": "A12",
+          "Question (short)": "Past UC work + all numbers",
+          "Response bucket": "Never worked with UC",
+          "Example responses": "Nahi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Registered number → profile check",
+          "Result": "Manual",
+          "_excel_row": 44
+        },
+        {
+          "Step": "A12",
+          "Response bucket": "Worked, shares numbers",
+          "Example responses": "2 number the",
+          "Bot does next": "Ask category for each",
+          "Outcome / score impact": "All numbers → profile check",
+          "Result": "Manual",
+          "_excel_row": 45
+        },
+        {
+          "Step": "A12",
+          "Response bucket": "Can't recall number",
+          "Example responses": "Purana sim band",
+          "Bot does next": "Ask name, category, year",
+          "Outcome / score impact": "Profile check by details",
+          "Result": "Manual",
+          "_excel_row": 46
+        }
+      ]
+    },
+    {
+      "Step": "B1",
+      "Block": "Physical / health",
+      "Type": "Info → Manual Check",
+      "Bot says (primary)": "Pichli job mein ek din mein kitne ghante khade rehkar kaam hota tha? Shaam tak thakaan kaisi hoti thi?",
+      "Follow-up probe": "Koi takleef jo poora din khade rehne ya bag uthane mein dikkat de?",
+      "Signal captured → sheet field": "Functional capacity",
+      "Good answer looks like": "Has done full-day standing work",
+      "Red flags": "Says she can't stand long / lift",
+      "Rule": "Goes to manual health check. Bot never asks for a diagnosis",
+      "Est. time (sec)": 35.0,
+      "_excel_row": 20,
+      "responseBuckets": [
+        {
+          "Step": "B1",
+          "Question (short)": "Standing / lifting",
+          "Response bucket": "No issues",
+          "Example responses": "10 ghante kaam kiya hai",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Health check: clear",
+          "Result": "Manual",
+          "_excel_row": 48
+        },
+        {
+          "Step": "B1",
+          "Response bucket": "Mentions an issue",
+          "Example responses": "Back pain, thyroid",
+          "Bot does next": "Note only — no diagnosis",
+          "Outcome / score impact": "Manual health check",
+          "Result": "Manual",
+          "_excel_row": 49
+        }
+      ]
+    },
+    {
+      "Step": "B2",
+      "Block": "Experience",
+      "Type": "Info",
+      "Bot says (primary)": "Aapka beauty ka safar kaise shuru hua? Kahan kahan kaam kiya, aur wo salon kis area mein the?",
+      "Follow-up probe": "Wahan ek normal din kaisa hota tha — kitne clients aate the?",
+      "Signal captured → sheet field": "Years exp, salons",
+      "Good answer looks like": "Salon names + day detail",
+      "Red flags": "Vague; course only",
+      "Rule": "< 1 yr → fresher flag (practical confirms)",
+      "Est. time (sec)": 65.0,
+      "_excel_row": 21,
+      "responseBuckets": [
+        {
+          "Step": "B2",
+          "Question (short)": "Where & how long worked",
+          "Response bucket": "≥ 1 yr, names + day detail",
+          "Example responses": "Green Trends 3 saal",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Captured",
+          "Result": "Info",
+          "_excel_row": 50
+        },
+        {
+          "Step": "B2",
+          "Response bucket": "< 1 yr / course only",
+          "Example responses": "3 mahine course",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Fresher flag; practical confirms",
+          "Result": "Flag",
+          "_excel_row": 51
+        },
+        {
+          "Step": "B2",
+          "Response bucket": "Doesn't add up",
+          "Example responses": "10 saal… naam yaad nahi",
+          "Bot does next": "Probe day-in-life, gaps",
+          "Outcome / score impact": "Inflated-experience flag",
+          "Result": "Flag",
+          "_excel_row": 52
+        }
+      ]
+    },
+    {
+      "Step": "B3",
+      "Block": "Salon tier",
+      "Type": "Info → routing",
+      "Bot says (primary)": "Us salon mein ek normal facial ka rate kya tha, aur wahan zyada kis type ke customers aate the?",
+      "Follow-up probe": "Wahan kaun si brands ke products use hote the?",
+      "Signal captured → sheet field": "Basic (local) / Mid (B-type) / High-end (A/A+ chain)",
+      "Good answer looks like": "High-end: chain names, premium brands, higher rates",
+      "Red flags": "Only local rates, no brand names",
+      "Rule": "Tier + hard skill → PR vs PI. Price bands to be set by UC",
+      "Est. time (sec)": 40.0,
+      "_excel_row": 22,
+      "responseBuckets": [
+        {
+          "Step": "B3",
+          "Question (short)": "Salon tier",
+          "Response bucket": "High-end",
+          "Example responses": "Lakme / Naturals, Casmara / O3+, higher rates",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "High-end → PR candidate",
+          "Result": "Info",
+          "_excel_row": 53
+        },
+        {
+          "Step": "B3",
+          "Response bucket": "Mid (B-type)",
+          "Example responses": "Unisex chain, mid rates",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Mid → PR / PI per hard skill",
+          "Result": "Info",
+          "_excel_row": 54
+        },
+        {
+          "Step": "B3",
+          "Response bucket": "Basic (local)",
+          "Example responses": "Local parlour, low rates, no brand names",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Basic → PI candidate",
+          "Result": "Info",
+          "_excel_row": 55
+        }
+      ]
+    },
+    {
+      "Step": "B4",
+      "Block": "Experience",
+      "Type": "Scored",
+      "Bot says (primary)": "Wahan se aage badhne ka kyun socha?",
+      "Follow-up probe": "Agar wahi cheez UC mein bhi hui to?",
+      "Signal captured → sheet field": "Reason for leaving",
+      "Good answer looks like": "Growth, pay, travel",
+      "Red flags": "Wants flexibility / short hours",
+      "Rule": "Conflicts with UC reality → stickiness down",
+      "Est. time (sec)": 40.0,
+      "_excel_row": 23,
+      "responseBuckets": [
+        {
+          "Step": "B4",
+          "Question (short)": "Why left last job",
+          "Response bucket": "Growth / pay / travel",
+          "Example responses": "Salary kam thi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 56
+        },
+        {
+          "Step": "B4",
+          "Response bucket": "Wanted flexibility",
+          "Example responses": "Timing zyada tha",
+          "Bot does next": "Probe: 'UC mein 9–11 ghante?'",
+          "Outcome / score impact": "Stickiness down",
+          "Result": "Flag",
+          "_excel_row": 57
+        }
+      ]
+    },
+    {
+      "Step": "B5",
+      "Block": "Family income",
+      "Type": "Scored",
+      "Bot says (primary)": "Ghar mein kaun kaun kamata hai, aur kya kaam karte hain?",
+      "Follow-up probe": "(If married) Pati abhi kaam kar rahe hain? Roughly kitna kama lete hain?",
+      "Signal captured → sheet field": "Income sources, husband working Y/N, occupation, earnings",
+      "Good answer looks like": "Clear picture",
+      "Red flags": "Refuses to share",
+      "Rule": "Feeds need for money",
+      "Est. time (sec)": 55.0,
+      "_excel_row": 24,
+      "responseBuckets": [
+        {
+          "Step": "B5",
+          "Question (short)": "Income sources / husband working",
+          "Response bucket": "Husband working, modest income",
+          "Example responses": "Pati driver, 20–25k",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Supports need for money",
+          "Result": "Pass",
+          "_excel_row": 58
+        },
+        {
+          "Step": "B5",
+          "Response bucket": "Husband not working / unwell",
+          "Example responses": "Kaam chhoot gaya",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Raises need for money",
+          "Result": "Pass",
+          "_excel_row": 59
+        },
+        {
+          "Step": "B5",
+          "Response bucket": "Widow / single mother / divorced",
+          "Example responses": "Main hi kamaati hoon",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "High need for money",
+          "Result": "Pass",
+          "_excel_row": 60
+        },
+        {
+          "Step": "B5",
+          "Response bucket": "Unmarried, family earns",
+          "Example responses": "Papa farmer, bhai driver",
+          "Bot does next": "Ask who depends on her",
+          "Outcome / score impact": "Medium",
+          "Result": "Info",
+          "_excel_row": 61
+        },
+        {
+          "Step": "B5",
+          "Response bucket": "Husband / family earns very well",
+          "Example responses": "Pati 1.5 lakh",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Need for money likely LOW",
+          "Result": "Flag",
+          "_excel_row": 62
+        },
+        {
+          "Step": "B5",
+          "Response bucket": "Refuses to share",
+          "Example responses": "Nahi bata sakti",
+          "Bot does next": "Move on",
+          "Outcome / score impact": "Flag",
+          "Result": "Flag",
+          "_excel_row": 63
+        }
+      ]
+    },
+    {
+      "Step": "B6",
+      "Block": "Family income",
+      "Type": "Scored",
+      "Bot says (primary)": "Mahine ka ghar ka kharcha kaise manage hota hai?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Earner type",
+      "Good answer looks like": "Self primary, or household needs 2nd income",
+      "Red flags": "Spouse earns very well + no need",
+      "Rule": "Cross-check with B5, B7",
+      "Est. time (sec)": 25.0,
+      "_excel_row": 25,
+      "responseBuckets": [
+        {
+          "Step": "B6",
+          "Question (short)": "Who runs the house",
+          "Response bucket": "Self",
+          "Example responses": "Main hi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Raises need-for-money weight",
+          "Result": "Pass",
+          "_excel_row": 64
+        },
+        {
+          "Step": "B6",
+          "Response bucket": "Fully spouse / family",
+          "Example responses": "Pati hi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Cross-check with B7",
+          "Result": "Flag",
+          "_excel_row": 65
+        }
+      ]
+    },
+    {
+      "Step": "B7",
+      "Block": "Need for money",
+      "Type": "Scored (hard check)",
+      "Bot says (primary)": "Pichli baar ghar mein sabse bada kharcha kis cheez pe hua tha — jaise hospital ka bill, school fees, ya kuch aur? Wo kaise manage hua?",
+      "Follow-up probe": "Aage aisa koi bada kharcha aane wala hai?",
+      "Signal captured → sheet field": "Need for money",
+      "Good answer looks like": "Loan EMI, fees, house, treatment",
+      "Red flags": "'Apne liye', 'time pass'",
+      "Rule": "Specific named need = High",
+      "Est. time (sec)": 50.0,
+      "_excel_row": 26,
+      "responseBuckets": [
+        {
+          "Step": "B7",
+          "Question (short)": "₹10,000 extra – where first",
+          "Response bucket": "Specific liability",
+          "Example responses": "EMI, fees, ilaaj",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "HIGH",
+          "Result": "Pass",
+          "_excel_row": 66
+        },
+        {
+          "Step": "B7",
+          "Response bucket": "General ambition",
+          "Example responses": "Kabhi ghar lena hai",
+          "Bot does next": "Probe: 'Kab tak, kitna?'",
+          "Outcome / score impact": "MEDIUM",
+          "Result": "Flag",
+          "_excel_row": 67
+        },
+        {
+          "Step": "B7",
+          "Response bucket": "No real need",
+          "Example responses": "Apne liye, time pass",
+          "Bot does next": "Probe once",
+          "Outcome / score impact": "LOW – heavy score down",
+          "Result": "Flag",
+          "_excel_row": 68
+        }
+      ]
+    },
+    {
+      "Step": "B8",
+      "Block": "Earnings",
+      "Type": "Info → Manual Check",
+      "Bot says (primary)": "Pichle mahine aapki kamai roughly kitni hui thi? Paisa cash mein aata hai ya online?",
+      "Follow-up probe": "Proof dikha sakti hain?",
+      "Signal captured → sheet field": "Current earnings, proof type",
+      "Good answer looks like": "Number + proof",
+      "Rule": "Verified manually",
+      "Est. time (sec)": 30.0,
+      "_excel_row": 27,
+      "responseBuckets": [
+        {
+          "Step": "B8",
+          "Question (short)": "Current earnings",
+          "Response bucket": "Figure + proof",
+          "Example responses": "25k, GPay",
+          "Bot does next": "Note",
+          "Outcome / score impact": "Income proof check",
+          "Result": "Manual",
+          "_excel_row": 69
+        },
+        {
+          "Step": "B8",
+          "Response bucket": "Cash / refuses",
+          "Example responses": "Cash milta hai",
+          "Bot does next": "Note",
+          "Outcome / score impact": "Income proof check",
+          "Result": "Manual",
+          "_excel_row": 70
+        }
+      ]
+    },
+    {
+      "Step": "B9",
+      "Block": "Earnings",
+      "Type": "Scored",
+      "Bot says (primary)": "Agle 6 mahine mein aap mahine ka kitna kamana chahti hain?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Expected earnings",
+      "Good answer looks like": "Within ~2× current",
+      "Red flags": "> 2× current",
+      "Rule": "Gap → stickiness down",
+      "Est. time (sec)": 20.0,
+      "_excel_row": 28,
+      "responseBuckets": [
+        {
+          "Step": "B9",
+          "Question (short)": "Expected UC earnings",
+          "Response bucket": "Within ~2× current",
+          "Example responses": "20k → 40k",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 71
+        },
+        {
+          "Step": "B9",
+          "Response bucket": "Above 2× current",
+          "Example responses": "15k → 1 lakh",
+          "Bot does next": "Share realistic early range",
+          "Outcome / score impact": "Stickiness down",
+          "Result": "Flag",
+          "_excel_row": 72
+        }
+      ]
+    },
+    {
+      "Step": "B10",
+      "Block": "Intent",
+      "Type": "Scored (hard check)",
+      "Bot says (primary)": "UC ke baare mein pehli baar kisse suna, aur unhone kya bataya?",
+      "Follow-up probe": "Aapko sabse achhi cheez kya lagi?",
+      "Signal captured → sheet field": "Why UC",
+      "Good answer looks like": "Knows home-service model",
+      "Red flags": "No idea of model",
+      "Rule": "—",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 29,
+      "responseBuckets": [
+        {
+          "Step": "B10",
+          "Question (short)": "Why UC",
+          "Response bucket": "Knows the model",
+          "Example responses": "Ghar jaake service, achhi kamai",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 73
+        },
+        {
+          "Step": "B10",
+          "Response bucket": "Referred, little idea",
+          "Example responses": "Dost ne bola",
+          "Bot does next": "Explain in 2 lines; ask what appeals",
+          "Outcome / score impact": "Medium",
+          "Result": "Flag",
+          "_excel_row": 74
+        },
+        {
+          "Step": "B10",
+          "Response bucket": "Learn then leave",
+          "Example responses": "Training lekar parlour kholungi",
+          "Bot does next": "Probe timeline",
+          "Outcome / score impact": "Stickiness LOW",
+          "Result": "Flag",
+          "_excel_row": 75
+        }
+      ]
+    },
+    {
+      "Step": "B11",
+      "Block": "Stickiness",
+      "Type": "Scored",
+      "Bot says (primary)": "Aaj se do saal baad aapka ek normal din kaisa hoga?",
+      "Follow-up probe": "Uske liye kya plan hai?",
+      "Signal captured → sheet field": "Future plans",
+      "Good answer looks like": "Growing in UC, house, kids' education",
+      "Red flags": "Own salon / shaadi / gaon within 2 yrs",
+      "Rule": "Exit ≤ 2 yrs → stickiness Low",
+      "Est. time (sec)": 40.0,
+      "_excel_row": 30,
+      "responseBuckets": [
+        {
+          "Step": "B11",
+          "Question (short)": "Where in 2 years",
+          "Response bucket": "Grow in UC / house / kids",
+          "Example responses": "Ghar banana hai",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 76
+        },
+        {
+          "Step": "B11",
+          "Response bucket": "Exit within 2 yrs",
+          "Example responses": "Shaadi, gaon, apna salon",
+          "Bot does next": "Probe: 'Kab tak?'",
+          "Outcome / score impact": "Stickiness LOW",
+          "Result": "Flag",
+          "_excel_row": 77
+        }
+      ]
+    },
+    {
+      "Step": "B12",
+      "Block": "Stickiness",
+      "Type": "Scored",
+      "Bot says (primary)": "Saal mein kitni baar gaon ya ghar jaana hota hai, aur kitne din ke liye?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Exit risks",
+      "Good answer looks like": "None / short planned leave",
+      "Red flags": "Long or frequent trips",
+      "Rule": "—",
+      "Est. time (sec)": 30.0,
+      "_excel_row": 31,
+      "responseBuckets": [
+        {
+          "Step": "B12",
+          "Question (short)": "Anything that may make you stop",
+          "Response bucket": "Nothing / short leave",
+          "Example responses": "Puja mein 10 din",
+          "Bot does next": "Note dates",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 78
+        },
+        {
+          "Step": "B12",
+          "Response bucket": "Long / frequent trips",
+          "Example responses": "Har 2 mahine gaon",
+          "Bot does next": "Probe",
+          "Outcome / score impact": "Stickiness down",
+          "Result": "Flag",
+          "_excel_row": 79
+        }
+      ]
+    },
+    {
+      "Step": "B13",
+      "Block": "Availability",
+      "Type": "Scored",
+      "Bot says (primary)": "Aapka weekend ka routine kya hota hai — Saturday-Sunday aap kya karti hain?",
+      "Follow-up probe": "UC mein weekend aur shaam ko sabse zyada kaam hota hai — un dinon ghar kaise chalega? Ghar walon ki kya raay hai?",
+      "Signal captured → sheet field": "Weekend 12–13 hrs",
+      "Good answer looks like": "Plan + family OK",
+      "Red flags": "Can't do Sundays",
+      "Rule": "Can't do weekends → reject",
+      "Est. time (sec)": 55.0,
+      "_excel_row": 32,
+      "responseBuckets": [
+        {
+          "Step": "B13",
+          "Question (short)": "Weekend till 8 pm",
+          "Response bucket": "Plan + family OK",
+          "Example responses": "Saas ghar dekh legi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 80
+        },
+        {
+          "Step": "B13",
+          "Response bucket": "Fixed short commitment",
+          "Example responses": "Sunday 8–10 church",
+          "Bot does next": "Note",
+          "Outcome / score impact": "Pass with calendar note",
+          "Result": "Pass",
+          "_excel_row": 81
+        },
+        {
+          "Step": "B13",
+          "Response bucket": "Needs family permission",
+          "Example responses": "Pati se poochna padega",
+          "Bot does next": "Callback within 2 days",
+          "Outcome / score impact": "Hold",
+          "Result": "Hold",
+          "_excel_row": 82
+        },
+        {
+          "Step": "B13",
+          "Response bucket": "Can't do weekends",
+          "Example responses": "Sunday nahi",
+          "Bot does next": "Polite close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 83
+        }
+      ]
+    },
+    {
+      "Step": "B14",
+      "Block": "Availability",
+      "Type": "Scored",
+      "Bot says (primary)": "Aur weekdays mein subah se raat tak aapka din kaise chalta hai?",
+      "Follow-up probe": "Roz 9–11 ghante aur 4–5 jobs hon, to ye routine kaise adjust hoga?",
+      "Signal captured → sheet field": "Daily hours",
+      "Good answer looks like": "Accepts",
+      "Red flags": "Part-time only",
+      "Rule": "Part-time only → reject",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 33,
+      "responseBuckets": [
+        {
+          "Step": "B14",
+          "Question (short)": "9–11 hrs daily",
+          "Response bucket": "Accepts",
+          "Example responses": "Theek hai",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 84
+        },
+        {
+          "Step": "B14",
+          "Response bucket": "Part-time only",
+          "Example responses": "4–5 ghante hi",
+          "Bot does next": "Polite close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 85
+        }
+      ]
+    },
+    {
+      "Step": "B15",
+      "Block": "Training",
+      "Type": "Scored",
+      "Bot says (primary)": "Training 12 din (PR) ya 25 din (PI) ki hoti hai, subah 9 se shaam 7, hafte mein 6 din. Aap roz kaise aayengi, aur ghar ka kya intezaam hoga?",
+      "Follow-up probe": "Isme sabse mushkil kya lagega?",
+      "Signal captured → sheet field": "Willing for training",
+      "Good answer looks like": "Accepts + commute plan",
+      "Red flags": "Distance complaints",
+      "Rule": "Won't attend → reject",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 34,
+      "responseBuckets": [
+        {
+          "Step": "B15",
+          "Question (short)": "Training 12 / 25 days",
+          "Response bucket": "Accepts + commute plan",
+          "Example responses": "Metro se aa jaungi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 86
+        },
+        {
+          "Step": "B15",
+          "Response bucket": "Refuses",
+          "Example responses": "Itne din nahi",
+          "Bot does next": "Polite close",
+          "Outcome / score impact": "Reject",
+          "Result": "Reject",
+          "_excel_row": 87
+        }
+      ]
+    },
+    {
+      "Step": "B16",
+      "Block": "Models",
+      "Type": "Scored",
+      "Bot says (primary)": "Aapke aas-paas — padosi, rishtedaar, saheliyan — kitni ladies aapse eyebrows ya waxing karwati hain?",
+      "Follow-up probe": "Training ke time unme se kitni practice ke liye aa sakti hain?",
+      "Signal captured → sheet field": "Model count",
+      "Good answer looks like": "5–10 named",
+      "Red flags": "0 / new to city",
+      "Rule": "< 5 → flag: trainer helps (not a reject)",
+      "Est. time (sec)": 40.0,
+      "_excel_row": 35,
+      "responseBuckets": [
+        {
+          "Step": "B16",
+          "Question (short)": "Practice models",
+          "Response bucket": "5–10 named",
+          "Example responses": "Padosi, bhabhi",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Full points",
+          "Result": "Pass",
+          "_excel_row": 88
+        },
+        {
+          "Step": "B16",
+          "Response bucket": "Fewer than 5 / none",
+          "Example responses": "2–3 / kisi ko nahi",
+          "Bot does next": "Note",
+          "Outcome / score impact": "Flag: trainer helps",
+          "Result": "Flag",
+          "_excel_row": 89
+        }
+      ]
+    },
+    {
+      "Step": "B17",
+      "Block": "Recharge",
+      "Type": "Scored",
+      "Bot says (primary)": "Training ke baad ₹2,000 ka kit lena hota hai — ye aap kaise arrange karengi?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Recharge readiness",
+      "Good answer looks like": "Yes",
+      "Red flags": "'Abhi paise nahi'",
+      "Rule": "—",
+      "Est. time (sec)": 20.0,
+      "_excel_row": 36,
+      "responseBuckets": [
+        {
+          "Step": "B17",
+          "Question (short)": "₹2,000 recharge",
+          "Response bucket": "Yes",
+          "Example responses": "Ho jayega",
+          "Bot does next": "Continue",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 90
+        },
+        {
+          "Step": "B17",
+          "Response bucket": "Needs time",
+          "Example responses": "Salary ke baad",
+          "Bot does next": "Ask date",
+          "Outcome / score impact": "Hold",
+          "Result": "Hold",
+          "_excel_row": 91
+        },
+        {
+          "Step": "B17",
+          "Response bucket": "Can't arrange",
+          "Example responses": "Paise nahi",
+          "Bot does next": "Note",
+          "Outcome / score impact": "Flag",
+          "Result": "Flag",
+          "_excel_row": 92
+        }
+      ]
+    },
+    {
+      "Step": "B18",
+      "Block": "Timeline",
+      "Type": "Scored",
+      "Bot says (primary)": "Agla batch [batch date] ko shuru ho raha hai. Kya aap us din se aa sakti hain?",
+      "Follow-up probe": "Agar nahi, to exact kis date se? Koi notice period chal raha hai?",
+      "Signal captured → sheet field": "Committed start date",
+      "Good answer looks like": "Confirms batch date",
+      "Red flags": "Vague: 'dekhte hain', > 30 days",
+      "Rule": "Date locked in record. > 30 days → re-screen",
+      "Est. time (sec)": 30.0,
+      "_excel_row": 37,
+      "responseBuckets": [
+        {
+          "Step": "B18",
+          "Question (short)": "Start date",
+          "Response bucket": "Confirms batch date",
+          "Example responses": "Haan, aa jaungi",
+          "Bot does next": "Lock date",
+          "Outcome / score impact": "Pass",
+          "Result": "Pass",
+          "_excel_row": 93
+        },
+        {
+          "Step": "B18",
+          "Response bucket": "Specific later date ≤ 30 days",
+          "Example responses": "15 tareekh se",
+          "Bot does next": "Lock that date",
+          "Outcome / score impact": "Hold for next batch",
+          "Result": "Hold",
+          "_excel_row": 94
+        },
+        {
+          "Step": "B18",
+          "Response bucket": "Vague / > 30 days",
+          "Example responses": "Dekhte hain / 2 mahine baad",
+          "Bot does next": "Ask for exact date once",
+          "Outcome / score impact": "Flag; re-screen if > 30 days",
+          "Result": "Flag",
+          "_excel_row": 95
+        }
+      ]
+    },
+    {
+      "Step": "B19",
+      "Block": "Docs",
+      "Type": "Info → Manual Check",
+      "Bot says (primary)": "Kya aapka PAN, Aadhaar se linked hai aur dono mein naam same hai?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Doc readiness",
+      "Good answer looks like": "Yes",
+      "Red flags": "Not linked / mismatch",
+      "Rule": "Verified manually; fix before batch",
+      "Est. time (sec)": 20.0,
+      "_excel_row": 38,
+      "responseBuckets": [
+        {
+          "Step": "B19",
+          "Question (short)": "PAN–Aadhaar",
+          "Response bucket": "Yes / not sure",
+          "Example responses": "Haan / pata nahi",
+          "Bot does next": "Share fix steps if needed",
+          "Outcome / score impact": "Manual verification",
+          "Result": "Manual",
+          "_excel_row": 96
+        }
+      ]
+    },
+    {
+      "Step": "K1",
+      "Block": "Technical knowledge",
+      "Type": "Scored",
+      "Bot says (primary)": "Aapne kaun kaun se wax use kiye hain — jaise Rica, honey, peel-off? Aur facial mein kaun se kits — O3+, Casmara, Lotus, VLCC ya koi aur?",
+      "Follow-up probe": "Kaunsa wax kis body part pe use karti thi?",
+      "Signal captured → sheet field": "Technical score",
+      "Good answer looks like": "Names specific products and where each is used (e.g. Rica lipo for arms/legs, peel-off for bikini/underarms, specific facial kits)",
+      "Red flags": "Can't name any product / only 'normal wax'",
+      "Rule": "10 / 4 / −10 (draft rubric)",
+      "Est. time (sec)": 55.0,
+      "_excel_row": 40,
+      "responseBuckets": [
+        {
+          "Step": "K1",
+          "Question (short)": "Aapne kaun kaun se wax use kiye hain — jaise Rica, honey, pe…",
+          "Response bucket": "Good",
+          "Example responses": "Names specific products and where each is used (e.g. Rica lipo for arms/legs, peel-off for bikini/underarms, specific facial kits)",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10",
+          "Result": "Pass",
+          "_excel_row": 98
+        },
+        {
+          "Step": "K1",
+          "Response bucket": "Average",
+          "Example responses": "Names a few products generally, no clear usage",
+          "Bot does next": "—",
+          "Outcome / score impact": "+4",
+          "Result": "Flag",
+          "_excel_row": 99
+        },
+        {
+          "Step": "K1",
+          "Response bucket": "Bad",
+          "Example responses": "Can't name any product / only 'normal wax'",
+          "Bot does next": "—",
+          "Outcome / score impact": "−10",
+          "Result": "Reject",
+          "_excel_row": 100
+        }
+      ]
+    },
+    {
+      "Step": "K2",
+      "Block": "Technical knowledge",
+      "Type": "Scored",
+      "Bot says (primary)": "Rica jaise lipo wax aur normal honey wax mein kya farak hota hai? Aap kaunsa kab use karti hain?",
+      "Follow-up probe": "Wax ke baad bachi chipchipahat kaise saaf karti hain?",
+      "Signal captured → sheet field": "Technical score",
+      "Good answer looks like": "Lipo is oil-based, thin layer, removed with strip, residue cleaned with post-wax oil; honey / water-soluble wax residue cleans with water; lipo gentler on skin",
+      "Red flags": "No idea / says both are the same",
+      "Rule": "10 / 4 / −10 (draft rubric)",
+      "Est. time (sec)": 50.0,
+      "_excel_row": 41,
+      "responseBuckets": [
+        {
+          "Step": "K2",
+          "Question (short)": "Rica jaise lipo wax aur normal honey wax mein kya farak hota…",
+          "Response bucket": "Good",
+          "Example responses": "Lipo is oil-based, thin layer, removed with strip, residue cleaned with post-wax oil; honey / water-soluble wax residue cleans with water; lipo gentler on skin",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10",
+          "Result": "Pass",
+          "_excel_row": 101
+        },
+        {
+          "Step": "K2",
+          "Response bucket": "Average",
+          "Example responses": "Knows one difference (e.g. oil vs water cleanup)",
+          "Bot does next": "—",
+          "Outcome / score impact": "+4",
+          "Result": "Flag",
+          "_excel_row": 102
+        },
+        {
+          "Step": "K2",
+          "Response bucket": "Bad",
+          "Example responses": "No idea / says both are the same",
+          "Bot does next": "—",
+          "Outcome / score impact": "−10",
+          "Result": "Reject",
+          "_excel_row": 103
+        }
+      ]
+    },
+    {
+      "Step": "K3",
+      "Block": "Technical knowledge",
+      "Type": "Scored",
+      "Bot says (primary)": "Peel-off wax kahan use karte hain, aur kyun?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Technical score",
+      "Good answer looks like": "Sensitive areas (bikini, underarms, face / upper lip); no strip; grips short or coarse hair; less pain",
+      "Red flags": "No idea",
+      "Rule": "10 / 4 / −10 (draft rubric)",
+      "Est. time (sec)": 40.0,
+      "_excel_row": 42,
+      "responseBuckets": [
+        {
+          "Step": "K3",
+          "Question (short)": "Peel-off wax kahan use karte hain, aur kyun?",
+          "Response bucket": "Good",
+          "Example responses": "Sensitive areas (bikini, underarms, face / upper lip); no strip; grips short or coarse hair; less pain",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10",
+          "Result": "Pass",
+          "_excel_row": 104
+        },
+        {
+          "Step": "K3",
+          "Response bucket": "Average",
+          "Example responses": "Knows the areas but not why",
+          "Bot does next": "—",
+          "Outcome / score impact": "+4",
+          "Result": "Flag",
+          "_excel_row": 105
+        },
+        {
+          "Step": "K3",
+          "Response bucket": "Bad",
+          "Example responses": "No idea",
+          "Bot does next": "—",
+          "Outcome / score impact": "−10",
+          "Result": "Reject",
+          "_excel_row": 106
+        }
+      ]
+    },
+    {
+      "Step": "K4",
+      "Block": "Technical knowledge",
+      "Type": "Scored",
+      "Bot says (primary)": "Waxing se pehle aur baad mein skin pe kya lagati hain?",
+      "Follow-up probe": "Customer ko baad mein kya dhyan rakhne ko kehti hain?",
+      "Signal captured → sheet field": "Technical score",
+      "Good answer looks like": "Before: clean, dry skin + talc; after: post-wax oil for residue, soothing gel/aloe; advises avoiding sun / hot water / scrubbing for a day",
+      "Red flags": "Nothing / no idea",
+      "Rule": "10 / 4 / −10 (draft rubric)",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 43,
+      "responseBuckets": [
+        {
+          "Step": "K4",
+          "Question (short)": "Waxing se pehle aur baad mein skin pe kya lagati hain?",
+          "Response bucket": "Good",
+          "Example responses": "Before: clean, dry skin + talc; after: post-wax oil for residue, soothing gel/aloe; advises avoiding sun / hot water / scrubbing for a day",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10",
+          "Result": "Pass",
+          "_excel_row": 107
+        },
+        {
+          "Step": "K4",
+          "Response bucket": "Average",
+          "Example responses": "Mentions powder or oil only",
+          "Bot does next": "—",
+          "Outcome / score impact": "+4",
+          "Result": "Flag",
+          "_excel_row": 108
+        },
+        {
+          "Step": "K4",
+          "Response bucket": "Bad",
+          "Example responses": "Nothing / no idea",
+          "Bot does next": "—",
+          "Outcome / score impact": "−10",
+          "Result": "Reject",
+          "_excel_row": 109
+        }
+      ]
+    },
+    {
+      "Step": "K5",
+      "Block": "Technical knowledge",
+      "Type": "Scored",
+      "Bot says (primary)": "Ek normal facial ke steps bataiye — shuru se end tak.",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Technical score",
+      "Good answer looks like": "Cleanse → scrub/exfoliate → steam (+extraction) → massage → mask → toner/serum → moisturiser/sunscreen, in a sensible order",
+      "Red flags": "Can't list steps",
+      "Rule": "10 / 4 / −10 (draft rubric)",
+      "Est. time (sec)": 50.0,
+      "_excel_row": 44,
+      "responseBuckets": [
+        {
+          "Step": "K5",
+          "Question (short)": "Ek normal facial ke steps bataiye — shuru se end tak.",
+          "Response bucket": "Good",
+          "Example responses": "Cleanse → scrub/exfoliate → steam (+extraction) → massage → mask → toner/serum → moisturiser/sunscreen, in a sensible order",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10",
+          "Result": "Pass",
+          "_excel_row": 110
+        },
+        {
+          "Step": "K5",
+          "Response bucket": "Average",
+          "Example responses": "Several steps, order mixed",
+          "Bot does next": "—",
+          "Outcome / score impact": "+4",
+          "Result": "Flag",
+          "_excel_row": 111
+        },
+        {
+          "Step": "K5",
+          "Response bucket": "Bad",
+          "Example responses": "Can't list steps",
+          "Bot does next": "—",
+          "Outcome / score impact": "−10",
+          "Result": "Reject",
+          "_excel_row": 112
+        }
+      ]
+    },
+    {
+      "Step": "K6",
+      "Block": "Technical knowledge",
+      "Type": "Scored",
+      "Bot says (primary)": "Oily aur pimple wali skin ke liye facial mein aap kya dhyan rakhti hain?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Technical score",
+      "Good answer looks like": "Avoids heavy massage and harsh scrub on active acne, uses oil-control/gel products, patch test, strict hygiene",
+      "Red flags": "Treats it like any other skin / no idea",
+      "Rule": "10 / 4 / −10 (draft rubric)",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 45,
+      "responseBuckets": [
+        {
+          "Step": "K6",
+          "Question (short)": "Oily aur pimple wali skin ke liye facial mein aap kya dhyan …",
+          "Response bucket": "Good",
+          "Example responses": "Avoids heavy massage and harsh scrub on active acne, uses oil-control/gel products, patch test, strict hygiene",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10",
+          "Result": "Pass",
+          "_excel_row": 113
+        },
+        {
+          "Step": "K6",
+          "Response bucket": "Average",
+          "Example responses": "One sensible precaution",
+          "Bot does next": "—",
+          "Outcome / score impact": "+4",
+          "Result": "Flag",
+          "_excel_row": 114
+        },
+        {
+          "Step": "K6",
+          "Response bucket": "Bad",
+          "Example responses": "Treats it like any other skin / no idea",
+          "Bot does next": "—",
+          "Outcome / score impact": "−10",
+          "Result": "Reject",
+          "_excel_row": 115
+        }
+      ]
+    },
+    {
+      "Step": "K7",
+      "Block": "Technical knowledge",
+      "Type": "Scored",
+      "Bot says (primary)": "Pedicure ke baad tools aur baaki saamaan ka kya karti hain?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Technical score",
+      "Good answer looks like": "Disposables thrown away, metal tools cleaned and sterilised, fresh towel/liner for every customer",
+      "Red flags": "Reuses without cleaning / no idea",
+      "Rule": "10 / 4 / −10 (draft rubric)",
+      "Est. time (sec)": 35.0,
+      "_excel_row": 46,
+      "responseBuckets": [
+        {
+          "Step": "K7",
+          "Question (short)": "Pedicure ke baad tools aur baaki saamaan ka kya karti hain?",
+          "Response bucket": "Good",
+          "Example responses": "Disposables thrown away, metal tools cleaned and sterilised, fresh towel/liner for every customer",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10",
+          "Result": "Pass",
+          "_excel_row": 116
+        },
+        {
+          "Step": "K7",
+          "Response bucket": "Average",
+          "Example responses": "Cleans tools but no sterilising / reuses some disposables",
+          "Bot does next": "—",
+          "Outcome / score impact": "+4",
+          "Result": "Flag",
+          "_excel_row": 117
+        },
+        {
+          "Step": "K7",
+          "Response bucket": "Bad",
+          "Example responses": "Reuses without cleaning / no idea",
+          "Bot does next": "—",
+          "Outcome / score impact": "−10",
+          "Result": "Reject",
+          "_excel_row": 118
+        }
+      ]
+    },
+    {
+      "Step": "C1",
+      "Block": "Customer centricity",
+      "Type": "Scored",
+      "Bot says (primary)": "Facial mask ke time acne wali customer kehti hai jalan ho rahi hai. Aap kya karengi?",
+      "Follow-up probe": "Aur uske baad?",
+      "Signal captured → sheet field": "Scenario score",
+      "Good answer looks like": "Stop, sorry, remove, cold compress + aloe",
+      "Red flags": "'Theek ho jayega'",
+      "Rule": "10 / 4 / −10",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 48,
+      "responseBuckets": [
+        {
+          "Step": "C1",
+          "Question (short)": "Acne, burning in mask",
+          "Response bucket": "Good / Avg / Bad",
+          "Example responses": "Rok ke aloe lagaungi / mask hata dungi / theek ho jayega",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10 / +4 / −10",
+          "Result": "Info",
+          "_excel_row": 120
+        }
+      ]
+    },
+    {
+      "Step": "C2",
+      "Block": "Customer centricity",
+      "Type": "Scored",
+      "Bot says (primary)": "Customer ne thick eyebrows bola tha, par ek eyebrow zyada patli ho gayi. Customer gussa hai. Kya karengi?",
+      "Follow-up probe": "Agli baar ye na ho, uske liye kya karengi?",
+      "Signal captured → sheet field": "Scenario score",
+      "Good answer looks like": "Owns it; consultation + mirror checks",
+      "Red flags": "Blames customer",
+      "Rule": "10 / 4 / −10",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 49,
+      "responseBuckets": [
+        {
+          "Step": "C2",
+          "Question (short)": "Eyebrow too thin",
+          "Response bucket": "Good / Avg / Bad",
+          "Example responses": "Pehle shape poochungi, mirror / sorry next time / aapne hi bola",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10 / +4 / −10",
+          "Result": "Info",
+          "_excel_row": 121
+        }
+      ]
+    },
+    {
+      "Step": "C3",
+      "Block": "Customer centricity",
+      "Type": "Scored",
+      "Bot says (primary)": "Honey wax ke time customer baar baar bol rahi hai wax bahut garam hai. Kya karengi?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Scenario score",
+      "Good answer looks like": "Stop, sorry, adjust, confirm comfort",
+      "Red flags": "'Garam hota hi hai'",
+      "Rule": "10 / 4 / −10",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 50,
+      "responseBuckets": [
+        {
+          "Step": "C3",
+          "Question (short)": "Honey wax too hot",
+          "Response bucket": "Good / Avg / Bad",
+          "Example responses": "Rok ke temp kam, poochke / temp kam / garam hota hi hai",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10 / +4 / −10",
+          "Result": "Info",
+          "_excel_row": 122
+        }
+      ]
+    },
+    {
+      "Step": "C4",
+      "Block": "Customer centricity",
+      "Type": "Scored",
+      "Bot says (primary)": "Service ke time customer ka bachcha baar baar beech mein aa raha hai. Kya karengi?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Scenario score",
+      "Good answer looks like": "Explains safety risk, asks customer to engage child",
+      "Red flags": "Does nothing",
+      "Rule": "10 / 4 / −10",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 51,
+      "responseBuckets": [
+        {
+          "Step": "C4",
+          "Question (short)": "Child interrupting",
+          "Response bucket": "Good / Avg / Bad",
+          "Example responses": "Safety batake busy rakhne ko kahungi / doosre room / kuch nahi",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10 / +4 / −10",
+          "Result": "Info",
+          "_excel_row": 123
+        }
+      ]
+    },
+    {
+      "Step": "C5",
+      "Block": "Customer centricity",
+      "Type": "Scored",
+      "Bot says (primary)": "Cleanup ke baad customer chhota back massage maangti hai jo service mein nahi hai. Kya karengi?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Scenario score",
+      "Good answer looks like": "Explains politely; offers to add on app if time allows",
+      "Red flags": "Rude, or off-app cash",
+      "Rule": "10 / 4 / −10",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 52,
+      "responseBuckets": [
+        {
+          "Step": "C5",
+          "Question (short)": "Back massage not in cleanup",
+          "Response bucket": "Good / Avg / Bad",
+          "Example responses": "App pe add karte hain / mana kar dungi / cash lekar",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10 / +4 / −10",
+          "Result": "Info",
+          "_excel_row": 124
+        }
+      ]
+    },
+    {
+      "Step": "C6",
+      "Block": "Customer centricity",
+      "Type": "Scored",
+      "Bot says (primary)": "Customer app ke bahar discount maang rahi hai. Kya karengi?",
+      "Follow-up probe": "Agar wo zid kare to?",
+      "Signal captured → sheet field": "Scenario score",
+      "Good answer looks like": "Price fixed on app, no cash deals",
+      "Red flags": "Off-app discount, argues",
+      "Rule": "10 / 4 / −10",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 53,
+      "responseBuckets": [
+        {
+          "Step": "C6",
+          "Question (short)": "Discount outside app",
+          "Response bucket": "Good / Avg / Bad",
+          "Example responses": "Price app pe fix, offers dikhaungi / nahi ho sakta / cash mein kam",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10 / +4 / −10",
+          "Result": "Info",
+          "_excel_row": 125
+        }
+      ]
+    },
+    {
+      "Step": "C7",
+      "Block": "Customer centricity",
+      "Type": "Scored",
+      "Bot says (primary)": "Customer ek service add karna chahti hai jo book nahi ki. Kya karengi?",
+      "Follow-up probe": "Payment kaise hoga?",
+      "Signal captured → sheet field": "Scenario score",
+      "Good answer looks like": "Adds on app, checks next job time",
+      "Red flags": "Cash off-app, rude",
+      "Rule": "10 / 4 / −10",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 54,
+      "responseBuckets": [
+        {
+          "Step": "C7",
+          "Question (short)": "Extra service not booked",
+          "Response bucket": "Good / Avg / Bad",
+          "Example responses": "App pe add / agli baar book / cash mein",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10 / +4 / −10",
+          "Result": "Info",
+          "_excel_row": 126
+        }
+      ]
+    },
+    {
+      "Step": "C8",
+      "Block": "Customer centricity",
+      "Type": "Scored (new)",
+      "Bot says (primary)": "Traffic ki wajah se aap job pe 20 minute late ho rahi hain. Kya karengi?",
+      "Follow-up probe": "Pahunchne ke baad kya karengi?",
+      "Signal captured → sheet field": "Scenario score",
+      "Good answer looks like": "Informs customer early with ETA, apologises, doesn't rush the service",
+      "Red flags": "No information, rushes service, blames traffic",
+      "Rule": "10: informs early + apologises + full service · 4: apologises on arrival only · −10: no info / rushes / argues",
+      "Est. time (sec)": 60.0,
+      "_excel_row": 55,
+      "responseBuckets": [
+        {
+          "Step": "C8",
+          "Question (short)": "Running 20 min late",
+          "Response bucket": "Good",
+          "Example responses": "Pehle hi customer ko call karke ETA bataungi, sorry bolungi, service jaldi nahi karungi",
+          "Bot does next": "—",
+          "Outcome / score impact": "+10",
+          "Result": "Pass",
+          "_excel_row": 127
+        },
+        {
+          "Step": "C8",
+          "Response bucket": "Average",
+          "Example responses": "Pahunch ke sorry bol dungi",
+          "Bot does next": "—",
+          "Outcome / score impact": "+4",
+          "Result": "Flag",
+          "_excel_row": 128
+        },
+        {
+          "Step": "C8",
+          "Response bucket": "Bad",
+          "Example responses": "Kuch nahi bataungi / traffic tha, kya karun / service jaldi khatam",
+          "Bot does next": "—",
+          "Outcome / score impact": "−10",
+          "Result": "Reject",
+          "_excel_row": 129
+        }
+      ]
+    },
+    {
+      "Step": "D1",
+      "Block": "Close",
+      "Type": "Scored (light)",
+      "Bot says (primary)": "Kya aapko UC ke baare mein kuch poochna hai?",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Engagement",
+      "Good answer looks like": "Asks about earnings, training, jobs",
+      "Red flags": "Only flexibility / leave",
+      "Rule": "Small intent signal",
+      "Est. time (sec)": 45.0,
+      "_excel_row": 57,
+      "responseBuckets": [
+        {
+          "Step": "D1",
+          "Question (short)": "Questions for UC",
+          "Response bucket": "Earnings / training / jobs",
+          "Example responses": "Pehle mahine kitne jobs?",
+          "Bot does next": "Answer from FAQ",
+          "Outcome / score impact": "Positive intent",
+          "Result": "Pass",
+          "_excel_row": 131
+        },
+        {
+          "Step": "D1",
+          "Response bucket": "Only flexibility / leave",
+          "Example responses": "Chhutti kab?",
+          "Bot does next": "Answer from FAQ",
+          "Outcome / score impact": "Mild intent flag",
+          "Result": "Flag",
+          "_excel_row": 132
+        }
+      ]
+    },
+    {
+      "Step": "D2",
+      "Block": "Close",
+      "Type": "Info",
+      "Bot says (primary)": "Dhanyavaad! Hamari team aapko agla step batayegi.",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "—",
+      "Rule": "Bot never states pass / fail",
+      "Est. time (sec)": 10.0,
+      "_excel_row": 58,
+      "responseBuckets": []
+    }
+  ],
+  "responseBucketsAll": [
+    {
+      "Step": "A0",
+      "Question (short)": "Consent & language",
+      "Response bucket": "Agrees, Hindi / English",
+      "Example responses": "Haan, Hindi mein",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Proceed",
+      "Result": "Info",
+      "_excel_row": 6
+    },
+    {
+      "Step": "A0",
+      "Response bucket": "Speaks only Kannada",
+      "Example responses": "Kannada mein bolti hoon",
+      "Bot does next": "Clarify once in Kannada that interview is in Hindi/English; continue",
+      "Outcome / score impact": "A11 decides",
+      "Result": "Info",
+      "_excel_row": 7
+    },
+    {
+      "Step": "A0",
+      "Response bucket": "Refuses recording",
+      "Example responses": "Record mat karo",
+      "Bot does next": "Thank her; hand over",
+      "Outcome / score impact": "Manual screening (not a reject)",
+      "Result": "Hold",
+      "_excel_row": 8
+    },
+    {
+      "Step": "A1",
+      "Question (short)": "Where do you stay + movement",
+      "Response bucket": "Named area, open to travel / shift",
+      "Example responses": "Bellandur; haan, door bhi jaungi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Area → proximity check",
+      "Result": "Manual",
+      "_excel_row": 9
+    },
+    {
+      "Step": "A1",
+      "Response bucket": "Far, open to moving",
+      "Example responses": "Hoskote, par shift ho sakti hoon",
+      "Bot does next": "Ask: 'Kab tak?'",
+      "Outcome / score impact": "Proximity check + move date",
+      "Result": "Manual",
+      "_excel_row": 10
+    },
+    {
+      "Step": "A1",
+      "Response bucket": "Far, not open to moving",
+      "Example responses": "Sirf apne area mein",
+      "Bot does next": "Note",
+      "Outcome / score impact": "Proximity check; likely reject",
+      "Result": "Manual",
+      "_excel_row": 11
+    },
+    {
+      "Step": "A2",
+      "Question (short)": "Age (Aadhaar)",
+      "Response bucket": "18–38",
+      "Example responses": "32",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 12
+    },
+    {
+      "Step": "A2",
+      "Response bucket": "39–40",
+      "Example responses": "39",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Manual review",
+      "Result": "Manual",
+      "_excel_row": 13
+    },
+    {
+      "Step": "A2",
+      "Response bucket": "Above 40 / below 18",
+      "Example responses": "42 / 17",
+      "Bot does next": "Polite close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 14
+    },
+    {
+      "Step": "A3",
+      "Question (short)": "Who lives at home / married",
+      "Response bucket": "Clear description",
+      "Example responses": "Pati, saas, 2 bachche",
+      "Bot does next": "Capture marital status, kids",
+      "Outcome / score impact": "Fields captured",
+      "Result": "Info",
+      "_excel_row": 15
+    },
+    {
+      "Step": "A3",
+      "Response bucket": "Marital status unclear",
+      "Example responses": "Main aur bachche",
+      "Bot does next": "Ask gently: 'Aap shaadi-shuda hain?'",
+      "Outcome / score impact": "Captured",
+      "Result": "Info",
+      "_excel_row": 16
+    },
+    {
+      "Step": "A4",
+      "Question (short)": "Youngest child's age",
+      "Response bucket": "3 years or older",
+      "Example responses": "5 saal",
+      "Bot does next": "Go to A5",
+      "Outcome / score impact": "Continue",
+      "Result": "Pass",
+      "_excel_row": 17
+    },
+    {
+      "Step": "A4",
+      "Response bucket": "Under 3 years",
+      "Example responses": "2 saal",
+      "Bot does next": "Defer script: reapply when child turns 3",
+      "Outcome / score impact": "Defer",
+      "Result": "Defer",
+      "_excel_row": 18
+    },
+    {
+      "Step": "A5",
+      "Question (short)": "Who looks after kids",
+      "Response bucket": "Named family member, done before",
+      "Example responses": "Saas sambhalti hain, pehle bhi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 19
+    },
+    {
+      "Step": "A5",
+      "Response bucket": "Named, not confirmed",
+      "Example responses": "Mummy sambhal lengi shayad",
+      "Bot does next": "Probe: 'Unse baat ho gayi hai?'",
+      "Outcome / score impact": "Pass if confirmed, else hold",
+      "Result": "Hold",
+      "_excel_row": 20
+    },
+    {
+      "Step": "A5",
+      "Response bucket": "Non-family (maid / daycare) only",
+      "Example responses": "Daycare mein chhodti hoon",
+      "Bot does next": "Ask: 'Weekend aur late evening?'",
+      "Outcome / score impact": "Hold; screening lead decides",
+      "Result": "Hold",
+      "_excel_row": 21
+    },
+    {
+      "Step": "A5",
+      "Response bucket": "No one",
+      "Example responses": "Main manage kar lungi",
+      "Bot does next": "Polite close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 22
+    },
+    {
+      "Step": "A6",
+      "Question (short)": "Pregnant / baby plan",
+      "Response bucket": "No plan in 12 months",
+      "Example responses": "Abhi koi plan nahi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 23
+    },
+    {
+      "Step": "A6",
+      "Response bucket": "Pregnant / plan ≤ 6 months",
+      "Example responses": "Haan / 4 mahine baad",
+      "Bot does next": "Defer script",
+      "Outcome / score impact": "Defer",
+      "Result": "Defer",
+      "_excel_row": 24
+    },
+    {
+      "Step": "A6",
+      "Response bucket": "Plan in 6–12 months",
+      "Example responses": "Agle saal",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Stickiness down",
+      "Result": "Flag",
+      "_excel_row": 25
+    },
+    {
+      "Step": "A6",
+      "Response bucket": "Prefers not to say",
+      "Example responses": "Nahi batana",
+      "Bot does next": "Accept",
+      "Outcome / score impact": "No penalty",
+      "Result": "Info",
+      "_excel_row": 26
+    },
+    {
+      "Step": "A7",
+      "Question (short)": "Own salon / own clients",
+      "Response bucket": "Neither",
+      "Example responses": "Nahi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 27
+    },
+    {
+      "Step": "A7",
+      "Response bucket": "Had salon, closed",
+      "Example responses": "Covid mein band",
+      "Bot does next": "Ask her to bring proof",
+      "Outcome / score impact": "Closure proof check",
+      "Result": "Manual",
+      "_excel_row": 28
+    },
+    {
+      "Step": "A7",
+      "Response bucket": "Freelance, will stop",
+      "Example responses": "5–6 clients, chhod dungi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Stickiness slightly down",
+      "Result": "Flag",
+      "_excel_row": 29
+    },
+    {
+      "Step": "A7",
+      "Response bucket": "Won't close / stop",
+      "Example responses": "Salon bhi chalega, UC bhi",
+      "Bot does next": "Polite close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 30
+    },
+    {
+      "Step": "A8",
+      "Question (short)": "Pedicure (bikini noted)",
+      "Response bucket": "Does pedicure / ready to learn",
+      "Example responses": "Karti hoon",
+      "Bot does next": "Ask bikini wax; note answer",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 31
+    },
+    {
+      "Step": "A8",
+      "Response bucket": "Hesitant on pedicure",
+      "Example responses": "Pedicure kam kiya hai",
+      "Bot does next": "Explain it's taught in training; ask again",
+      "Outcome / score impact": "Pass if agrees",
+      "Result": "Hold",
+      "_excel_row": 32
+    },
+    {
+      "Step": "A8",
+      "Response bucket": "Refuses pedicure",
+      "Example responses": "Pedicure nahi karungi",
+      "Bot does next": "Polite close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 33
+    },
+    {
+      "Step": "A9",
+      "Question (short)": "Travel 3–4 km / 2-wheeler",
+      "Response bucket": "Has 2-wheeler, travels herself",
+      "Example responses": "Scooty hai, khud jaungi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 34
+    },
+    {
+      "Step": "A9",
+      "Response bucket": "No 2-wheeler, will learn",
+      "Example responses": "Seekh lungi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass; training note",
+      "Result": "Pass",
+      "_excel_row": 35
+    },
+    {
+      "Step": "A9",
+      "Response bucket": "Depends on husband to drop",
+      "Example responses": "Pati chhod denge",
+      "Bot does next": "Probe: 'Jab wo kaam pe hon tab?'",
+      "Outcome / score impact": "Flag: availability risk",
+      "Result": "Flag",
+      "_excel_row": 36
+    },
+    {
+      "Step": "A9",
+      "Response bucket": "Won't travel / won't ride",
+      "Example responses": "Paas mein hi / scooty nahi chalaungi",
+      "Bot does next": "Polite close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 37
+    },
+    {
+      "Step": "A10",
+      "Question (short)": "Read address + product card",
+      "Response bucket": "Fluent",
+      "Example responses": "Reads O3+, Casmara cleanly",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 38
+    },
+    {
+      "Step": "A10",
+      "Response bucket": "Mistakes on long words",
+      "Example responses": "Slow on product names",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass; communication medium",
+      "Result": "Flag",
+      "_excel_row": 39
+    },
+    {
+      "Step": "A10",
+      "Response bucket": "Can't read English",
+      "Example responses": "Stops",
+      "Bot does next": "Polite close: practise, reapply",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 40
+    },
+    {
+      "Step": "A11",
+      "Question (short)": "Intro role-play in Hindi / English",
+      "Response bucket": "Fluent",
+      "Example responses": "Namaste ma'am, main UC se Priya, aaj waxing hai…",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass; communication full",
+      "Result": "Pass",
+      "_excel_row": 41
+    },
+    {
+      "Step": "A11",
+      "Response bucket": "Basic but understandable",
+      "Example responses": "Main… UC se… waxing",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass; communication medium",
+      "Result": "Flag",
+      "_excel_row": 42
+    },
+    {
+      "Step": "A11",
+      "Response bucket": "Can't converse in Hindi / English",
+      "Example responses": "Only Kannada / silence",
+      "Bot does next": "Repeat simpler once; then close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 43
+    },
+    {
+      "Step": "A12",
+      "Question (short)": "Past UC work + all numbers",
+      "Response bucket": "Never worked with UC",
+      "Example responses": "Nahi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Registered number → profile check",
+      "Result": "Manual",
+      "_excel_row": 44
+    },
+    {
+      "Step": "A12",
+      "Response bucket": "Worked, shares numbers",
+      "Example responses": "2 number the",
+      "Bot does next": "Ask category for each",
+      "Outcome / score impact": "All numbers → profile check",
+      "Result": "Manual",
+      "_excel_row": 45
+    },
+    {
+      "Step": "A12",
+      "Response bucket": "Can't recall number",
+      "Example responses": "Purana sim band",
+      "Bot does next": "Ask name, category, year",
+      "Outcome / score impact": "Profile check by details",
+      "Result": "Manual",
+      "_excel_row": 46
+    },
+    {
+      "Step": "B1",
+      "Question (short)": "Standing / lifting",
+      "Response bucket": "No issues",
+      "Example responses": "10 ghante kaam kiya hai",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Health check: clear",
+      "Result": "Manual",
+      "_excel_row": 48
+    },
+    {
+      "Step": "B1",
+      "Response bucket": "Mentions an issue",
+      "Example responses": "Back pain, thyroid",
+      "Bot does next": "Note only — no diagnosis",
+      "Outcome / score impact": "Manual health check",
+      "Result": "Manual",
+      "_excel_row": 49
+    },
+    {
+      "Step": "B2",
+      "Question (short)": "Where & how long worked",
+      "Response bucket": "≥ 1 yr, names + day detail",
+      "Example responses": "Green Trends 3 saal",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Captured",
+      "Result": "Info",
+      "_excel_row": 50
+    },
+    {
+      "Step": "B2",
+      "Response bucket": "< 1 yr / course only",
+      "Example responses": "3 mahine course",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Fresher flag; practical confirms",
+      "Result": "Flag",
+      "_excel_row": 51
+    },
+    {
+      "Step": "B2",
+      "Response bucket": "Doesn't add up",
+      "Example responses": "10 saal… naam yaad nahi",
+      "Bot does next": "Probe day-in-life, gaps",
+      "Outcome / score impact": "Inflated-experience flag",
+      "Result": "Flag",
+      "_excel_row": 52
+    },
+    {
+      "Step": "B3",
+      "Question (short)": "Salon tier",
+      "Response bucket": "High-end",
+      "Example responses": "Lakme / Naturals, Casmara / O3+, higher rates",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "High-end → PR candidate",
+      "Result": "Info",
+      "_excel_row": 53
+    },
+    {
+      "Step": "B3",
+      "Response bucket": "Mid (B-type)",
+      "Example responses": "Unisex chain, mid rates",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Mid → PR / PI per hard skill",
+      "Result": "Info",
+      "_excel_row": 54
+    },
+    {
+      "Step": "B3",
+      "Response bucket": "Basic (local)",
+      "Example responses": "Local parlour, low rates, no brand names",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Basic → PI candidate",
+      "Result": "Info",
+      "_excel_row": 55
+    },
+    {
+      "Step": "B4",
+      "Question (short)": "Why left last job",
+      "Response bucket": "Growth / pay / travel",
+      "Example responses": "Salary kam thi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 56
+    },
+    {
+      "Step": "B4",
+      "Response bucket": "Wanted flexibility",
+      "Example responses": "Timing zyada tha",
+      "Bot does next": "Probe: 'UC mein 9–11 ghante?'",
+      "Outcome / score impact": "Stickiness down",
+      "Result": "Flag",
+      "_excel_row": 57
+    },
+    {
+      "Step": "B5",
+      "Question (short)": "Income sources / husband working",
+      "Response bucket": "Husband working, modest income",
+      "Example responses": "Pati driver, 20–25k",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Supports need for money",
+      "Result": "Pass",
+      "_excel_row": 58
+    },
+    {
+      "Step": "B5",
+      "Response bucket": "Husband not working / unwell",
+      "Example responses": "Kaam chhoot gaya",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Raises need for money",
+      "Result": "Pass",
+      "_excel_row": 59
+    },
+    {
+      "Step": "B5",
+      "Response bucket": "Widow / single mother / divorced",
+      "Example responses": "Main hi kamaati hoon",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "High need for money",
+      "Result": "Pass",
+      "_excel_row": 60
+    },
+    {
+      "Step": "B5",
+      "Response bucket": "Unmarried, family earns",
+      "Example responses": "Papa farmer, bhai driver",
+      "Bot does next": "Ask who depends on her",
+      "Outcome / score impact": "Medium",
+      "Result": "Info",
+      "_excel_row": 61
+    },
+    {
+      "Step": "B5",
+      "Response bucket": "Husband / family earns very well",
+      "Example responses": "Pati 1.5 lakh",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Need for money likely LOW",
+      "Result": "Flag",
+      "_excel_row": 62
+    },
+    {
+      "Step": "B5",
+      "Response bucket": "Refuses to share",
+      "Example responses": "Nahi bata sakti",
+      "Bot does next": "Move on",
+      "Outcome / score impact": "Flag",
+      "Result": "Flag",
+      "_excel_row": 63
+    },
+    {
+      "Step": "B6",
+      "Question (short)": "Who runs the house",
+      "Response bucket": "Self",
+      "Example responses": "Main hi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Raises need-for-money weight",
+      "Result": "Pass",
+      "_excel_row": 64
+    },
+    {
+      "Step": "B6",
+      "Response bucket": "Fully spouse / family",
+      "Example responses": "Pati hi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Cross-check with B7",
+      "Result": "Flag",
+      "_excel_row": 65
+    },
+    {
+      "Step": "B7",
+      "Question (short)": "₹10,000 extra – where first",
+      "Response bucket": "Specific liability",
+      "Example responses": "EMI, fees, ilaaj",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "HIGH",
+      "Result": "Pass",
+      "_excel_row": 66
+    },
+    {
+      "Step": "B7",
+      "Response bucket": "General ambition",
+      "Example responses": "Kabhi ghar lena hai",
+      "Bot does next": "Probe: 'Kab tak, kitna?'",
+      "Outcome / score impact": "MEDIUM",
+      "Result": "Flag",
+      "_excel_row": 67
+    },
+    {
+      "Step": "B7",
+      "Response bucket": "No real need",
+      "Example responses": "Apne liye, time pass",
+      "Bot does next": "Probe once",
+      "Outcome / score impact": "LOW – heavy score down",
+      "Result": "Flag",
+      "_excel_row": 68
+    },
+    {
+      "Step": "B8",
+      "Question (short)": "Current earnings",
+      "Response bucket": "Figure + proof",
+      "Example responses": "25k, GPay",
+      "Bot does next": "Note",
+      "Outcome / score impact": "Income proof check",
+      "Result": "Manual",
+      "_excel_row": 69
+    },
+    {
+      "Step": "B8",
+      "Response bucket": "Cash / refuses",
+      "Example responses": "Cash milta hai",
+      "Bot does next": "Note",
+      "Outcome / score impact": "Income proof check",
+      "Result": "Manual",
+      "_excel_row": 70
+    },
+    {
+      "Step": "B9",
+      "Question (short)": "Expected UC earnings",
+      "Response bucket": "Within ~2× current",
+      "Example responses": "20k → 40k",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 71
+    },
+    {
+      "Step": "B9",
+      "Response bucket": "Above 2× current",
+      "Example responses": "15k → 1 lakh",
+      "Bot does next": "Share realistic early range",
+      "Outcome / score impact": "Stickiness down",
+      "Result": "Flag",
+      "_excel_row": 72
+    },
+    {
+      "Step": "B10",
+      "Question (short)": "Why UC",
+      "Response bucket": "Knows the model",
+      "Example responses": "Ghar jaake service, achhi kamai",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 73
+    },
+    {
+      "Step": "B10",
+      "Response bucket": "Referred, little idea",
+      "Example responses": "Dost ne bola",
+      "Bot does next": "Explain in 2 lines; ask what appeals",
+      "Outcome / score impact": "Medium",
+      "Result": "Flag",
+      "_excel_row": 74
+    },
+    {
+      "Step": "B10",
+      "Response bucket": "Learn then leave",
+      "Example responses": "Training lekar parlour kholungi",
+      "Bot does next": "Probe timeline",
+      "Outcome / score impact": "Stickiness LOW",
+      "Result": "Flag",
+      "_excel_row": 75
+    },
+    {
+      "Step": "B11",
+      "Question (short)": "Where in 2 years",
+      "Response bucket": "Grow in UC / house / kids",
+      "Example responses": "Ghar banana hai",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 76
+    },
+    {
+      "Step": "B11",
+      "Response bucket": "Exit within 2 yrs",
+      "Example responses": "Shaadi, gaon, apna salon",
+      "Bot does next": "Probe: 'Kab tak?'",
+      "Outcome / score impact": "Stickiness LOW",
+      "Result": "Flag",
+      "_excel_row": 77
+    },
+    {
+      "Step": "B12",
+      "Question (short)": "Anything that may make you stop",
+      "Response bucket": "Nothing / short leave",
+      "Example responses": "Puja mein 10 din",
+      "Bot does next": "Note dates",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 78
+    },
+    {
+      "Step": "B12",
+      "Response bucket": "Long / frequent trips",
+      "Example responses": "Har 2 mahine gaon",
+      "Bot does next": "Probe",
+      "Outcome / score impact": "Stickiness down",
+      "Result": "Flag",
+      "_excel_row": 79
+    },
+    {
+      "Step": "B13",
+      "Question (short)": "Weekend till 8 pm",
+      "Response bucket": "Plan + family OK",
+      "Example responses": "Saas ghar dekh legi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 80
+    },
+    {
+      "Step": "B13",
+      "Response bucket": "Fixed short commitment",
+      "Example responses": "Sunday 8–10 church",
+      "Bot does next": "Note",
+      "Outcome / score impact": "Pass with calendar note",
+      "Result": "Pass",
+      "_excel_row": 81
+    },
+    {
+      "Step": "B13",
+      "Response bucket": "Needs family permission",
+      "Example responses": "Pati se poochna padega",
+      "Bot does next": "Callback within 2 days",
+      "Outcome / score impact": "Hold",
+      "Result": "Hold",
+      "_excel_row": 82
+    },
+    {
+      "Step": "B13",
+      "Response bucket": "Can't do weekends",
+      "Example responses": "Sunday nahi",
+      "Bot does next": "Polite close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 83
+    },
+    {
+      "Step": "B14",
+      "Question (short)": "9–11 hrs daily",
+      "Response bucket": "Accepts",
+      "Example responses": "Theek hai",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 84
+    },
+    {
+      "Step": "B14",
+      "Response bucket": "Part-time only",
+      "Example responses": "4–5 ghante hi",
+      "Bot does next": "Polite close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 85
+    },
+    {
+      "Step": "B15",
+      "Question (short)": "Training 12 / 25 days",
+      "Response bucket": "Accepts + commute plan",
+      "Example responses": "Metro se aa jaungi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 86
+    },
+    {
+      "Step": "B15",
+      "Response bucket": "Refuses",
+      "Example responses": "Itne din nahi",
+      "Bot does next": "Polite close",
+      "Outcome / score impact": "Reject",
+      "Result": "Reject",
+      "_excel_row": 87
+    },
+    {
+      "Step": "B16",
+      "Question (short)": "Practice models",
+      "Response bucket": "5–10 named",
+      "Example responses": "Padosi, bhabhi",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Full points",
+      "Result": "Pass",
+      "_excel_row": 88
+    },
+    {
+      "Step": "B16",
+      "Response bucket": "Fewer than 5 / none",
+      "Example responses": "2–3 / kisi ko nahi",
+      "Bot does next": "Note",
+      "Outcome / score impact": "Flag: trainer helps",
+      "Result": "Flag",
+      "_excel_row": 89
+    },
+    {
+      "Step": "B17",
+      "Question (short)": "₹2,000 recharge",
+      "Response bucket": "Yes",
+      "Example responses": "Ho jayega",
+      "Bot does next": "Continue",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 90
+    },
+    {
+      "Step": "B17",
+      "Response bucket": "Needs time",
+      "Example responses": "Salary ke baad",
+      "Bot does next": "Ask date",
+      "Outcome / score impact": "Hold",
+      "Result": "Hold",
+      "_excel_row": 91
+    },
+    {
+      "Step": "B17",
+      "Response bucket": "Can't arrange",
+      "Example responses": "Paise nahi",
+      "Bot does next": "Note",
+      "Outcome / score impact": "Flag",
+      "Result": "Flag",
+      "_excel_row": 92
+    },
+    {
+      "Step": "B18",
+      "Question (short)": "Start date",
+      "Response bucket": "Confirms batch date",
+      "Example responses": "Haan, aa jaungi",
+      "Bot does next": "Lock date",
+      "Outcome / score impact": "Pass",
+      "Result": "Pass",
+      "_excel_row": 93
+    },
+    {
+      "Step": "B18",
+      "Response bucket": "Specific later date ≤ 30 days",
+      "Example responses": "15 tareekh se",
+      "Bot does next": "Lock that date",
+      "Outcome / score impact": "Hold for next batch",
+      "Result": "Hold",
+      "_excel_row": 94
+    },
+    {
+      "Step": "B18",
+      "Response bucket": "Vague / > 30 days",
+      "Example responses": "Dekhte hain / 2 mahine baad",
+      "Bot does next": "Ask for exact date once",
+      "Outcome / score impact": "Flag; re-screen if > 30 days",
+      "Result": "Flag",
+      "_excel_row": 95
+    },
+    {
+      "Step": "B19",
+      "Question (short)": "PAN–Aadhaar",
+      "Response bucket": "Yes / not sure",
+      "Example responses": "Haan / pata nahi",
+      "Bot does next": "Share fix steps if needed",
+      "Outcome / score impact": "Manual verification",
+      "Result": "Manual",
+      "_excel_row": 96
+    },
+    {
+      "Step": "K1",
+      "Question (short)": "Aapne kaun kaun se wax use kiye hain — jaise Rica, honey, pe…",
+      "Response bucket": "Good",
+      "Example responses": "Names specific products and where each is used (e.g. Rica lipo for arms/legs, peel-off for bikini/underarms, specific facial kits)",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10",
+      "Result": "Pass",
+      "_excel_row": 98
+    },
+    {
+      "Step": "K1",
+      "Response bucket": "Average",
+      "Example responses": "Names a few products generally, no clear usage",
+      "Bot does next": "—",
+      "Outcome / score impact": "+4",
+      "Result": "Flag",
+      "_excel_row": 99
+    },
+    {
+      "Step": "K1",
+      "Response bucket": "Bad",
+      "Example responses": "Can't name any product / only 'normal wax'",
+      "Bot does next": "—",
+      "Outcome / score impact": "−10",
+      "Result": "Reject",
+      "_excel_row": 100
+    },
+    {
+      "Step": "K2",
+      "Question (short)": "Rica jaise lipo wax aur normal honey wax mein kya farak hota…",
+      "Response bucket": "Good",
+      "Example responses": "Lipo is oil-based, thin layer, removed with strip, residue cleaned with post-wax oil; honey / water-soluble wax residue cleans with water; lipo gentler on skin",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10",
+      "Result": "Pass",
+      "_excel_row": 101
+    },
+    {
+      "Step": "K2",
+      "Response bucket": "Average",
+      "Example responses": "Knows one difference (e.g. oil vs water cleanup)",
+      "Bot does next": "—",
+      "Outcome / score impact": "+4",
+      "Result": "Flag",
+      "_excel_row": 102
+    },
+    {
+      "Step": "K2",
+      "Response bucket": "Bad",
+      "Example responses": "No idea / says both are the same",
+      "Bot does next": "—",
+      "Outcome / score impact": "−10",
+      "Result": "Reject",
+      "_excel_row": 103
+    },
+    {
+      "Step": "K3",
+      "Question (short)": "Peel-off wax kahan use karte hain, aur kyun?",
+      "Response bucket": "Good",
+      "Example responses": "Sensitive areas (bikini, underarms, face / upper lip); no strip; grips short or coarse hair; less pain",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10",
+      "Result": "Pass",
+      "_excel_row": 104
+    },
+    {
+      "Step": "K3",
+      "Response bucket": "Average",
+      "Example responses": "Knows the areas but not why",
+      "Bot does next": "—",
+      "Outcome / score impact": "+4",
+      "Result": "Flag",
+      "_excel_row": 105
+    },
+    {
+      "Step": "K3",
+      "Response bucket": "Bad",
+      "Example responses": "No idea",
+      "Bot does next": "—",
+      "Outcome / score impact": "−10",
+      "Result": "Reject",
+      "_excel_row": 106
+    },
+    {
+      "Step": "K4",
+      "Question (short)": "Waxing se pehle aur baad mein skin pe kya lagati hain?",
+      "Response bucket": "Good",
+      "Example responses": "Before: clean, dry skin + talc; after: post-wax oil for residue, soothing gel/aloe; advises avoiding sun / hot water / scrubbing for a day",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10",
+      "Result": "Pass",
+      "_excel_row": 107
+    },
+    {
+      "Step": "K4",
+      "Response bucket": "Average",
+      "Example responses": "Mentions powder or oil only",
+      "Bot does next": "—",
+      "Outcome / score impact": "+4",
+      "Result": "Flag",
+      "_excel_row": 108
+    },
+    {
+      "Step": "K4",
+      "Response bucket": "Bad",
+      "Example responses": "Nothing / no idea",
+      "Bot does next": "—",
+      "Outcome / score impact": "−10",
+      "Result": "Reject",
+      "_excel_row": 109
+    },
+    {
+      "Step": "K5",
+      "Question (short)": "Ek normal facial ke steps bataiye — shuru se end tak.",
+      "Response bucket": "Good",
+      "Example responses": "Cleanse → scrub/exfoliate → steam (+extraction) → massage → mask → toner/serum → moisturiser/sunscreen, in a sensible order",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10",
+      "Result": "Pass",
+      "_excel_row": 110
+    },
+    {
+      "Step": "K5",
+      "Response bucket": "Average",
+      "Example responses": "Several steps, order mixed",
+      "Bot does next": "—",
+      "Outcome / score impact": "+4",
+      "Result": "Flag",
+      "_excel_row": 111
+    },
+    {
+      "Step": "K5",
+      "Response bucket": "Bad",
+      "Example responses": "Can't list steps",
+      "Bot does next": "—",
+      "Outcome / score impact": "−10",
+      "Result": "Reject",
+      "_excel_row": 112
+    },
+    {
+      "Step": "K6",
+      "Question (short)": "Oily aur pimple wali skin ke liye facial mein aap kya dhyan …",
+      "Response bucket": "Good",
+      "Example responses": "Avoids heavy massage and harsh scrub on active acne, uses oil-control/gel products, patch test, strict hygiene",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10",
+      "Result": "Pass",
+      "_excel_row": 113
+    },
+    {
+      "Step": "K6",
+      "Response bucket": "Average",
+      "Example responses": "One sensible precaution",
+      "Bot does next": "—",
+      "Outcome / score impact": "+4",
+      "Result": "Flag",
+      "_excel_row": 114
+    },
+    {
+      "Step": "K6",
+      "Response bucket": "Bad",
+      "Example responses": "Treats it like any other skin / no idea",
+      "Bot does next": "—",
+      "Outcome / score impact": "−10",
+      "Result": "Reject",
+      "_excel_row": 115
+    },
+    {
+      "Step": "K7",
+      "Question (short)": "Pedicure ke baad tools aur baaki saamaan ka kya karti hain?",
+      "Response bucket": "Good",
+      "Example responses": "Disposables thrown away, metal tools cleaned and sterilised, fresh towel/liner for every customer",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10",
+      "Result": "Pass",
+      "_excel_row": 116
+    },
+    {
+      "Step": "K7",
+      "Response bucket": "Average",
+      "Example responses": "Cleans tools but no sterilising / reuses some disposables",
+      "Bot does next": "—",
+      "Outcome / score impact": "+4",
+      "Result": "Flag",
+      "_excel_row": 117
+    },
+    {
+      "Step": "K7",
+      "Response bucket": "Bad",
+      "Example responses": "Reuses without cleaning / no idea",
+      "Bot does next": "—",
+      "Outcome / score impact": "−10",
+      "Result": "Reject",
+      "_excel_row": 118
+    },
+    {
+      "Step": "C1",
+      "Question (short)": "Acne, burning in mask",
+      "Response bucket": "Good / Avg / Bad",
+      "Example responses": "Rok ke aloe lagaungi / mask hata dungi / theek ho jayega",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10 / +4 / −10",
+      "Result": "Info",
+      "_excel_row": 120
+    },
+    {
+      "Step": "C2",
+      "Question (short)": "Eyebrow too thin",
+      "Response bucket": "Good / Avg / Bad",
+      "Example responses": "Pehle shape poochungi, mirror / sorry next time / aapne hi bola",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10 / +4 / −10",
+      "Result": "Info",
+      "_excel_row": 121
+    },
+    {
+      "Step": "C3",
+      "Question (short)": "Honey wax too hot",
+      "Response bucket": "Good / Avg / Bad",
+      "Example responses": "Rok ke temp kam, poochke / temp kam / garam hota hi hai",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10 / +4 / −10",
+      "Result": "Info",
+      "_excel_row": 122
+    },
+    {
+      "Step": "C4",
+      "Question (short)": "Child interrupting",
+      "Response bucket": "Good / Avg / Bad",
+      "Example responses": "Safety batake busy rakhne ko kahungi / doosre room / kuch nahi",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10 / +4 / −10",
+      "Result": "Info",
+      "_excel_row": 123
+    },
+    {
+      "Step": "C5",
+      "Question (short)": "Back massage not in cleanup",
+      "Response bucket": "Good / Avg / Bad",
+      "Example responses": "App pe add karte hain / mana kar dungi / cash lekar",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10 / +4 / −10",
+      "Result": "Info",
+      "_excel_row": 124
+    },
+    {
+      "Step": "C6",
+      "Question (short)": "Discount outside app",
+      "Response bucket": "Good / Avg / Bad",
+      "Example responses": "Price app pe fix, offers dikhaungi / nahi ho sakta / cash mein kam",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10 / +4 / −10",
+      "Result": "Info",
+      "_excel_row": 125
+    },
+    {
+      "Step": "C7",
+      "Question (short)": "Extra service not booked",
+      "Response bucket": "Good / Avg / Bad",
+      "Example responses": "App pe add / agli baar book / cash mein",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10 / +4 / −10",
+      "Result": "Info",
+      "_excel_row": 126
+    },
+    {
+      "Step": "C8",
+      "Question (short)": "Running 20 min late",
+      "Response bucket": "Good",
+      "Example responses": "Pehle hi customer ko call karke ETA bataungi, sorry bolungi, service jaldi nahi karungi",
+      "Bot does next": "—",
+      "Outcome / score impact": "+10",
+      "Result": "Pass",
+      "_excel_row": 127
+    },
+    {
+      "Step": "C8",
+      "Response bucket": "Average",
+      "Example responses": "Pahunch ke sorry bol dungi",
+      "Bot does next": "—",
+      "Outcome / score impact": "+4",
+      "Result": "Flag",
+      "_excel_row": 128
+    },
+    {
+      "Step": "C8",
+      "Response bucket": "Bad",
+      "Example responses": "Kuch nahi bataungi / traffic tha, kya karun / service jaldi khatam",
+      "Bot does next": "—",
+      "Outcome / score impact": "−10",
+      "Result": "Reject",
+      "_excel_row": 129
+    },
+    {
+      "Step": "D1",
+      "Question (short)": "Questions for UC",
+      "Response bucket": "Earnings / training / jobs",
+      "Example responses": "Pehle mahine kitne jobs?",
+      "Bot does next": "Answer from FAQ",
+      "Outcome / score impact": "Positive intent",
+      "Result": "Pass",
+      "_excel_row": 131
+    },
+    {
+      "Step": "D1",
+      "Response bucket": "Only flexibility / leave",
+      "Example responses": "Chhutti kab?",
+      "Bot does next": "Answer from FAQ",
+      "Outcome / score impact": "Mild intent flag",
+      "Result": "Flag",
+      "_excel_row": 132
+    },
+    {
+      "Step": "ALL",
+      "Question (short)": "Silence > 8 sec",
+      "Response bucket": "—",
+      "Example responses": "—",
+      "Bot does next": "Repeat simpler; Kannada clarification if needed",
+      "Outcome / score impact": "—",
+      "Result": "Info",
+      "_excel_row": 133
+    },
+    {
+      "Step": "ALL",
+      "Question (short)": "Contradicts earlier answer",
+      "Response bucket": "—",
+      "Example responses": "A5 'saas' vs B13 'ghar pe koi nahi'",
+      "Bot does next": "Ask gently once",
+      "Outcome / score impact": "Consistency flag",
+      "Result": "Flag",
+      "_excel_row": 134
+    },
+    {
+      "Step": "ALL",
+      "Question (short)": "Argues / rude to bot",
+      "Response bucket": "—",
+      "Example responses": "—",
+      "Bot does next": "Stay calm, continue",
+      "Outcome / score impact": "Note in report",
+      "Result": "Flag",
+      "_excel_row": 135
+    },
+    {
+      "Step": "ALL",
+      "Question (short)": "Asks 'Am I selected?'",
+      "Response bucket": "—",
+      "Example responses": "—",
+      "Bot does next": "'Hamari team aapko agla step batayegi'",
+      "Outcome / score impact": "Never shares verdict",
+      "Result": "Info",
+      "_excel_row": 136
+    }
+  ],
+  "manualChecks": [
+    {
+      "#": 1.0,
+      "Check": "Age verification",
+      "Input from bot": "A2",
+      "How to check": "Aadhaar date of birth",
+      "Rule": "≤ 38 pass · 39–40 review · > 40 reject",
+      "When": "Before practical",
+      "_excel_row": 5
+    },
+    {
+      "#": 2.0,
+      "Check": "UC profile check",
+      "Input from bot": "A12 – every number, name, category",
+      "How to check": "UC partner records: blocked? L20 / L100, churn reason",
+      "Rule": "Blocked → reject · below threshold → review",
+      "When": "Before practical",
+      "_excel_row": 6
+    },
+    {
+      "#": 3.0,
+      "Check": "Area proximity & hub",
+      "Input from bot": "A1",
+      "How to check": "Residence vs operating hubs",
+      "Rule": "Inside → assign hub · outside + open to moving → nearest hub + move date · outside + not open → reject",
+      "When": "Before batch",
+      "_excel_row": 7
+    },
+    {
+      "#": 4.0,
+      "Check": "Weight",
+      "Input from bot": "—",
+      "How to check": "Weighing scale at centre",
+      "Rule": "Rule to be set by UC (band / fitness)",
+      "When": "Before practical",
+      "_excel_row": 8
+    },
+    {
+      "#": 5.0,
+      "Check": "Health",
+      "Input from bot": "B1 – any issue mentioned",
+      "How to check": "Ask for relevant note only if issue mentioned",
+      "Rule": "Review against job demands (9–11 hrs standing, 10–12 kg bag)",
+      "When": "After interview",
+      "_excel_row": 9
+    },
+    {
+      "#": 6.0,
+      "Check": "Grooming",
+      "Input from bot": "—",
+      "How to check": "Fixed checklist: clean clothes, hair tied, nails trimmed, personal hygiene",
+      "Rule": "All 4 = pass · 1 miss = note · 2+ misses = flag",
+      "When": "On arrival",
+      "_excel_row": 10
+    },
+    {
+      "#": 7.0,
+      "Check": "Income proof",
+      "Input from bot": "B8",
+      "How to check": "GPay / bank statement / salary slip",
+      "Rule": "Matches → verified · none / mismatch → flag",
+      "When": "After interview",
+      "_excel_row": 11
+    },
+    {
+      "#": 8.0,
+      "Check": "Salon closure proof",
+      "Input from bot": "A7",
+      "How to check": "Closure / handover proof",
+      "Rule": "Proof → pass · none → hold",
+      "When": "Before batch",
+      "_excel_row": 12
+    },
+    {
+      "#": 9.0,
+      "Check": "PAN–Aadhaar link & name match",
+      "Input from bot": "B19",
+      "How to check": "Portal / documents",
+      "Rule": "Fix before batch (not a reject)",
+      "When": "Before batch",
+      "_excel_row": 13
+    },
+    {
+      "#": 10.0,
+      "Check": "Hold follow-ups",
+      "Input from bot": "Any 'Hold' bucket",
+      "How to check": "Callback",
+      "Rule": "Resolved → re-run decision · unresolved in 7 days → close",
+      "When": "Within 7 days",
+      "_excel_row": 14
+    }
+  ],
+  "scoringAndBasicChecks": [
+    {
+      "Dimension": "Need for money",
+      "Weight": 0.25,
+      "Flow steps": "A3, B5, B6, B7, B9",
+      "Sub-signals": "Marital status, income sources, husband working, earner type, last major expense",
+      "High (full points)": "Named liability / recent big expense; primary earner",
+      "Low (zero points)": "No need; family earns very well",
+      "_excel_row": 5
+    },
+    {
+      "Dimension": "Intent & stickiness",
+      "Weight": 0.15,
+      "Flow steps": "A6, A7, B4, B10, B11, B12",
+      "Sub-signals": "Why UC, 2-yr picture, exit risks, own clients, family plans",
+      "High (full points)": "Clear UC future",
+      "Low (zero points)": "Exit within 2 yrs",
+      "_excel_row": 6
+    },
+    {
+      "Dimension": "Availability & logistics",
+      "Weight": 0.2,
+      "Flow steps": "A1, A9, B13–B18",
+      "Sub-signals": "Weekend & weekday routine fit, travel independence, training, models, recharge, start date",
+      "High (full points)": "Routine fits, travels herself, date locked",
+      "Low (zero points)": "Routine clashes on several",
+      "_excel_row": 7
+    },
+    {
+      "Dimension": "Customer centricity",
+      "Weight": 0.2,
+      "Flow steps": "C1–C8 (3 rotated)",
+      "Sub-signals": "Avg scenario score → 0–100",
+      "High (full points)": "Avg ≥ 8",
+      "Low (zero points)": "Avg ≤ 0",
+      "_excel_row": 8
+    },
+    {
+      "Dimension": "Technical knowledge",
+      "Weight": 0.15,
+      "Flow steps": "K1 + 3 of K2–K7",
+      "Sub-signals": "Product (SKU) experience, wax types, pre/post care, facial steps, skin care, hygiene",
+      "High (full points)": "Avg ≥ 8",
+      "Low (zero points)": "Avg ≤ 0",
+      "_excel_row": 9
+    },
+    {
+      "Dimension": "Communication",
+      "Weight": 0.05,
+      "Flow steps": "A10, A11",
+      "Sub-signals": "Reading, spoken Hindi / English",
+      "High (full points)": "Fluent read + clear intro",
+      "Low (zero points)": "Struggles on both",
+      "_excel_row": 10
+    },
+    {
+      "Dimension": "Total",
+      "Weight": 1,
+      "Flow steps": "Starting hypothesis; re-fit on 3-month retention label",
+      "_excel_row": 11
+    },
+    {
+      "Dimension": "Band",
+      "Weight": "Score",
+      "Flow steps": "Action",
+      "_excel_row": 13
+    },
+    {
+      "Dimension": "Auto-pass",
+      "Weight": "≥ 75",
+      "Flow steps": "Send to batch (PR / PI per hard-skill result)",
+      "_excel_row": 14
+    },
+    {
+      "Dimension": "Manual review",
+      "Weight": "45 – 74",
+      "Flow steps": "Screening lead reads transcript + evidence (~4 min), decides",
+      "_excel_row": 15
+    },
+    {
+      "Dimension": "Reject",
+      "Weight": "< 45",
+      "Flow steps": "Reject with top-3 reasons logged",
+      "_excel_row": 16
+    },
+    {
+      "Dimension": "Defer",
+      "Weight": "Basic Check = defer",
+      "Flow steps": "Auto re-engage at eligibility date",
+      "_excel_row": 17
+    },
+    {
+      "Dimension": "Mandatory Basic Check",
+      "Weight": "Outcome",
+      "Flow steps": "Step",
+      "Sub-signals": "Source",
+      "_excel_row": 19
+    },
+    {
+      "Dimension": "Age > 40 or < 18 (39–40 → manual review)",
+      "Weight": "Reject",
+      "Flow steps": "A2",
+      "Sub-signals": "Decided",
+      "_excel_row": 20
+    },
+    {
+      "Dimension": "Youngest child under 3 years",
+      "Weight": "Defer",
+      "Flow steps": "A4",
+      "Sub-signals": "Decided",
+      "_excel_row": 21
+    },
+    {
+      "Dimension": "Child 3+ with no named family member caregiver",
+      "Weight": "Reject",
+      "Flow steps": "A5",
+      "Sub-signals": "Decided",
+      "_excel_row": 22
+    },
+    {
+      "Dimension": "Pregnant, or baby planned within 6 months",
+      "Weight": "Defer",
+      "Flow steps": "A6",
+      "Sub-signals": "Decided",
+      "_excel_row": 23
+    },
+    {
+      "Dimension": "Running own salon / clients, won't stop",
+      "Weight": "Reject",
+      "Flow steps": "A7",
+      "Sub-signals": "Rejection data",
+      "_excel_row": 24
+    },
+    {
+      "Dimension": "Refuses pedicure, won't learn",
+      "Weight": "Reject",
+      "Flow steps": "A8",
+      "Sub-signals": "Decided",
+      "_excel_row": 25
+    },
+    {
+      "Dimension": "Won't travel 3–4 km / no 2-wheeler and won't learn",
+      "Weight": "Reject",
+      "Flow steps": "A9",
+      "Sub-signals": "Decided",
+      "_excel_row": 26
+    },
+    {
+      "Dimension": "Cannot read English address / product card",
+      "Weight": "Reject",
+      "Flow steps": "A10",
+      "Sub-signals": "Decided",
+      "_excel_row": 27
+    },
+    {
+      "Dimension": "Cannot converse in Hindi or English",
+      "Weight": "Reject",
+      "Flow steps": "A11",
+      "Sub-signals": "Decided",
+      "_excel_row": 28
+    },
+    {
+      "Dimension": "Blocked UC pro (manual profile check)",
+      "Weight": "Reject",
+      "Flow steps": "A12",
+      "Sub-signals": "Rejection data",
+      "_excel_row": 29
+    },
+    {
+      "Dimension": "Far from operating area, not open to moving (manual)",
+      "Weight": "Reject",
+      "Flow steps": "A1",
+      "Sub-signals": "Decided",
+      "_excel_row": 30
+    },
+    {
+      "Dimension": "Can't do weekends / part-time only",
+      "Weight": "Reject",
+      "Flow steps": "B13, B14",
+      "Sub-signals": "Rejection data",
+      "_excel_row": 31
+    },
+    {
+      "Dimension": "Won't attend training",
+      "Weight": "Reject",
+      "Flow steps": "B15",
+      "Sub-signals": "Rejection data",
+      "_excel_row": 32
+    }
+  ],
+  "openDecisions": [
+    {
+      "#": 1.0,
+      "Question": "Age cap",
+      "Decision": "DECIDED: ≤ 38 pass · 39–40 manual review · > 40 reject",
+      "_excel_row": 5
+    },
+    {
+      "#": 2.0,
+      "Question": "Training length",
+      "Decision": "DECIDED: PR 12 days / PI 25 days",
+      "_excel_row": 6
+    },
+    {
+      "#": 3.0,
+      "Question": "Minimum models",
+      "Decision": "DECIDED: 5–10 typical; below that trainer helps",
+      "_excel_row": 7
+    },
+    {
+      "#": 4.0,
+      "Question": "Kit recharge amount",
+      "Decision": "DECIDED: ₹2,000",
+      "_excel_row": 8
+    },
+    {
+      "#": 5.0,
+      "Question": "Rating threshold for success label",
+      "Decision": "DECIDED (assumed): 4.7",
+      "_excel_row": 9
+    },
+    {
+      "#": 6.0,
+      "Question": "Scenario C5 (back massage) rewrite",
+      "Decision": "DECIDED: offer to add on app = Good",
+      "_excel_row": 10
+    },
+    {
+      "#": 7.0,
+      "Question": "Pregnancy",
+      "Decision": "DECIDED: defer; reapply later",
+      "_excel_row": 11
+    },
+    {
+      "#": 8.0,
+      "Question": "Baby plan",
+      "Decision": "DECIDED: ≤ 6 months defer · 6–12 months score down",
+      "_excel_row": 12
+    },
+    {
+      "#": 9.0,
+      "Question": "NE batch routing",
+      "Decision": "DECIDED (assumed): fresher-quality hard skills but passes all soft checks",
+      "_excel_row": 13
+    },
+    {
+      "#": 10.0,
+      "Question": "Language",
+      "Decision": "DECIDED: converse in Hindi / English; Kannada only to clarify",
+      "_excel_row": 14
+    },
+    {
+      "#": 11.0,
+      "Question": "Kids",
+      "Decision": "DECIDED: youngest under 3 → defer; 3+ needs named family member",
+      "_excel_row": 15
+    },
+    {
+      "#": 12.0,
+      "Question": "Services check",
+      "Decision": "DECIDED: pedicure only; bikini wax noted",
+      "_excel_row": 16
+    },
+    {
+      "#": 13.0,
+      "Question": "Travel",
+      "Decision": "DECIDED: 3–4 km per job, 2-wheeler (own or learn)",
+      "_excel_row": 17
+    },
+    {
+      "#": 14.0,
+      "Question": "Weight, health, grooming",
+      "Decision": "DECIDED: manual checks",
+      "_excel_row": 18
+    },
+    {
+      "#": 15.0,
+      "Question": "Salon tier bands (B3)",
+      "Decision": "DECIDED (assumed): facial rate < ₹800 basic · ₹800–1,999 mid · ≥ ₹2,000 high-end",
+      "_excel_row": 19
+    },
+    {
+      "#": 16.0,
+      "Question": "Weight rule",
+      "Decision": "DECIDED (assumed): < 40 kg or > 85 kg → review",
+      "_excel_row": 20
+    },
+    {
+      "#": 17.0,
+      "Question": "Under-3 child",
+      "Decision": "DECIDED: defer",
+      "_excel_row": 21
+    },
+    {
+      "#": 18.0,
+      "Question": "Depends on husband to travel",
+      "Decision": "DECIDED: flag only",
+      "_excel_row": 22
+    },
+    {
+      "#": 19.0,
+      "Question": "'Did not answer' on a scenario",
+      "Decision": "DECIDED: 0 points",
+      "_excel_row": 23
+    },
+    {
+      "#": 20.0,
+      "Question": "Who runs manual checks",
+      "Decision": "DECIDED (assumed): screening ops",
+      "_excel_row": 24
+    }
+  ],
+  "overviewRawRows": [
+    {
+      "excel_row": 1,
+      "cells": [
+        "UC Salon (Women) – Soft Skill Screening Voice Bot | Bangalore",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "Changes ",
+        "Hub level area level changes ",
+        null,
+        null,
+        "Data Input"
+      ]
+    },
+    {
+      "excel_row": 2,
+      "cells": [
+        "In-person voice agent · Hindi / English · Structure v3 · Orange = Mandatory Basic Check · Blue = feeds a Manual Check · Yellow = open decision",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "hub level data input",
+        null,
+        null,
+        "Hub level"
+      ]
+    },
+    {
+      "excel_row": 3,
+      "cells": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "technical question need from trainer check ",
+        null,
+        null,
+        "Salon type bifurcation"
+      ]
+    },
+    {
+      "excel_row": 4,
+      "cells": [
+        "Area",
+        "Item",
+        "Detail",
+        "Status",
+        null,
+        null,
+        null,
+        null,
+        "scoring metric has to be made sure / with fix metrics & judgement criterias",
+        null,
+        null,
+        "she is saying minus for -"
+      ]
+    },
+    {
+      "excel_row": 5,
+      "cells": [
+        "1. Objective & scope",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "600 - 700, 750 low facial cost"
+      ]
+    },
+    {
+      "excel_row": 6,
+      "cells": [
+        "Objective",
+        "Remove subjectivity and disputes from soft-skill screening",
+        "Soft-skill outcome comes only from the bot + rule-based manual checks. Trainer judges hard skills only. Same answers → same score, every time.",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "50 rs threading"
+      ]
+    },
+    {
+      "excel_row": 7,
+      "cells": [
+        "Success label (what bot predicts)",
+        "Stays on UC ≥ 3 months with rating ≥ 4.7–4.8",
+        "Model learns from this outcome, not from past screening verdicts.",
+        "Exact cut-off open",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "240 - 300 waxing min sku"
+      ]
+    },
+    {
+      "excel_row": 8,
+      "cells": [
+        "Bot owns",
+        "Mandatory Basic Checks, family & income, experience & salon tier, need for money, intent & stickiness, availability, customer-centricity scenarios, spoken technical knowledge (products, wax types, care, hygiene), spoken Hindi/English, English reading",
+        "Questions are natural and indirect (routines, last big expense, school class) rather than yes/no.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "600 - 700 pedicure"
+      ]
+    },
+    {
+      "excel_row": 9,
+      "cells": [
+        "Trainer owns",
+        "Hard skills only — threading, waxing, pedicure",
+        "No soft-skill input from trainer.",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "a, b , c salon judgement basis name & prices"
+      ]
+    },
+    {
+      "excel_row": 10,
+      "cells": [
+        "Manual checks (offline)",
+        "Age 39–40, weight, health, grooming, income proof, UC profile check on every number, area proximity, salon closure proof, PAN–Aadhaar",
+        "Rule-based; see 'Manual Checks' tab.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "र जो weekends और शाम को काम करती हैं, उनकी ₹70,000–80,000 तक हो जाती - this is wrong "
+      ]
+    },
+    {
+      "excel_row": 11,
+      "cells": [
+        "Not part of screening",
+        "Google Maps / smartphone usage",
+        "Taught in training.",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "high earning potential is 70 to 80 k "
+      ]
+    },
+    {
+      "excel_row": 12,
+      "cells": [
+        "2. Format",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "refine cash earning questions - objectivity more - people won't answer seems unnenescary & irritating - what is even the point?"
+      ]
+    },
+    {
+      "excel_row": 13,
+      "cells": [
+        "Mode",
+        "In-person voice bot on tablet at Krimson / Marathahalli",
+        "Tablet shows the read-aloud card. Headset recommended.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "2x current earning metric remove - / capping should be 45,000 to 50,000 then earning scope can be upto 80,000 but it has be made sure partner knows minimum earning amount"
+      ]
+    },
+    {
+      "excel_row": 14,
+      "cells": [
+        "Language",
+        "Bot converses in Hindi / English",
+        "Pro must be able to converse in Hindi or English (Mandatory Basic Check). Kannada used only to clarify an instruction if she's stuck. Reading test in English.",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "arrogance / verbatam - check "
+      ]
+    },
+    {
+      "excel_row": 15,
+      "cells": [
+        "Duration",
+        "≈ 28.5 min (≈ 33 min with probes)",
+        "Per-step estimates and totals at the bottom of 'Agent Flow'.",
+        "See Agent Flow",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "Calling से सुना — घर जाकर service और कमाई की बात हुई, यही UC है! अब बताइए — आज से 2 साल बाद आपका एक normal दिन कैसा होगा? / is this even valid?"
+      ]
+    },
+    {
+      "excel_row": 16,
+      "cells": [
+        "Order in the day",
+        "Stage A Mandatory Basic Checks (bot, ≈ 9 min) → Hard-skill practical (trainer) → Stage B interview (bot, ≈ 19 min) → Manual checks → Final decision",
+        "Cheap checks first save practical slots.",
+        "Recommended",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "mention 11- 13 hours kaam karenge saturday ko?"
+      ]
+    },
+    {
+      "excel_row": 17,
+      "cells": [
+        "3. Mandatory Basic Checks (fixed rules, no judgment)",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "give psp  metric"
+      ]
+    },
+    {
+      "excel_row": 18,
+      "cells": [
+        "Age",
+        "≤ 38 pass · 39–40 manual review · > 40 reject",
+        null,
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "60 + again don't tell me very clear on 40,000 for bronze to 50K for goldl"
+      ]
+    },
+    {
+      "excel_row": 19,
+      "cells": [
+        "Youngest child",
+        "Under 3 years → defer",
+        "Reapply when child turns 3.",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "screening pass hone ke baad 2,000 not after training - not a hard reject"
+      ]
+    },
+    {
+      "excel_row": 20,
+      "cells": [
+        "Child 3 years or older",
+        "Pass only with a named family member as caregiver",
+        "'Main manage kar lungi' is not a caregiver.",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "don't say brand name ask them brand names "
+      ]
+    },
+    {
+      "excel_row": 21,
+      "cells": [
+        "Pregnant / baby plan ≤ 6 months",
+        "Defer — reapply later",
+        "Told: daily office training + carrying weighted bags.",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "objective answers about technical"
+      ]
+    },
+    {
+      "excel_row": 22,
+      "cells": [
+        "Spoken Hindi / English",
+        "Cannot converse in Hindi or English → reject",
+        "Tested via intro role-play (A11).",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "remove lipo "
+      ]
+    },
+    {
+      "excel_row": 23,
+      "cells": [
+        "English reading",
+        "Cannot read address / product card → reject",
+        null,
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "just ask hands vs face wax difference / intimate wax difference"
+      ]
+    },
+    {
+      "excel_row": 24,
+      "cells": [
+        "Pedicure",
+        "Refuses pedicure and won't learn → reject",
+        "Bikini wax is noted, not a check.",
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 25,
+      "cells": [
+        "Travel on 2-wheeler (3–4 km per job)",
+        "Won't travel, or no 2-wheeler and won't learn → reject",
+        null,
+        "Decided",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 26,
+      "cells": [
+        "Own salon / own clients",
+        "Won't close or stop → reject; closure proof checked manually",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 27,
+      "cells": [
+        "Blocked UC pro",
+        "Reject",
+        "Manual profile check on all numbers.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 28,
+      "cells": [
+        "Availability",
+        "Part-time only, no weekends, won't attend training → reject",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 29,
+      "cells": [
+        "4. Scoring",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 30,
+      "cells": [
+        "Dimensions",
+        "Need for money · Intent & stickiness · Availability & logistics · Customer centricity · Technical knowledge · Communication",
+        "Weights on 'Scoring & Basic Checks' tab; re-fit on outcome data.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 31,
+      "cells": [
+        "Routing",
+        "Salon tier (location + rates + brands) + technical knowledge + hard skills → PR vs PI",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 32,
+      "cells": [
+        "Evidence",
+        "Every dimension score carries 1 transcript quote",
+        "Every decision auditable.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 33,
+      "cells": [
+        "Output",
+        "Pass probability % + band + top 3 reasons",
+        "Weighted score until ~300–500 outcomes, then a calibrated model.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 34,
+      "cells": [
+        "Bands",
+        "≥ 75 auto-pass · 45–74 manual review by screening lead · < 45 reject",
+        "Cut-offs tuned in shadow phase.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 35,
+      "cells": [
+        "5. Testing metrics",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 36,
+      "cells": [
+        "Baseline",
+        "Screener-vs-screener agreement today",
+        "Re-screen 30 candidates twice. Bot must beat this.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 37,
+      "cells": [
+        "Agreement",
+        "Bot vs senior-screener consensus",
+        "≥ 85% pass/fail match; Cohen's kappa ≥ 0.6",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 38,
+      "cells": [
+        "Consistency",
+        "Same scripted answers × 10 runs",
+        "Score variance within ± 5 pts",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 39,
+      "cells": [
+        "Predictive validity",
+        "Score vs 3-month-retention-with-rating label",
+        "AUC ≥ 0.70 after 3 months",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 40,
+      "cells": [
+        "False reject rate",
+        "Weekly audit of 10% of bot rejects",
+        "< 10%",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 41,
+      "cells": [
+        "Basic Check accuracy",
+        "Rule extraction correct",
+        "≥ 99%",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 42,
+      "cells": [
+        "Voice quality",
+        "ASR accuracy on accented Hindi / English; completion rate",
+        "Completion ≥ 90%",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 43,
+      "cells": [
+        "6. Rollout",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 44,
+      "cells": [
+        "Phase 0 – Codify (2–3 wks)",
+        "Lock rubric, scenario bank, basic checks; label historical data; pick voice vendor",
+        "Rubric signed off",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 45,
+      "cells": [
+        "Phase 1 – Shadow (4–6 wks)",
+        "Bot runs alongside current screening; decision not used",
+        "Kappa ≥ 0.6",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 46,
+      "cells": [
+        "Phase 2 – Assisted (4–6 wks)",
+        "Bot scores first; screening lead decides with evidence",
+        "Override rate < 15%",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 47,
+      "cells": [
+        "Phase 3 – Partial auto",
+        "Auto-pass / reject at high confidence; middle band reviewed",
+        "Retention ≥ manual cohort",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "excel_row": 48,
+      "cells": [
+        "Phase 4 – Steady state",
+        "5–10% random audit; quarterly refit",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    }
+  ],
+  "tasksRawRows": [
+    {
+      "excel_row": 2,
+      "cells": [
+        null,
+        "API, tools. platform to be used"
+      ]
+    },
+    {
+      "excel_row": 3,
+      "cells": [
+        null,
+        "Cost Estimate"
+      ]
+    },
+    {
+      "excel_row": 4,
+      "cells": [
+        null,
+        "Timeline of project - Prototype"
+      ]
+    },
+    {
+      "excel_row": 5,
+      "cells": [
+        null,
+        "Intregrate senstivity (px Behaviour) "
+      ]
+    },
+    {
+      "excel_row": 6,
+      "cells": [
+        null,
+        "How much Bandwidth of mine"
+      ]
+    }
+  ],
+  "notes": [
+    "Question text and metadata are mapped from Agent Flow using the workbook's original cell values.",
+    "The questionFlow array includes only coded interview steps (A0–A12, B1–B19, K1–K7, C1–C8, D1–D2); section headings and time estimates are preserved in the full raw extraction file.",
+    "Response buckets are attached by Step code where present; the original full responseBucketsAll array is also included.",
+    "Overview raw rows preserve side notes and potentially conflicting notes without resolving them.",
+    "This is a source-faithful extraction, not yet an approved runtime configuration; validate sensitive eligibility rules and draft technical rubrics with stakeholders."
+  ]
+}
