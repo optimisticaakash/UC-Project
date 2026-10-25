@@ -3,47 +3,52 @@ function evaluateAge(answer) {
   let age = null;
 
   // Accept a numeric age, such as "32".
-  if (/^\d{1,3}$/.test(input)) {
-    age = Number(input);
-  } else {
-    // Accept DOB formats: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD.
-    let day;
-    let month;
-    let year;
-    let match;
+ const ageMatch = input.match(
+   /^(?:(?:मैं|meri age|meri umar|meri umr|my age is|i am|i'm)\s*)?(\d{1,3})(?:\s*(?:साल|साल का|साल की|वर्ष|years?|yrs?))?[.! ]*$/i,
+ );
 
-    if ((match = input.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/))) {
-      day = Number(match[1]);
-      month = Number(match[2]);
-      year = Number(match[3]);
-    } else if ((match = input.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) {
-      year = Number(match[1]);
-      month = Number(match[2]);
-      day = Number(match[3]);
-    }
+ if (ageMatch) {
+   age = Number(ageMatch[1]);
+   age = Number(input);
+ } else {
+   // Accept DOB formats: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD.
+   let day;
+   let month;
+   let year;
+   let match;
 
-    if (year !== undefined) {
-      const dob = new Date(Date.UTC(year, month - 1, day));
+   if ((match = input.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/))) {
+     day = Number(match[1]);
+     month = Number(match[2]);
+     year = Number(match[3]);
+   } else if ((match = input.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) {
+     year = Number(match[1]);
+     month = Number(match[2]);
+     day = Number(match[3]);
+   }
 
-      const validDate =
-        dob.getUTCFullYear() === year &&
-        dob.getUTCMonth() === month - 1 &&
-        dob.getUTCDate() === day &&
-        dob.getTime() <= Date.now();
+   if (year !== undefined) {
+     const dob = new Date(Date.UTC(year, month - 1, day));
 
-      if (validDate) {
-        const today = new Date();
+     const validDate =
+       dob.getUTCFullYear() === year &&
+       dob.getUTCMonth() === month - 1 &&
+       dob.getUTCDate() === day &&
+       dob.getTime() <= Date.now();
 
-        age =
-          today.getFullYear() -
-          year -
-          (today.getMonth() + 1 < month ||
-          (today.getMonth() + 1 === month && today.getDate() < day)
-            ? 1
-            : 0);
-      }
-    }
-  }
+     if (validDate) {
+       const today = new Date();
+
+       age =
+         today.getFullYear() -
+         year -
+         (today.getMonth() + 1 < month ||
+         (today.getMonth() + 1 === month && today.getDate() < day)
+           ? 1
+           : 0);
+     }
+   }
+ }
 
   if (age === null || !Number.isInteger(age) || age < 0 || age > 120) {
     return {

@@ -27,6 +27,119 @@ export function useGeminiLiveInterview() {
   const outputTextRef = useRef("");
   const inputTextRef = useRef("");
   const nextPlayTimeRef = useRef(0);
+  const interviewSessionIdRef = useRef(null);
+  const answerSubmittingRef = useRef(false);
+  const lastSubmittedAnswerRef = useRef("");
+
+  async function submitCandidateAnswer(answer) {
+    const sessionId = interviewSessionIdRef.current;
+    const normalizedAnswer = answer.trim();
+
+    if (!sessionId || !normalizedAnswer || answerSubmittingRef.current) {
+      return;
+    }
+
+    answerSubmittingRef.current = true;
+    setStatus("Processing candidate answer...");
+
+    try {
+      const response = await fetch(`${API_URL}/api/interview/answer`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sessionId,
+          answer: normalizedAnswer,
+        }),
+      });
+
+        const data = await response.json();
+        console.log("[FLOW DEBUG]", {
+          answer,
+          status: response.status,
+          success: data.success,
+          clarificationRequired: data.clarificationRequired,
+          followUpRequired: data.followUpRequired,
+          completed: data.completed,
+          manualReviewRequired: data.manualReviewRequired,
+          question: data.question,
+          message: data.message,
+        });
+      console.log("[DEBUG] Backend answer response:", {
+        httpStatus: response.status,
+        data,
+      });
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Candidate answer submit nahi hua.");
+      }
+
+      // Backend says the interview has ended.
+      if (data.completed) {
+        await stop();
+
+        setStatus(
+          data.manualReviewRequired
+            ? "Manual review required"
+            : "Interview completed",
+        );
+
+        return;
+      }
+
+      // A clarification can come from message or question.text.
+      const nextPrompt = data.clarificationRequired
+        ? data.message || data.question?.text
+        : data.question?.text;
+
+      if (!nextPrompt) {
+        if (data.manualReviewRequired) {
+          await stop();
+          setStatus("Manual review required");
+          return;
+        }
+
+        throw new Error("Backend se next question ya clarification nahi mila.");
+      }
+
+      if (!sessionRef.current || stoppingRef.current) {
+        return;
+      }
+
+      setStatus("Asking next question...");
+
+      sessionRef.current.sendClientContent({
+        turns: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: data.clarificationRequired
+                  ? "You are conducting an Urban Company salon professional interview. " +
+                    "Explain the following clarification in simple, natural Hindi or Hinglish. " +
+                    "Keep it short, polite, and easy to understand. " +
+                    "Preserve the original meaning. Do not add new rules or questions. " +
+                    "After explaining, wait for the candidate's answer:\n\n" +
+                    nextPrompt
+                  : "The backend has authorized this official interview prompt. " +
+                    "Speak it exactly as written, in a natural and respectful voice. " +
+                    "Do not add any extra questions or explanations:\n\n" +
+                    nextPrompt,
+              },
+            ],
+          },
+        ],
+        turnComplete: true,
+      });
+    } catch (err) {
+      console.error("[Interview] Answer submission failed:", err);
+      setError(err.message || "Answer submit nahi ho paaya.");
+      setStatus("Answer submission error");
+    } finally {
+      answerSubmittingRef.current = false;
+    }
+  }
 
   function addMessage(role, text, append = true) {
     if (!text?.trim()) return;
@@ -73,6 +186,26 @@ export function useGeminiLiveInterview() {
       if (!tokenResponse.ok || !tokenData.token) {
         throw new Error(tokenData.message || "Gemini Live token nahi mila.");
       }
+
+      // Start the official Urban Company interview session
+      const interviewResponse = await fetch(`${API_URL}/api/interview/start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const interviewData = await interviewResponse.json();
+
+      if (!interviewResponse.ok || !interviewData.success) {
+        throw new Error(
+          interviewData.message || "Interview session start nahi hua.",
+        );
+      }
+
+      interviewSessionIdRef.current = interviewData.sessionId;
+
+      console.log("Interview session started:", interviewData);
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -127,6 +260,9 @@ export function useGeminiLiveInterview() {
           // Candidate transcript
           const incoming = content.inputTranscription?.text?.trim();
 
+          if (incoming) {
+            console.log("[DEBUG] Candidate transcript:", incoming);
+          }
           if (incoming) {
             const current = inputTextRef.current;
 
@@ -223,10 +359,22 @@ export function useGeminiLiveInterview() {
           }
 
           if (content.turnComplete) {
+            console.log("[DEBUG] Turn complete:", {
+              candidateAnswer: inputTextRef.current,
+              submitting: answerSubmittingRef.current,
+              sessionId: interviewSessionIdRef.current,
+            });
+            const candidateAnswer = inputTextRef.current.trim();
+
             outputTextRef.current = "";
             inputTextRef.current = "";
             setIsAiSpeaking(false);
-            setStatus("Connected — you can speak");
+
+            if (candidateAnswer && !answerSubmittingRef.current) {
+              void submitCandidateAnswer(candidateAnswer);
+            } else if (!answerSubmittingRef.current) {
+              setStatus("Connected — you can speak");
+            }
           }
         },
 
@@ -298,11 +446,11 @@ export function useGeminiLiveInterview() {
             parts: [
               {
                 text:
-                  "Start a natural voice conversation in simple Hindi or Hinglish. " +
-                  "Greet me warmly and briefly, then ask me what you can help me with. " +
-                  "Speak aloud. Listen to my replies and respond naturally to what I actually say. " +
-                  "Ask relevant follow-up questions when useful. Keep replies concise. " +
-                  "This is a conversational demo, not a fixed interview.",
+                  "You are conducting an Urban Company salon professional screening interview. " +
+                  "The backend controls the interview flow. Do not invent, skip, or reorder questions. " +
+                  "Speak naturally and respectfully in simple Hindi or Hinglish. " +
+                  "Ask the following official question exactly as provided, without changing its wording: " +
+                  interviewData.question.text,
               },
             ],
           },

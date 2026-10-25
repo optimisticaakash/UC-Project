@@ -52,7 +52,7 @@ function startInterview() {
   };
 }
 
-function submitAnswer({ sessionId, answer }) {
+async function submitAnswer({ sessionId, answer }) {
   const session = sessions.get(sessionId);
 
   if (!session) {
@@ -161,7 +161,6 @@ function submitAnswer({ sessionId, answer }) {
           normalized,
         );
 
-      // Ambiguous or contradictory answers need clarification.
       if (negative && positive) {
         return askAgain(
           "Please clarify: are you willing to travel or relocate if required?",
@@ -220,7 +219,6 @@ function submitAnswer({ sessionId, answer }) {
         };
       }
 
-      // Positive travel response: ask for relocation timeline.
       session.pendingFollowUp = {
         questionId: "A1",
         type: "move_timeline",
@@ -248,9 +246,6 @@ function submitAnswer({ sessionId, answer }) {
     }
 
     if (pending.type === "move_timeline") {
-      const followUpAnswer = answer.trim();
-      const normalized = followUpAnswer.toLowerCase();
-
       const unclear =
         /^(pata nahi|pata nahin|not sure|don't know|dont know|unsure|maybe|shayad)[.!?\s]*$/i.test(
           normalized,
@@ -306,8 +301,10 @@ function submitAnswer({ sessionId, answer }) {
   }
 
   const question = questions[session.currentQuestionIndex];
+
   console.log("CURRENT QUESTION:", question.id);
   console.log("RECEIVED ANSWER:", answer);
+
   const cleanAnswer = answer.trim();
 
   const answerRecord = {
@@ -525,37 +522,39 @@ function submitAnswer({ sessionId, answer }) {
   }
 
   // Gemini interpretation for normal questions only.
-  // const isSpecialQuestion = ["A0", "A1", "A2"].includes(question.id);
+  const isSpecialQuestion = ["A0", "A1", "A2"].includes(question.id);
 
-  // if (!isSpecialQuestion) {
-  //   try {
-  //     const interpretation = await interpretAnswer({
-  //       question: question.text,
-  //       answer: cleanAnswer,
-  //     });
+  if (!isSpecialQuestion) {
+    try {
+      const interpretation = await interpretAnswer({
+        question: question.text,
+        answer: cleanAnswer,
+      });
 
-  //     answerRecord.interpretation = interpretation;
+      answerRecord.interpretation = interpretation;
 
-  //     if (interpretation.needsClarification) {
-  //       return {
-  //         status: 200,
-  //         body: {
-  //           success: true,
-  //           completed: false,
-  //           clarificationRequired: true,
-  //           message: interpretation.clarificationQuestion,
-  //           interpretation,
-  //           questionNumber: session.currentQuestionIndex + 1,
-  //           totalQuestions: questions.length,
-  //           question,
-  //         },
-  //       };
-  //     }
-  //   } catch (error) {
-  //     console.error("Gemini interpretation error:", error.message);
-  //     answerRecord.interpretationError = true;
-  //   }
-  // }
+      if (interpretation.needsClarification) {
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            message:
+              interpretation.clarificationQuestion ||
+              "Maaf kijiye, kya aap apna jawab thoda aur spasht kar sakti hain?",
+            interpretation,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question,
+          },
+        };
+      }
+    } catch (error) {
+      console.error("Gemini interpretation error:", error.message);
+      answerRecord.interpretationError = true;
+    }
+  }
 
   // Sequential flow for questions other than A0.
   session.answers.push(answerRecord);

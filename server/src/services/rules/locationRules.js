@@ -26,6 +26,13 @@ function classifyLocation(answer) {
     /travel nahi kar/,
     /shift nahi kar/,
     /move nahi kar/,
+    /nahi ja sakti/,
+    /nahi ja sakta/,
+    /nahi kar sakti/,
+    /nahi kar sakta/,
+    /relocate nahi kar/,
+    /shift nahi ho sakti/,
+    /travel karna possible nahi/,
     /not willing to travel/,
     /cannot travel/,
     /can't travel/,
@@ -43,6 +50,21 @@ function classifyLocation(answer) {
     /willing to move/,
     /can travel/,
     /can relocate/,
+
+    // Hindi / Hinglish affirmative answers
+    /haan.*(kar sakti|kar sakta|ja sakti|ja sakta)/,
+    /han.*(kar sakti|kar sakta|ja sakti|ja sakta)/,
+    /हाँ.*(कर सकती|कर सकता|जा सकती|जा सकता)/,
+    /हां.*(कर सकती|कर सकता|जा सकती|जा सकता)/,
+    /ज़रूरत पड़ने पर.*(जा सकती|जा सकता|शिफ्ट)/,
+    /जरूरत पड़ने पर.*(जा सकती|जा सकता|शिफ्ट)/,
+    /आवश्यकता पड़ने पर.*(जा सकती|जा सकता|शिफ्ट)/,
+    /शिफ्ट हो सकती/,
+    /शिफ्ट हो सकता/,
+    /रिलोकेट कर सकती/,
+    /रिलोकेट कर सकता/,
+    /ट्रैवल कर सकती/,
+    /ट्रैवल कर सकता/,
   ];
 
   const unwilling = unwillingPatterns.some((pattern) => pattern.test(text));

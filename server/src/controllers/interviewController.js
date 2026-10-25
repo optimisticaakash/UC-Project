@@ -13,9 +13,22 @@ function startInterview(req, res) {
   }
 }
 
-function submitAnswer(req, res) {
+
+async function submitAnswer(req, res) {
   try {
-    const result = interviewService.submitAnswer(req.body || {});
+    const result = await interviewService.submitAnswer(req.body || {});
+
+    if (!result || typeof result.status !== "number" || !result.body) {
+      console.error(
+        "Invalid submitAnswer service result:",
+        JSON.stringify(result),
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Interview service returned an invalid response.",
+      });
+    }
 
     return res.status(result.status).json(result.body);
   } catch (error) {
@@ -27,6 +40,7 @@ function submitAnswer(req, res) {
     });
   }
 }
+
 
 function flagManualReview(req, res) {
   try {
