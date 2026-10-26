@@ -9,8 +9,8 @@ const { interpretAnswer } = require("./geminiService");
 const bankPath = path.join(__dirname, "../data/questionBank.json");
 const bank = require(bankPath);
 
-if (!Array.isArray(bank.questions) || bank.questions.length !== 49) {
-  throw new Error("Invalid questionBank.json: expected exactly 49 questions.");
+if (!Array.isArray(bank.questions) || bank.questions.length !== 50) {
+  throw new Error("Invalid questionBank.json: expected exactly 50 questions.");
 }
 
 const questions = bank.questions.map((item) => ({
@@ -25,6 +25,70 @@ if (questions.some((question) => !question.id || !question.text)) {
 }
 
 const sessions = new Map();
+const CHILD_FOLLOW_UP_IDS = new Set(["A4", "A5"]);
+const ROMANIZED_CHILD = String.raw`(?:bachch(?:a|e|on)?|bacch(?:a|e|on)?|bach(?:a|e|on)?)`;
+const NO_CHILDREN_PATTERN = new RegExp(
+  String.raw`\b(?:i\s+)?(?:do\s+not|don't|dont)\s+have\s+(?:(?:any|my)\s+)?(?:children|kids?|child)\b|\bno\s+(?:children|kids?|child)\b|\bchildless\b|\b(?:mere|meri|hamare|hamari|ghar\s+mein|ghar\s+me|mujhe)\s+(?:ghar\s+mein\s+)?(?:koi\s+)?${ROMANIZED_CHILD}\s+(?:bilkul\s+)?(?:nahi|nahin|nhi)(?:\s+(?:hai|hain))?|\b(?:koi\s+)?${ROMANIZED_CHILD}\s+(?:bilkul\s+)?(?:nahi|nahin|nhi)(?:\s+(?:hai|hain))?|(?:मेरे|मेरी|हमारे|हमारी)?\s*(?:घर\s+में\s+)?(?:कोई\s+)?(?:बच्चे|बच्चा|बच्चों|बच्ची|बच्चियाँ)\s*(?:बिल्कुल\s*)?(?:नहीं|नही)(?:\s*(?:है|हैं))?`,
+  "giu",
+);
+const CHILD_MENTION_PATTERN = new RegExp(
+  String.raw`\b(?:children|child|kids?|sons?|daughters?|${ROMANIZED_CHILD}|beta|beti|putra|putri)\b|(?:बच्चे|बच्चा|बच्चों|बच्ची|बच्चियाँ|बेटा|बेटी|पुत्र|पुत्री)`,
+  "iu",
+);
+
+function classifyChildPresence(answer) {
+  const normalized = answer.normalize("NFC").toLowerCase();
+  const hasNegativeStatement = normalized.match(NO_CHILDREN_PATTERN) !== null;
+  const remainder = normalized.replace(NO_CHILDREN_PATTERN, " ");
+  const hasPositiveMention = CHILD_MENTION_PATTERN.test(remainder);
+
+  if (hasNegativeStatement && hasPositiveMention) return "ambiguous";
+  if (hasNegativeStatement) return "none";
+  if (hasPositiveMention) return "present";
+  return "unknown";
+}
+
+function classifyYesNo(answer) {
+  const normalized = answer.normalize("NFC").trim().toLowerCase();
+  if (/^(?:haan|han|yes|yeah|yep|ji|bilkul|हाँ|हां|जी|जी हाँ|जी हां)[.!?।\s]*$/iu.test(normalized)) {
+    return "yes";
+  }
+  if (/^(?:nahi|nahin|nhi|no|नहीं|नही)[.!?।\s]*$/iu.test(normalized)) {
+    return "no";
+  }
+  return null;
+}
+
+function childDetailsProvided(answer) {
+  const normalized = answer.normalize("NFC").toLowerCase();
+  const classDetails = /\b(?:class|grade|standard)\s*\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\s+(?:class|grade|standard)\b|(?:कक्षा|क्लास)\s*\d{1,2}|\d{1,2}\s*(?:वीं|वां)\s*(?:कक्षा|क्लास)/iu.test(normalized);
+  const childRef = String.raw`(?:children|child|kids?|${ROMANIZED_CHILD}|बच्चे|बच्चा|बच्चों|बेटा|बेटी)`;
+  const caregiver = String.raw`(?:look after|takes care|care for|watches|stay(?:s|ing)? with|with (?:them|their|my)|picked up|saath reht|saath hot|sambhal|dekh.?bhaal|dekhte|dekhati|देखभाल|देखते|देखती|साथ रहते|साथ रहती|साथ होते)`;
+  const caregiverDetails = new RegExp(
+    String.raw`(?:${childRef}.{0,70}${caregiver}|${caregiver}.{0,70}${childRef})`,
+    "iu",
+  ).test(normalized);
+
+  return { classDetails, caregiverDetails };
+}
+
+function advanceToNextApplicableQuestion(session) {
+  session.currentQuestionIndex += 1;
+  const childInfo = session.childQuestionApplicability;
+
+  while (session.currentQuestionIndex < questions.length) {
+    const nextId = questions[session.currentQuestionIndex].id;
+    if (!CHILD_FOLLOW_UP_IDS.has(nextId)) break;
+
+    const skipBecauseNoChildren = childInfo?.hasChildren === false;
+    const skipBecauseAlreadyAnswered =
+      (nextId === "A4" && childInfo?.classDetailsProvided) ||
+      (nextId === "A5" && childInfo?.caregiverDetailsProvided);
+
+    if (!skipBecauseNoChildren && !skipBecauseAlreadyAnswered) break;
+    session.currentQuestionIndex += 1;
+  }
+}
 
 function startInterview() {
   const sessionId = crypto.randomUUID();
@@ -52,7 +116,48 @@ function startInterview() {
   };
 }
 
-async function submitAnswer({ sessionId, answer }) {
+function classifyNameAnswer(answer) {
+  if (typeof answer !== "string") {
+    return { clear: false, format: "non_string" };
+  }
+
+  const normalized = answer
+    .normalize("NFC")
+    .replace(/[.!?।]+$/u, "")
+    .trim();
+
+  if (!normalized) return { clear: false, format: "empty" };
+
+  const uncertainty =
+    /^(?:(?:(?:mera naam|मेरा नाम|my name is)\s+)?(?:pata nahi|nahi pata|yaad nahi|nahi yaad|nahi maloom|kya hai|i don't know|i do not know|not sure|don't know|no idea|samajh nahi aaya)|hmm+|umm+|uh+|haan|han|yes|okay|ok|नाम नहीं पता|पता नहीं|याद नहीं|समझ नहीं आया)$/iu;
+  if (uncertainty.test(normalized)) {
+    return { clear: false, format: "uncertainty" };
+  }
+
+  const nameToken = String.raw`[\p{L}][\p{L}'’.-]*`;
+  const nameSuffix = String.raw`(?:\s+${nameToken}){0,3}`;
+  const namePhrase = new RegExp(
+    String.raw`^(?:(?:mera naam|मेरा नाम)\s+${nameToken}${nameSuffix}\s*(?:hai|है)?|(?:my name is|i am|i'm)\s+${nameToken}${nameSuffix})$`,
+    "iu",
+  );
+  const plainName = new RegExp(`^${nameToken}(?:\\s+${nameToken})?$`, "u");
+  const sentenceStarter = /^(?:i|we|my|mera|meri|mujhe|main|मैं|मेरा|मेरी)\s/iu;
+
+  if (namePhrase.test(normalized)) {
+    return { clear: true, format: "introduced_name" };
+  }
+  if (!sentenceStarter.test(normalized) && plainName.test(normalized)) {
+    return { clear: true, format: "plain_name" };
+  }
+  return { clear: false, format: "unsupported_phrase" };
+}
+
+async function submitAnswer({
+  sessionId,
+  answer,
+  expectedQuestionId,
+  diagnosticRequestId,
+}) {
   const session = sessions.get(sessionId);
 
   if (!session) {
@@ -60,6 +165,7 @@ async function submitAnswer({ sessionId, answer }) {
       status: 404,
       body: {
         success: false,
+        code: "SESSION_NOT_FOUND",
         message: "Interview session not found.",
       },
     };
@@ -87,7 +193,68 @@ async function submitAnswer({ sessionId, answer }) {
     };
   }
 
-  if (typeof answer !== "string" || !answer.trim()) {
+  const requestQuestionId =
+    typeof expectedQuestionId === "string" &&
+    /^[A-Z0-9_]{1,64}$/.test(expectedQuestionId)
+      ? expectedQuestionId
+      : null;
+  const safeRequestId =
+    typeof diagnosticRequestId === "string" &&
+    /^[a-zA-Z0-9_-]{1,64}$/.test(diagnosticRequestId)
+      ? diagnosticRequestId
+      : null;
+  const currentBankQuestion = questions[session.currentQuestionIndex];
+  const currentQuestion = session.pendingFollowUp
+    ? {
+        id: `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`,
+        Step: `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`,
+        text: session.pendingFollowUp.prompt,
+        category: "Location & movement",
+      }
+    : currentBankQuestion || null;
+  const currentQuestionId = currentQuestion?.id || null;
+  const sessionKey = sessionId.slice(-8);
+
+  if (expectedQuestionId && !requestQuestionId) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: "Invalid expected question ID.",
+      },
+    };
+  }
+
+  if (requestQuestionId && requestQuestionId !== currentQuestionId) {
+    console.info("[UC Interview Diagnostics] stale_answer_ignored", {
+      requestId: safeRequestId,
+      sessionKey,
+      expectedQuestionId: requestQuestionId,
+      currentQuestionId,
+    });
+    return {
+      status: 409,
+      body: {
+        success: false,
+        staleQuestion: true,
+        currentQuestionId,
+        clarificationRequired: Boolean(session.pendingFollowUp),
+        followUpRequired: Boolean(session.pendingFollowUp),
+        manualReviewRequired: Boolean(session.pendingFollowUp),
+        questionNumber: session.currentQuestionIndex + 1,
+        totalQuestions: questions.length,
+        question: currentQuestion,
+        message: "This answer belongs to an earlier question.",
+      },
+    };
+  }
+
+  const isNameQuestion =
+    questions[session.currentQuestionIndex]?.id === "A2_NAME";
+  if (
+    typeof answer !== "string" ||
+    (!answer.trim() && !isNameQuestion)
+  ) {
     return {
       status: 400,
       body: {
@@ -97,11 +264,69 @@ async function submitAnswer({ sessionId, answer }) {
     };
   }
 
+  if (session.pendingChildApplicability) {
+    const pending = session.pendingChildApplicability;
+    let childPresence = classifyChildPresence(answer);
+
+    if (childPresence === "unknown") {
+      const yesNo = classifyYesNo(answer);
+      childPresence = yesNo === "yes" ? "present" : yesNo === "no" ? "none" : "unknown";
+    }
+
+    if (childPresence === "unknown" || childPresence === "ambiguous") {
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          message: "Please clarify whether you have children, so I ask only the relevant follow-up questions.",
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: questions[session.currentQuestionIndex],
+        },
+      };
+    }
+
+    const detailSource = `${pending.answerRecord.answer} ${answer}`;
+    const details = childDetailsProvided(detailSource);
+    pending.answerRecord.childPresence = childPresence;
+    session.answers.push(pending.answerRecord);
+    session.childQuestionApplicability = {
+      hasChildren: childPresence === "present",
+      classDetailsProvided: details.classDetails,
+      caregiverDetailsProvided: details.caregiverDetails,
+    };
+    session.pendingChildApplicability = null;
+    advanceToNextApplicableQuestion(session);
+
+    return {
+      status: 200,
+      body: {
+        success: true,
+        completed: false,
+        questionNumber: session.currentQuestionIndex + 1,
+        totalQuestions: questions.length,
+        question: questions[session.currentQuestionIndex],
+      },
+    };
+  }
+
   // Handle pending follow-ups safely.
   if (session.pendingFollowUp) {
     const pending = session.pendingFollowUp;
     const followUpAnswer = answer.trim();
     const normalized = followUpAnswer.toLowerCase();
+
+    console.info("[UC Interview Diagnostics] answer_processing", {
+      requestId: safeRequestId,
+      sessionKey,
+      expectedQuestionId: requestQuestionId || null,
+      questionId: `${pending.questionId}_${pending.type.toUpperCase()}`,
+      answerChars: followUpAnswer.length,
+      path: "pending_follow_up",
+      followUpType: pending.type,
+    });
 
     const lastCheck = (session.manualChecks || [])
       .slice()
@@ -149,14 +374,22 @@ async function submitAnswer({ sessionId, answer }) {
     }
 
     if (pending.type === "travel_clarification") {
+      const locationClassification = classifyLocation(followUpAnswer);
       const negative =
         /\b(nahi|nahin|no|not|cannot|can't|unable|never)\b/.test(normalized) ||
+        locationClassification.travelWillingness === "no" ||
+        /नहीं|नही/.test(followUpAnswer) ||
         /travel nahi|shift nahi|move nahi|door nahi|nahi kar sakti|nahi ja sakti/.test(
           normalized,
         );
 
       const positive =
         /\b(haan|han|yes|yeah|yep|sure|willing|ready)\b/.test(normalized) ||
+        locationClassification.travelWillingness === "yes" ||
+        /हाँ|हां/.test(followUpAnswer) ||
+        /हाँ.*(कर सकती|कर सकता|जा सकती|जा सकता)|हां.*(कर सकती|कर सकता|जा सकती|जा सकता)/.test(
+          followUpAnswer,
+        ) ||
         /travel kar sakti|travel kar sakta|shift ho sakti|shift ho sakta|move kar sakti|move kar sakta|can travel|can relocate/.test(
           normalized,
         );
@@ -302,10 +535,16 @@ async function submitAnswer({ sessionId, answer }) {
 
   const question = questions[session.currentQuestionIndex];
 
-  console.log("CURRENT QUESTION:", question.id);
-  console.log("RECEIVED ANSWER:", answer);
-
   const cleanAnswer = answer.trim();
+
+  console.info("[UC Interview Diagnostics] answer_processing", {
+    requestId: safeRequestId,
+    sessionKey,
+    expectedQuestionId: requestQuestionId || null,
+    questionId: question.id,
+    answerChars: cleanAnswer.length,
+    path: "question",
+  });
 
   const answerRecord = {
     questionId: question.id,
@@ -521,8 +760,54 @@ async function submitAnswer({ sessionId, answer }) {
     };
   }
 
+  // A2_NAME captures the candidate's name without applying eligibility rules.
+  if (question.id === "A2_NAME") {
+    const nameClassification = classifyNameAnswer(cleanAnswer);
+    const nameIsClear = nameClassification.clear;
+    console.info("[UC Interview Diagnostics] name_validation", {
+      requestId: safeRequestId,
+      sessionKey,
+      questionId: question.id,
+      outcome: nameIsClear ? "accepted" : "clarification",
+      answerFormat: nameClassification.format,
+      answerFieldType: typeof answer,
+      answerChars: cleanAnswer.length,
+    });
+
+    if (!nameIsClear) {
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          message: "Please tell me your name.",
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question,
+        },
+      };
+    }
+
+    session.answers.push(answerRecord);
+    session.currentQuestionIndex += 1;
+
+    return {
+      status: 200,
+      body: {
+        success: true,
+        completed: false,
+        questionNumber: session.currentQuestionIndex + 1,
+        totalQuestions: questions.length,
+        question: questions[session.currentQuestionIndex],
+      },
+    };
+  }
+
   // Gemini interpretation for normal questions only.
-  const isSpecialQuestion = ["A0", "A1", "A2"].includes(question.id);
+  const isSpecialQuestion = ["A0", "A1", "A2", "A2_NAME"].includes(
+    question.id,
+  );
 
   if (!isSpecialQuestion) {
     try {
@@ -556,9 +841,36 @@ async function submitAnswer({ sessionId, answer }) {
     }
   }
 
+  if (question.id === "A3") {
+    const childPresence = classifyChildPresence(cleanAnswer);
+    if (childPresence === "unknown" || childPresence === "ambiguous") {
+      session.pendingChildApplicability = { answerRecord };
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          message: "Please clarify whether you have children, so I ask only the relevant follow-up questions.",
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question,
+        },
+      };
+    }
+
+    const details = childDetailsProvided(cleanAnswer);
+    answerRecord.childPresence = childPresence;
+    session.childQuestionApplicability = {
+      hasChildren: childPresence === "present",
+      classDetailsProvided: details.classDetails,
+      caregiverDetailsProvided: details.caregiverDetails,
+    };
+  }
+
   // Sequential flow for questions other than A0.
   session.answers.push(answerRecord);
-  session.currentQuestionIndex += 1;
+  advanceToNextApplicableQuestion(session);
 
   if (session.currentQuestionIndex >= questions.length) {
     session.status = "completed";

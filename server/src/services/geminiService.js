@@ -44,6 +44,32 @@ function fallbackInterpretation({ question, answer }) {
   const a = answer.trim().toLowerCase();
   const words = a.split(/\s+/).filter(Boolean);
 
+  // The household prompt needs at least one concrete household member.
+  // Words such as "ghar" or "family" alone are too broad to establish relevance.
+  const isHouseholdQuestion =
+    /household|family|घर|परिवार|ghar/i.test(question);
+  const householdMemberPatterns =
+    /\b(?:husband|wife|mother|father|parents?|brother|sister|son|daughter|children|child|kids?|grandmother|grandfather|in-laws?|pati|patni|saas|sasur|maa|mummy|mum|mumma|papa|pitaji|bhai|behen|beta|beti|bachche|bacche)\b|(?:पति|पत्नी|सास|ससुर|माँ|मां|मम्मी|माता|पिता|पापा|भाई|बहन|बेटा|बेटी|बच्चे|बच्चा)/iu;
+
+  if (isHouseholdQuestion) {
+    if (householdMemberPatterns.test(answer)) {
+      return {
+        understanding: "The answer identifies one or more household members.",
+        answerStatus: "sufficient",
+        needsClarification: false,
+        clarificationQuestion: "",
+      };
+    }
+
+    return {
+      understanding: "The answer does not identify any household members.",
+      answerStatus: "unclear",
+      needsClarification: true,
+      clarificationQuestion:
+        "Could you tell me who lives in your household and what they do during the day?",
+    };
+  }
+
   const relevantPatterns =
     /\b(politely|polite|respectfully|calmly|patiently|courteously|customer|client|grahak|listen|listening|sunungi|sununga|sunti hoon|sunta hoon|samjhaungi|samjhaunga|help karungi|help karunga|sorry|apologize|apologise|maafi|relocate|relocation|travel|shift|shifting|mahine|mahina|din|weeks?|months?|days?|ready|willing|kar sakti hoon|kar sakta hoon|kar paungi|kar paunga mummy|mumma|maa|mother|papa|father|family|parivaar|ghar|rehte|rehti|rehta|sambhalti|sambhalta)\b/i;
 

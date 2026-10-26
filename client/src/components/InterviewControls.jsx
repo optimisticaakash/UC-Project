@@ -38,7 +38,10 @@ export default function InterviewControls({
         Start Interview
       </button>
 
-      <button className="uc-action uc-secondary" onClick={stop}>
+      <button
+        className="uc-action uc-secondary"
+        onClick={() => stop("user_requested")}
+      >
         <svg
           width="17"
           height="17"

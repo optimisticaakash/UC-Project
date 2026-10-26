@@ -1,8 +1,19 @@
 {
   "sourceFile": "UC_Soft_Skill_Bot_Structure (7)(5).xlsx",
-  "sourceAuthority": "Workbook cell contents are preserved verbatim in the fields below; no scoring or conflicting notes have been reconciled.",
+  "sourceAuthority": "Workbook cell contents are preserved verbatim; A2_NAME is an approved runtime addition and is not part of the original workbook.",
   "agentFlowInstructions": "Bot converses in Hindi / English (Kannada only to clarify). Never reads out answer options. Never reveals verdict. Orange = Mandatory Basic Check · Blue = feeds a Manual Check · Yellow = open decision",
   "questionFlow": [
+    {
+      "Step": "A2_NAME",
+      "Block": "Introduction",
+      "Type": "Mandatory Basic Check",
+      "Bot says (primary)": "Namaste ji, sabse pehle aap apna naam bataiye.",
+      "Follow-up probe": "—",
+      "Signal captured → sheet field": "Candidate name",
+      "Good answer looks like": "A clear candidate name",
+      "Rule": "Capture the candidate name; clarify if the answer is empty or unclear.",
+      "Est. time (sec)": 10.0
+    },
     {
       "Step": "A0",
       "Block": "Setup",
@@ -4345,9 +4356,10 @@
   ],
   "notes": [
     "Question text and metadata are mapped from Agent Flow using the workbook's original cell values.",
-    "The questionFlow array includes only coded interview steps (A0–A12, B1–B19, K1–K7, C1–C8, D1–D2); section headings and time estimates are preserved in the full raw extraction file.",
+    "The question array preserves coded workbook steps plus the approved A2_NAME runtime addition; section headings and time estimates are preserved in the full raw extraction file.",
     "Response buckets are attached by Step code where present; the original full responseBucketsAll array is also included.",
     "Overview raw rows preserve side notes and potentially conflicting notes without resolving them.",
-    "This is a source-faithful extraction, not yet an approved runtime configuration; validate sensitive eligibility rules and draft technical rubrics with stakeholders."
+    "This is a source-faithful extraction, not yet an approved runtime configuration; validate sensitive eligibility rules and draft technical rubrics with stakeholders.",
+    "A2_NAME was approved as the opening runtime question before A0; the original workbook does not contain this question."
   ]
 }

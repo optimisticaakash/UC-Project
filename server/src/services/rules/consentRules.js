@@ -26,6 +26,7 @@ function classifyConsent(answer) {
     /\bnot comfortable\b/,
     /\bdo not agree\b/,
     /\bdon't agree\b/,
+    /\bnahi\b[\s,;:!?.\-–—]*(?:main|mai)\s+agree\s+nahi\b/,
     /\bi do not consent\b/,
     /\bshuru nahi karna\b/,
     /\brecord mat karo\b/,

@@ -2,20 +2,20 @@ function evaluateAge(answer) {
   const input = answer.trim();
   let age = null;
 
-  // Accept a numeric age, such as "32".
- const ageMatch = input.match(
-   /^(?:(?:मैं|meri age|meri umar|meri umr|my age is|i am|i'm)\s*)?(\d{1,3})(?:\s*(?:साल|साल का|साल की|वर्ष|years?|yrs?))?[.! ]*$/i,
- );
+  // Accept an age phrase only when the whole answer matches, so unrelated
+  // numbers in a sentence are not treated as the candidate's age.
+  const ageMatch = input.match(
+    /^(?:(?:मैं|मेरी उम्र|मेरी उमर|मेरी आयु|meri age|meri umar|meri umr|my age is|i am|i'm)\s*)?(\d{1,3})(?:\s*(?:साल|वर्ष)(?:\s*(?:का|की|के))?(?:\s*(?:है|हैं|हूँ|हूं))?|\s*(?:years?(?:\s+old)?|yrs?))?[.!?।]*$/iu,
+  );
 
- if (ageMatch) {
-   age = Number(ageMatch[1]);
-   age = Number(input);
- } else {
-   // Accept DOB formats: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD.
-   let day;
-   let month;
-   let year;
-   let match;
+  if (ageMatch) {
+    age = Number(ageMatch[1]);
+  } else {
+    // Accept DOB formats: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD.
+    let day;
+    let month;
+    let year;
+    let match;
 
    if ((match = input.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/))) {
      day = Number(match[1]);
