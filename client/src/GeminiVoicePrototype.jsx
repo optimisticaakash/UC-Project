@@ -2,6 +2,7 @@ import { useGeminiLiveInterview } from "./hooks/useGeminiLiveInterview";
 import AIOrb from "./components/AIOrb";
 import InterviewControls from "./components/InterviewControls";
 import InterviewStatus from "./components/InterviewStatus";
+import CandidateCompletion from "./components/CandidateCompletion.js";
 import "./GeminiVoicePrototype.css";
 // -----------------------------------------------------------------------------
 // Gemini Live voice interview component
@@ -11,12 +12,15 @@ const {
   messages,
   status,
   error,
+  interviewComplete,
+  interviewEnded,
   audioLevel,
   isAiSpeaking,
   startingRef,
   start,
   stop,
 } = useGeminiLiveInterview();
+
   // ---------------------------------------------------------------------------
   // Interview UI
   // ---------------------------------------------------------------------------
@@ -33,26 +37,25 @@ const {
         overflow: "hidden",
       }}
     >
-      
       {/* One main heading and one status */}
       {/* Interview status */}
-      <InterviewStatus status={status} error={error} />
+      {interviewComplete || interviewEnded ? <CandidateCompletion endedEarly={interviewEnded} /> : <InterviewStatus status={status} error={error} />}
 
       {/* One orb, centered */}
-      <AIOrb
+      {!interviewComplete && !interviewEnded && <AIOrb
         isAiSpeaking={isAiSpeaking}
         audioLevel={audioLevel}
         messages={messages}
-      />
+      />}
 
       {/* One set of interview buttons */}
       {/* Interview controls */}
-      <InterviewControls
+      {!interviewComplete && !interviewEnded && <InterviewControls
         start={start}
         stop={stop}
         startingRef={startingRef}
         status={status}
-      />
+      />}
     </main>
   );
 }

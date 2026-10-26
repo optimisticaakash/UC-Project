@@ -183,6 +183,105 @@
   background: #fff;
   border: 1px solid #d8dce6;
 }
+.uc-report {
+  width: min(900px, 100%);
+  box-sizing: border-box;
+  margin: 28px auto 0;
+  padding: 20px;
+  border: 1px solid #e2e5ec;
+  border-radius: 16px;
+  background: #fff;
+  text-align: left;
+}
+.uc-report h2,
+.uc-report h3 {
+  margin: 0 0 12px;
+  color: #111318;
+}
+.uc-report h2 {
+  font-size: 20px;
+}
+.uc-report h3 {
+  margin-top: 20px;
+  font-size: 15px;
+}
+.uc-report-header,
+.uc-report-answer-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.uc-report-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #eef1f7;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 650;
+}
+.uc-report-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: #4b5563;
+  font-size: 13px;
+}
+.uc-report-review-reason,
+.uc-report-error {
+  color: #9a3412;
+}
+.uc-report-checks ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #4b5563;
+  font-size: 13px;
+}
+.uc-report-answers {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 25px;
+}
+.uc-report-answers li {
+  padding: 12px 14px;
+  border: 1px solid #e8eaf0;
+  border-radius: 12px;
+}
+.uc-report-question,
+.uc-report-answer,
+.uc-report-interpretation {
+  margin: 8px 0 0;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.uc-report-answer {
+  color: #111827;
+}
+.uc-report-interpretation {
+  color: #687386;
+}
+.uc-report-entry-details {
+  margin-top: 8px;
+}
+.uc-report-error p {
+  margin: 8px 0;
+}
+.uc-report-retry {
+  padding: 7px 11px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+  cursor: pointer;
+}
 @media (max-width: 600px) {
   .uc-brand {
     position: relative;
@@ -209,6 +308,9 @@
   }
   .uc-action {
     width: 100%;
+  }
+  .uc-report {
+    padding: 16px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

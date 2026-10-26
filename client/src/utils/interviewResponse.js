@@ -23,6 +23,38 @@ export function resolvePromptHandoff(status, data) {
   };
 }
 
+export async function recoverMissingPrompt({
+  fetchImpl,
+  apiUrl,
+  sessionId,
+  expectedQuestionId,
+  requestId,
+  promptTurn,
+  sessionGeneration,
+}) {
+  const response = await fetchImpl(`${apiUrl}/api/interview/answer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // An empty answer asks the existing stale-question guard for current state.
+    // It cannot submit or persist the candidate's previous answer.
+    body: JSON.stringify({
+      sessionId,
+      answer: "",
+      expectedQuestionId,
+      diagnosticRequestId: `${requestId}-r1`,
+      diagnosticPromptTurn: promptTurn,
+      diagnosticSessionGeneration: sessionGeneration,
+    }),
+  });
+  const data = await response.json();
+
+  return {
+    response,
+    data,
+    promptHandoff: resolvePromptHandoff(response.status, data),
+  };
+}
+
 export function isLostInterviewSession(status, data) {
   return status === 404 && data?.code === "SESSION_NOT_FOUND";
 }

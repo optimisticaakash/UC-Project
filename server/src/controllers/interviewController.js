@@ -1,5 +1,16 @@
 const interviewService = require("../services/interview");
 
+const sessionWrites = new Map();
+
+function serializeSessionWrite(sessionId, operation) {
+  const previous = sessionWrites.get(sessionId) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  sessionWrites.set(sessionId, current);
+  return current.finally(() => {
+    if (sessionWrites.get(sessionId) === current) sessionWrites.delete(sessionId);
+  });
+}
+
 function classifyDiagnosticResponse(status, body) {
   if (status >= 400 || !body.success) return "error";
   if (body.completed && body.manualReviewRequired) return "manual_review_terminal";
@@ -17,7 +28,7 @@ function startInterview(req, res) {
   try {
     return res.status(200).json(interviewService.startInterview());
   } catch (error) {
-    console.error("Start interview error:", error);
+    console.error("Start interview error:", error?.name || "Error");
 
     return res.status(500).json({
       success: false,
@@ -28,6 +39,12 @@ function startInterview(req, res) {
 
 
 async function submitAnswer(req, res) {
+  const sessionId = req.body?.sessionId;
+  return serializeSessionWrite(sessionId, () => submitAnswerUnlocked(req, res));
+}
+
+async function submitAnswerUnlocked(req, res) {
+  const requestStartedAt = process.hrtime.bigint();
   try {
     const submittedAnswer = req.body?.answer;
     console.info("[UC Interview Diagnostics] answer_request_received", {
@@ -36,6 +53,7 @@ async function submitAnswer(req, res) {
         /^[a-zA-Z0-9_-]{1,64}$/.test(req.body.diagnosticRequestId)
           ? req.body.diagnosticRequestId
           : null,
+      receivedAt: new Date().toISOString(),
       sessionKey:
         typeof req.body?.sessionId === "string"
           ? req.body.sessionId.slice(-8)
@@ -44,6 +62,16 @@ async function submitAnswer(req, res) {
         typeof req.body?.expectedQuestionId === "string" &&
         /^[A-Z0-9_]{1,64}$/.test(req.body.expectedQuestionId)
           ? req.body.expectedQuestionId
+          : null,
+      promptTurn:
+        Number.isSafeInteger(req.body?.diagnosticPromptTurn) &&
+        req.body.diagnosticPromptTurn >= 0
+          ? req.body.diagnosticPromptTurn
+          : null,
+      sessionGeneration:
+        Number.isSafeInteger(req.body?.diagnosticSessionGeneration) &&
+        req.body.diagnosticSessionGeneration >= 0
+          ? req.body.diagnosticSessionGeneration
           : null,
       answerFieldPresent: Object.prototype.hasOwnProperty.call(
         req.body || {},
@@ -85,6 +113,16 @@ async function submitAnswer(req, res) {
         /^[A-Z0-9_]{1,64}$/.test(req.body.expectedQuestionId)
           ? req.body.expectedQuestionId
           : null,
+      promptTurn:
+        Number.isSafeInteger(req.body?.diagnosticPromptTurn) &&
+        req.body.diagnosticPromptTurn >= 0
+          ? req.body.diagnosticPromptTurn
+          : null,
+      sessionGeneration:
+        Number.isSafeInteger(req.body?.diagnosticSessionGeneration) &&
+        req.body.diagnosticSessionGeneration >= 0
+          ? req.body.diagnosticSessionGeneration
+          : null,
       httpStatus: result.status,
       responseType: classifyDiagnosticResponse(result.status, body),
       questionId: body.question?.id || null,
@@ -98,6 +136,9 @@ async function submitAnswer(req, res) {
       locationOutcome: body.locationOutcome || null,
       eligibilityOutcome: body.eligibilityOutcome || null,
       sessionStatus: body.sessionStatus || null,
+      serviceElapsedMs: Number(
+        (Number(process.hrtime.bigint() - requestStartedAt) / 1e6).toFixed(1),
+      ),
     });
 
     return res.status(result.status).json(result.body);
@@ -105,6 +146,9 @@ async function submitAnswer(req, res) {
     console.error("[UC Interview Diagnostics] answer_error", {
       errorName: error?.name || "Error",
       httpStatus: error?.status || null,
+      serviceElapsedMs: Number(
+        (Number(process.hrtime.bigint() - requestStartedAt) / 1e6).toFixed(1),
+      ),
     });
 
     return res.status(500).json({
@@ -115,16 +159,16 @@ async function submitAnswer(req, res) {
 }
 
 
-function flagManualReview(req, res) {
+async function flagManualReview(req, res) {
   try {
+    const sessionId = req.body?.sessionId;
     const result = interviewService.flagManualReview(
-      req.body?.sessionId,
+      sessionId,
       req.body?.reason,
     );
-
     return res.status(result.status).json(result.body);
   } catch (error) {
-    console.error("Flag manual review error:", error);
+    console.error("Flag manual review error:", error?.name || "Error");
 
     return res.status(500).json({
       success: false,
@@ -133,19 +177,49 @@ function flagManualReview(req, res) {
   }
 }
 
-function getReport(req, res) {
+async function getReport(req, res) {
   try {
     const result = interviewService.getReport(req.params.sessionId);
 
     return res.status(result.status).json(result.body);
   } catch (error) {
-    console.error("Get report error:", error);
+    console.error("Get report error:", error?.name || "Error");
 
     return res.status(500).json({
       success: false,
       message: "Unable to retrieve the interview report.",
     });
   }
+}
+
+async function listReports(req, res) {
+  try {
+    const result = interviewService.listReports();
+    result.body.storageMode = "memory";
+    return res.status(result.status).json(result.body);
+  } catch (error) {
+    console.error("List reports error:", error?.name || "Error");
+    return res.status(500).json({
+      success: false,
+      message: "Unable to list interview sessions.",
+    });
+  }
+}
+
+async function endInterview(req, res) {
+  const sessionId = req.body?.sessionId;
+  return serializeSessionWrite(sessionId, async () => {
+  try {
+    const result = interviewService.endInterview(sessionId);
+    return res.status(result.status).json(result.body);
+  } catch (error) {
+    console.error("End interview error:", error?.name || "Error");
+    return res.status(500).json({
+      success: false,
+      message: "Unable to end the interview session.",
+    });
+  }
+  });
 }
 
 async function interpretCandidateAnswer(req, res) {
@@ -162,13 +236,14 @@ async function interpretCandidateAnswer(req, res) {
       interpretation: result,
     });
   } catch (error) {
-    const message = error?.message || "";
+    const errorName = error?.name || "Error";
+    const errorMessage = typeof error?.message === "string" ? error.message : "";
     const isRateLimit =
-      message.includes("429") ||
-      message.toLowerCase().includes("rate limit") ||
-      message.toLowerCase().includes("quota");
+      errorMessage.includes("429") ||
+      errorMessage.toLowerCase().includes("rate limit") ||
+      errorMessage.toLowerCase().includes("quota");
 
-    console.error("Answer interpretation error:", message);
+    console.error("Answer interpretation error:", errorName);
 
     if (isRateLimit) {
       return res.status(429).json({
@@ -192,6 +267,8 @@ module.exports = {
   startInterview,
   submitAnswer,
   getReport,
+  listReports,
+  endInterview,
   interpretCandidateAnswer,
   flagManualReview,
 };

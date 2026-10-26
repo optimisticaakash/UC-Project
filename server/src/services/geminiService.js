@@ -122,7 +122,14 @@ function fallbackInterpretation({ question, answer }) {
   };
 }
 
-async function interpretAnswer({ question, answer }) {
+async function interpretAnswer({
+  question,
+  answer,
+  questionId,
+  diagnosticRequestId,
+  diagnosticPromptTurn,
+  diagnosticSessionGeneration,
+}) {
   if (
     typeof question !== "string" ||
     !question.trim() ||
@@ -156,10 +163,39 @@ Candidate answer: ${answer.trim()}
 `;
 
   let raw;
+  const modelCallStartedAt = process.hrtime.bigint();
+  const diagnosticMetadata = {
+    requestId:
+      typeof diagnosticRequestId === "string" &&
+      /^[a-zA-Z0-9_-]{1,64}$/.test(diagnosticRequestId)
+        ? diagnosticRequestId
+        : null,
+    questionId:
+      typeof questionId === "string" && /^[A-Z0-9_]{1,64}$/.test(questionId)
+        ? questionId
+        : null,
+    promptTurn:
+      Number.isSafeInteger(diagnosticPromptTurn) && diagnosticPromptTurn >= 0
+        ? diagnosticPromptTurn
+        : null,
+    sessionGeneration:
+      Number.isSafeInteger(diagnosticSessionGeneration) &&
+      diagnosticSessionGeneration >= 0
+        ? diagnosticSessionGeneration
+        : null,
+  };
+  console.info("[UC Answer Interpretation] model_request_started", diagnosticMetadata);
 
   try {
     raw = await generateText(prompt);
   } catch (error) {
+    console.info("[UC Answer Interpretation] model_request_failed", {
+      ...diagnosticMetadata,
+      errorName: error?.name || "Error",
+      modelCallElapsedMs: Number(
+        (Number(process.hrtime.bigint() - modelCallStartedAt) / 1e6).toFixed(1),
+      ),
+    });
     const message = error?.message || "";
     const isTemporaryAIError =
       message.includes("429") ||
@@ -172,41 +208,60 @@ Candidate answer: ${answer.trim()}
     throw error;
   }
 
-  const jsonText = raw
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
-    .trim();
-
-  let result;
+  console.info("[UC Answer Interpretation] model_response_received", {
+    ...diagnosticMetadata,
+    modelCallElapsedMs: Number(
+      (Number(process.hrtime.bigint() - modelCallStartedAt) / 1e6).toFixed(1),
+    ),
+  });
 
   try {
-    result = JSON.parse(jsonText);
-  } catch {
-    throw new Error("Gemini returned invalid JSON");
+    const jsonText = raw
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
+    const result = JSON.parse(jsonText);
+    const validStatuses = ["sufficient", "unclear", "irrelevant"];
+
+    if (
+      !result ||
+      typeof result.understanding !== "string" ||
+      !validStatuses.includes(result.answerStatus) ||
+      typeof result.needsClarification !== "boolean" ||
+      typeof result.clarificationQuestion !== "string"
+    ) {
+      throw new Error("Gemini returned an invalid answer interpretation");
+    }
+
+    if (result.needsClarification && !result.clarificationQuestion.trim()) {
+      throw new Error("Clarification question is missing");
+    }
+
+    const interpretation = {
+      understanding: result.understanding.trim(),
+      answerStatus: result.answerStatus,
+      needsClarification: result.needsClarification,
+      clarificationQuestion: result.clarificationQuestion.trim(),
+    };
+    console.info("[UC Answer Interpretation] interpretation_completed", {
+      ...diagnosticMetadata,
+      answerStatus: interpretation.answerStatus,
+      needsClarification: interpretation.needsClarification,
+      interpretationElapsedMs: Number(
+        (Number(process.hrtime.bigint() - modelCallStartedAt) / 1e6).toFixed(1),
+      ),
+    });
+    return interpretation;
+  } catch (error) {
+    console.info("[UC Answer Interpretation] interpretation_failed", {
+      ...diagnosticMetadata,
+      errorName: error?.name || "Error",
+      interpretationElapsedMs: Number(
+        (Number(process.hrtime.bigint() - modelCallStartedAt) / 1e6).toFixed(1),
+      ),
+    });
+    throw error;
   }
-
-  const validStatuses = ["sufficient", "unclear", "irrelevant"];
-
-  if (
-    !result ||
-    typeof result.understanding !== "string" ||
-    !validStatuses.includes(result.answerStatus) ||
-    typeof result.needsClarification !== "boolean" ||
-    typeof result.clarificationQuestion !== "string"
-  ) {
-    throw new Error("Gemini returned an invalid answer interpretation");
-  }
-
-  if (result.needsClarification && !result.clarificationQuestion.trim()) {
-    throw new Error("Clarification question is missing");
-  }
-
-  return {
-    understanding: result.understanding.trim(),
-    answerStatus: result.answerStatus,
-    needsClarification: result.needsClarification,
-    clarificationQuestion: result.clarificationQuestion.trim(),
-  };
 }
 
 // module.exports = {

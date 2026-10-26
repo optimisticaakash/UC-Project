@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isLostInterviewSession,
+  recoverMissingPrompt,
   resolvePromptHandoff,
 } from "./interviewResponse.js";
 import {
@@ -109,4 +110,64 @@ test("stale 409 without an active question cannot trigger a prompt", () => {
     }),
     null,
   );
+});
+
+test("missing prompt recovery performs one empty state-reconciliation request", async () => {
+  const calls = [];
+  const recovery = await recoverMissingPrompt({
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        status: 409,
+        async json() {
+          return {
+            success: false,
+            staleQuestion: true,
+            currentQuestionId: "A8",
+            question: { id: "A8", text: "Current authorized question" },
+          };
+        },
+      };
+    },
+    apiUrl: "http://localhost:5001",
+    sessionId: "session-123",
+    expectedQuestionId: "A7",
+    requestId: "p9-a1",
+    promptTurn: 9,
+    sessionGeneration: 2,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://localhost:5001/api/interview/answer");
+  const payload = JSON.parse(calls[0].options.body);
+  assert.equal(payload.answer, "");
+  assert.equal(payload.expectedQuestionId, "A7");
+  assert.equal(payload.diagnosticRequestId, "p9-a1-r1");
+  assert.equal("candidateAnswer" in payload, false);
+  assert.equal(recovery.promptHandoff.questionId, "A8");
+  assert.equal(recovery.promptHandoff.staleRecovery, true);
+});
+
+test("failed missing-prompt recovery does not loop or return a question", async () => {
+  let calls = 0;
+  const recovery = await recoverMissingPrompt({
+    fetchImpl: async () => {
+      calls += 1;
+      return {
+        status: 400,
+        async json() {
+          return { success: false, message: "Invalid answer" };
+        },
+      };
+    },
+    apiUrl: "http://localhost:5001",
+    sessionId: "session-123",
+    expectedQuestionId: "A7",
+    requestId: "p9-a1",
+    promptTurn: 9,
+    sessionGeneration: 2,
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(recovery.promptHandoff, null);
 });

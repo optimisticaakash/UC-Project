@@ -5,11 +5,27 @@ import { API_URL } from "../config/geminiConfig";
 import { toBase64, floatToPcm16, resample } from "../utils/audioUtils";
 import { createLiveInputTurn } from "../utils/liveInputTurn";
 import {
+  createPlaybackQueue,
+  pauseFor,
+  waitForPlaybackAndPause,
+} from "../utils/playbackCompletion";
+import {
+  classifyFinalizedInput,
+  createRepeatHandoffGuard,
+} from "../utils/repeatQuestionIntent";
+import {
+  buildClarificationPrompt,
+  buildInitialQuestionPrompt,
+  buildQuestionHandoffPrompt,
+  buildRepeatPrompt,
+} from "../utils/liveDialoguePrompt";
+import {
   isCurrentLiveGeneration,
   isCurrentLiveSession,
 } from "../utils/liveSessionLifecycle";
 import {
   isLostInterviewSession,
+  recoverMissingPrompt,
   resolvePromptHandoff,
 } from "../utils/interviewResponse";
 
@@ -17,6 +33,8 @@ export function useGeminiLiveInterview() {
   const [messages, setMessages] = useState([]);
   const [status, setStatus] = useState("Not connected");
   const [error, setError] = useState("");
+  const [interviewComplete, setInterviewComplete] = useState(false);
+  const [interviewEnded, setInterviewEnded] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
 
@@ -30,11 +48,14 @@ export function useGeminiLiveInterview() {
   const outputGainRef = useRef(null);
   const animationFrameRef = useRef(null);
   const playbackSourcesRef = useRef(new Set());
+  const playbackQueueRef = useRef(createPlaybackQueue());
   const promptTurnRef = useRef(0);
   const audioChunkSequenceRef = useRef(0);
   const currentQuestionIdRef = useRef(null);
+  const activePromptRef = useRef(null);
   const speakingStateRef = useRef(false);
   const lastAnalyserDiagnosticAtRef = useRef(0);
+  const promptTimingRef = useRef(null);
 
   const startingRef = useRef(false);
   const stoppingRef = useRef(false);
@@ -44,12 +65,16 @@ export function useGeminiLiveInterview() {
   const interviewSessionIdRef = useRef(null);
   const answerSubmittingRef = useRef(false);
   const answerRequestSequenceRef = useRef(0);
+  const repeatRequestSequenceRef = useRef(0);
+  const repeatHandoffGuardRef = useRef(createRepeatHandoffGuard());
   const inputTurnRef = useRef(createLiveInputTurn());
   const liveGenerationRef = useRef(0);
 
   function diagnostic(event, details = {}) {
     console.info("[UC Voice Diagnostics]", event, {
+      clientTimeMs: Number(performance.now().toFixed(1)),
       promptTurn: promptTurnRef.current,
+      sessionGeneration: liveGenerationRef.current,
       questionId: currentQuestionIdRef.current,
       ...details,
     });
@@ -70,7 +95,105 @@ export function useGeminiLiveInterview() {
     }
   }
 
-  async function submitCandidateAnswer(answer) {
+  function promptElapsedMs(generation) {
+    const timing = promptTimingRef.current;
+    if (
+      timing?.generation !== generation ||
+      timing?.promptTurn !== promptTurnRef.current
+    ) return null;
+    return Number((performance.now() - timing.sentAt).toFixed(1));
+  }
+
+  async function repeatActivePrompt(generation, requestId, repeatRequest) {
+    if (!repeatHandoffGuardRef.current.tryAcquire(generation)) return;
+    const liveSession = sessionRef.current;
+
+    try {
+      if (!repeatRequest.prompt || !repeatRequest.questionId || !liveSession) {
+        addMessage(
+          "AI",
+          "माफ़ कीजिए, मैं इस समय सवाल दोबारा नहीं पूछ पा रही हूँ।",
+        );
+        setStatus("सवाल दोबारा सुनाने में समस्या हुई");
+        return;
+      }
+
+      diagnostic("repeat_prompt_playback_wait_started", {
+        requestId,
+        activeQuestionId: repeatRequest.questionId,
+        scheduledSources: playbackSourcesRef.current.size,
+      });
+      const playbackWait = await waitForPlaybackAndPause({
+        playbackQueue: playbackQueueRef.current,
+        pause: pauseFor,
+        isCurrent: () =>
+          isCurrentLiveSession(
+            liveSession,
+            generation,
+            sessionRef.current,
+            liveGenerationRef.current,
+          ) && !stoppingRef.current,
+      });
+
+      if (!playbackWait.ready) {
+        diagnostic("repeat_prompt_handoff_skipped", {
+          requestId,
+          reason: "stale_session",
+        });
+        return;
+      }
+
+      currentQuestionIdRef.current = repeatRequest.questionId;
+      promptTurnRef.current += 1;
+      audioChunkSequenceRef.current = 0;
+      const promptSentAt = performance.now();
+      promptTimingRef.current = {
+        generation,
+        promptTurn: promptTurnRef.current,
+        sentAt: promptSentAt,
+      };
+      diagnostic("repeat_prompt_handoff_started", {
+        requestId,
+        activeQuestionId: repeatRequest.questionId,
+        promptChars: repeatRequest.prompt.length,
+        clarificationRequired: repeatRequest.clarificationRequired,
+      });
+
+      inputTurnRef.current.beginModelTurn();
+      liveSession.sendClientContent({
+        turns: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: buildRepeatPrompt(repeatRequest.prompt),
+              },
+            ],
+          },
+        ],
+        turnComplete: true,
+      });
+      diagnostic("repeat_prompt_handoff_sent", {
+        requestId,
+        activeQuestionId: repeatRequest.questionId,
+        sendCallElapsedMs: Number((performance.now() - promptSentAt).toFixed(1)),
+      });
+    } catch (err) {
+      diagnostic("repeat_prompt_handoff_error", {
+        requestId,
+        errorName: err?.name || "Error",
+      });
+      addMessage(
+        "AI",
+        "माफ़ कीजिए, मैं इस समय सवाल दोबारा नहीं पूछ पा रही हूँ।",
+      );
+      setStatus("सवाल दोबारा सुनाने में समस्या हुई");
+    } finally {
+      repeatHandoffGuardRef.current.release(generation);
+    }
+  }
+
+  async function submitCandidateAnswer(answer, requestId, transcriptFinalizedAt) {
     const generation = liveGenerationRef.current;
     const liveSession = sessionRef.current;
     const sessionId = interviewSessionIdRef.current;
@@ -87,7 +210,7 @@ export function useGeminiLiveInterview() {
       return;
     }
 
-    const requestId = `p${promptTurnRef.current}-a${++answerRequestSequenceRef.current}`;
+    const requestStartedAt = performance.now();
     answerSubmittingRef.current = true;
     setStatus("Processing candidate answer...");
     let requestStage = "answer_request";
@@ -96,11 +219,18 @@ export function useGeminiLiveInterview() {
       sessionKey: sessionId.slice(-8),
       expectedQuestionId,
       answerChars: normalizedAnswer.length,
+      answerFieldPresent: true,
+      answerFieldType: "string",
+      sessionGeneration: generation,
+      msSinceTranscriptFinalized: Number(
+        (requestStartedAt - transcriptFinalizedAt).toFixed(1),
+      ),
     });
 
     try {
       const response = await fetch(`${API_URL}/api/interview/answer`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -109,6 +239,8 @@ export function useGeminiLiveInterview() {
           answer: normalizedAnswer,
           expectedQuestionId,
           diagnosticRequestId: requestId,
+          diagnosticPromptTurn: promptTurnRef.current,
+          diagnosticSessionGeneration: generation,
         }),
       });
 
@@ -144,7 +276,7 @@ export function useGeminiLiveInterview() {
         return;
       }
 
-      const promptHandoff = resolvePromptHandoff(response.status, data);
+      let promptHandoff = resolvePromptHandoff(response.status, data);
       const staleQuestionRecovery = Boolean(promptHandoff?.staleRecovery);
 
       if (response.status === 409 && data.staleQuestion) {
@@ -195,6 +327,8 @@ export function useGeminiLiveInterview() {
         consentOutcome: data.consentOutcome || null,
         locationOutcome: data.locationOutcome || null,
         eligibilityOutcome: data.eligibilityOutcome || null,
+        requestElapsedMs: Number((performance.now() - requestStartedAt).toFixed(1)),
+        returnedPromptChars: (data.question?.text || data.message || "").length,
       });
 
       if ((!response.ok || !data.success) && !staleQuestionRecovery) {
@@ -208,18 +342,20 @@ export function useGeminiLiveInterview() {
           sessionStatus: data.sessionStatus || null,
         });
         await stop("interview_terminal");
+        setInterviewComplete(true);
 
         setStatus(
           data.manualReviewRequired
             ? "Manual review required"
-            : "Interview completed",
+            : data.eligibilityOutcome === "reject"
+              ? "Interview ended"
+              : "Interview completed",
         );
-
         return;
       }
 
       // A clarification can come from message or question.text.
-      const nextPrompt = promptHandoff?.prompt;
+      let nextPrompt = promptHandoff?.prompt;
 
       if (!nextPrompt) {
         if (data.manualReviewRequired) {
@@ -229,8 +365,90 @@ export function useGeminiLiveInterview() {
           return;
         }
 
-        throw new Error("Backend se next question ya clarification nahi mila.");
+        diagnostic("prompt_recovery_started", {
+          requestId,
+          expectedQuestionId,
+          method: "single_empty_answer_state_reconciliation",
+        });
+
+        try {
+          const recovery = await recoverMissingPrompt({
+            fetchImpl: fetch,
+            apiUrl: API_URL,
+            sessionId,
+            expectedQuestionId,
+            requestId,
+            promptTurn: promptTurnRef.current,
+            sessionGeneration: generation,
+          });
+
+          if (
+            !isCurrentLiveSession(
+              liveSession,
+              generation,
+              sessionRef.current,
+              liveGenerationRef.current,
+            )
+          ) {
+            diagnostic("prompt_recovery_response_ignored", {
+              requestId,
+              reason: "obsolete_live_session",
+            });
+            return;
+          }
+
+          promptHandoff = recovery.promptHandoff;
+          nextPrompt = promptHandoff?.prompt;
+          diagnostic("prompt_recovery_response", {
+            requestId,
+            httpStatus: recovery.response.status,
+            recovered: Boolean(nextPrompt),
+            returnedQuestionId: promptHandoff?.questionId || null,
+            promptChars: nextPrompt?.length || 0,
+          });
+        } catch (recoveryError) {
+          diagnostic("prompt_recovery_error", {
+            requestId,
+            errorName: recoveryError?.name || "Error",
+          });
+        }
+
+        if (!nextPrompt) {
+          const waitMessage =
+            "कृपया थोड़ा इंतज़ार कीजिए, मैं अगले सवाल के लिए तैयारी कर रही हूँ।";
+          diagnostic("prompt_recovery_unavailable", {
+            requestId,
+            action: "hold_without_advancing",
+          });
+          addMessage("AI", waitMessage);
+          setError(null);
+          setStatus("अगले सवाल की तैयारी जारी है");
+          return;
+        }
       }
+
+      requestStage = "playback_drain";
+      diagnostic("response_playback_wait_started", {
+        responseType,
+        scheduledSources: playbackSourcesRef.current.size,
+      });
+      const playbackWait = await waitForPlaybackAndPause({
+        playbackQueue: playbackQueueRef.current,
+        pause: pauseFor,
+        isCurrent: () =>
+          isCurrentLiveSession(
+            liveSession,
+            generation,
+            sessionRef.current,
+            liveGenerationRef.current,
+          ) && !stoppingRef.current,
+      });
+      diagnostic("response_playback_wait_finished", {
+        responseType,
+        playbackOutcome: playbackWait.playbackOutcome,
+        readyForPrompt: playbackWait.ready,
+      });
+      if (!playbackWait.ready) return;
 
       if (
         !isCurrentLiveSession(
@@ -251,12 +469,24 @@ export function useGeminiLiveInterview() {
       if (promptHandoff.questionId) {
         currentQuestionIdRef.current = promptHandoff.questionId;
       }
+      activePromptRef.current = {
+        questionId: promptHandoff.questionId || currentQuestionIdRef.current,
+        text: nextPrompt,
+        clarificationRequired: promptHandoff.clarificationRequired,
+      };
       promptTurnRef.current += 1;
       audioChunkSequenceRef.current = 0;
       requestStage = "live_prompt_send";
+      const promptSentAt = performance.now();
+      promptTimingRef.current = {
+        generation,
+        promptTurn: promptTurnRef.current,
+        sentAt: promptSentAt,
+      };
       diagnostic("prompt_handoff_started", {
         promptType: promptHandoff.clarificationRequired ? "clarification" : "question",
         responseType,
+        promptChars: nextPrompt.length,
       });
 
       inputTurnRef.current.beginModelTurn();
@@ -267,19 +497,8 @@ export function useGeminiLiveInterview() {
             parts: [
               {
                 text: promptHandoff.clarificationRequired
-                  ? "You are conducting an Urban Company salon professional interview. " +
-                    "Explain the following clarification in simple, natural Hindi or Hinglish. " +
-                    "Keep it short, polite, and easy to understand. " +
-                    "Preserve the original meaning. Do not add new rules or questions. " +
-                    "Ask the clarification directly without starting with a routine thank-you. " +
-                    "After explaining, wait for the candidate's answer:\n\n" +
-                    nextPrompt
-                  : "The backend has authorized this official interview prompt. " +
-                    "Across the interview, acknowledge answers briefly only when conversationally appropriate; vary the wording or move directly to the question. " +
-                    "Do not say Dhanyawaad after every answer, and do not prepend an acknowledgement to this official prompt. " +
-                    "Speak it exactly as written, in a natural and respectful voice. " +
-                    "Do not add any extra questions or explanations:\n\n" +
-                    nextPrompt,
+                  ? buildClarificationPrompt(nextPrompt)
+                  : buildQuestionHandoffPrompt(nextPrompt),
               },
             ],
           },
@@ -288,6 +507,7 @@ export function useGeminiLiveInterview() {
       });
       diagnostic("prompt_handoff_sent", {
         promptType: promptHandoff.clarificationRequired ? "clarification" : "question",
+        sendCallElapsedMs: Number((performance.now() - promptSentAt).toFixed(1)),
       });
     } catch (err) {
       diagnostic("answer_flow_error", {
@@ -347,6 +567,8 @@ export function useGeminiLiveInterview() {
     if (startingRef.current || connectedRef.current) return;
 
     const generation = ++liveGenerationRef.current;
+    setInterviewComplete(false);
+    setInterviewEnded(false);
 
     let liveToken = "";
     const safeErrorMessage = (error, fallback) => {
@@ -363,6 +585,7 @@ export function useGeminiLiveInterview() {
     try {
       const tokenResponse = await fetch(`${API_URL}/api/voice/session`, {
         method: "POST",
+        credentials: "include",
       });
       const tokenData = await tokenResponse.json();
 
@@ -374,6 +597,7 @@ export function useGeminiLiveInterview() {
       // Start the official Urban Company interview session
       const interviewResponse = await fetch(`${API_URL}/api/interview/start`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -389,6 +613,13 @@ export function useGeminiLiveInterview() {
 
       interviewSessionIdRef.current = interviewData.sessionId;
       currentQuestionIdRef.current = interviewData.question?.id || null;
+      activePromptRef.current = interviewData.question?.text
+        ? {
+            questionId: interviewData.question.id || null,
+            text: interviewData.question.text,
+            clarificationRequired: false,
+          }
+        : null;
       promptTurnRef.current = 0;
       audioChunkSequenceRef.current = 0;
 
@@ -419,6 +650,9 @@ export function useGeminiLiveInterview() {
           sampleRate: audioContext.sampleRate,
           scheduledSources: playbackSourcesRef.current.size,
         });
+        if (audioContext.state === "closed") {
+          playbackQueueRef.current.cancelAll("audio_context_closed");
+        }
       });
       await audioContext.resume();
 
@@ -504,6 +738,7 @@ export function useGeminiLiveInterview() {
               }
             }
             playbackSourcesRef.current.clear();
+            playbackQueueRef.current.cancelAll("interrupted");
             nextPlayTimeRef.current = context?.currentTime || 0;
             setSpeakingState(false, "interrupted");
           }
@@ -527,6 +762,7 @@ export function useGeminiLiveInterview() {
                 receivedAtContextSeconds: context
                   ? Number(context.currentTime.toFixed(3))
                   : null,
+                msSincePromptSent: promptElapsedMs(generation),
               });
 
             }
@@ -608,7 +844,9 @@ export function useGeminiLiveInterview() {
             setSpeakingState(true, "audio_scheduled");
             try {
               source.start(startAt);
+              playbackQueueRef.current.sourceStarted(source);
             } catch (err) {
+              playbackSourcesRef.current.delete(source);
               diagnostic("audio_schedule_error", {
                 errorName: err?.name || "Error",
                 scheduledSources: playbackSourcesRef.current.size,
@@ -629,10 +867,12 @@ export function useGeminiLiveInterview() {
               scheduleGapMs: Number(scheduleGapMs.toFixed(1)),
               queueEndSeconds: Number(nextPlayTimeRef.current.toFixed(3)),
               audioContextState: context.state,
+              msSincePromptSent: promptElapsedMs(generation),
             });
 
             source.onended = () => {
               playbackSourcesRef.current.delete(source);
+              playbackQueueRef.current.sourceEnded(source);
               diagnostic("audio_playback_ended", {
                 chunkSequence,
                 scheduledSources: playbackSourcesRef.current.size,
@@ -641,10 +881,11 @@ export function useGeminiLiveInterview() {
                 queueMsRemaining: Number(
                   Math.max(0, (nextPlayTimeRef.current - context.currentTime) * 1000).toFixed(1),
                 ),
+                msSincePromptSent: promptElapsedMs(generation),
               });
               if (
                 audioContextRef.current === context &&
-                context.currentTime >= nextPlayTimeRef.current - 0.04
+                playbackSourcesRef.current.size === 0
               ) {
                 setSpeakingState(false, "audio_queue_ended");
               }
@@ -663,8 +904,11 @@ export function useGeminiLiveInterview() {
                 ? Number(Math.max(0, (nextPlayTimeRef.current - context.currentTime) * 1000).toFixed(1))
                 : null,
               speakingState: speakingStateRef.current,
+              msSincePromptSent: promptElapsedMs(generation),
             });
-            setSpeakingState(false, "turn_complete");
+            if (playbackSourcesRef.current.size === 0) {
+              setSpeakingState(false, "turn_complete");
+            }
 
             if (!inputTurn.answer && !answerSubmittingRef.current) {
               setStatus("Connected — you can speak");
@@ -672,12 +916,39 @@ export function useGeminiLiveInterview() {
           }
 
           if (inputTurn.answer) {
+            const finalizedInput = classifyFinalizedInput(
+              inputTurn.answer,
+              activePromptRef.current,
+            );
+            if (finalizedInput.type === "repeat_question") {
+              const repeatRequest = finalizedInput.repeatRequest;
+              const requestId = `p${promptTurnRef.current}-r${++repeatRequestSequenceRef.current}`;
+              diagnostic("repeat_question_request_finalized", {
+                requestId,
+                transcriptChars: inputTurn.answer.length,
+                activeQuestionId: repeatRequest.questionId,
+                activePromptAvailable: Boolean(repeatRequest.prompt),
+                answerSubmissionSkipped: true,
+              });
+              void repeatActivePrompt(generation, requestId, repeatRequest);
+              return;
+            }
+
+            const answer = finalizedInput.answer;
+            const requestId = `p${promptTurnRef.current}-a${++answerRequestSequenceRef.current}`;
+            const transcriptFinalizedAt = performance.now();
             diagnostic("candidate_answer_finalized", {
+              requestId,
               transcriptFieldPresent: true,
-              transcriptChars: inputTurn.answer.length,
+              transcriptChars: answer.length,
+              transcriptFinalized: true,
               expectedQuestionId: currentQuestionIdRef.current,
             });
-            void submitCandidateAnswer(inputTurn.answer);
+            void submitCandidateAnswer(
+              answer,
+              requestId,
+              transcriptFinalizedAt,
+            );
           }
         },
 
@@ -768,8 +1039,15 @@ export function useGeminiLiveInterview() {
       inputTurnRef.current.beginModelTurn();
       promptTurnRef.current += 1;
       audioChunkSequenceRef.current = 0;
+      const initialPromptSentAt = performance.now();
+      promptTimingRef.current = {
+        generation,
+        promptTurn: promptTurnRef.current,
+        sentAt: initialPromptSentAt,
+      };
       diagnostic("prompt_handoff_started", {
         promptType: "initial_question",
+        promptChars: interviewData.question.text.length,
       });
       try {
         session.sendClientContent({
@@ -778,22 +1056,17 @@ export function useGeminiLiveInterview() {
             role: "user",
             parts: [
               {
-                text:
-                  "You are conducting an Urban Company salon professional screening interview. " +
-                  "The backend controls the interview flow. Do not invent, skip, or reorder questions. " +
-                  "Speak naturally and respectfully in simple Hindi or Hinglish. " +
-                  "Respond to candidate answers conversationally: sometimes use a short, varied acknowledgement such as 'Achha ji, samajh gayi', and sometimes transition directly. " +
-                  "Do not say Dhanyawaad after every answer. Do not ask the next interview question until the backend sends it, and do not prepend acknowledgements to official prompts. " +
-                  "Reserve a fuller thank-you for the final closing prompt. " +
-                  "Ask the following official question exactly as provided, without changing its wording: " +
-                  interviewData.question.text,
+                text: buildInitialQuestionPrompt(interviewData.question.text),
               },
             ],
           },
         ],
         turnComplete: true,
         });
-        diagnostic("prompt_handoff_sent", { promptType: "initial_question" });
+        diagnostic("prompt_handoff_sent", {
+          promptType: "initial_question",
+          sendCallElapsedMs: Number((performance.now() - initialPromptSentAt).toFixed(1)),
+        });
       } catch (err) {
         diagnostic("prompt_handoff_error", {
           errorName: err?.name || "Error",
@@ -824,6 +1097,8 @@ export function useGeminiLiveInterview() {
     stoppingRef.current = true;
     connectedRef.current = false;
     const safeReason = typeof reason === "string" ? reason : "user_requested";
+    const sessionIdToFinalize = interviewSessionIdRef.current;
+    const shouldFinalizeSession = safeReason === "user_requested" && Boolean(sessionIdToFinalize);
 
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -837,6 +1112,7 @@ export function useGeminiLiveInterview() {
         // Source may already have stopped.
       }
     }
+    playbackQueueRef.current.cancelAll("session_stopped");
     diagnostic("playback_cleanup", {
       reason: safeReason,
       sourcesStopped: playbackSourcesRef.current.size,
@@ -883,7 +1159,32 @@ export function useGeminiLiveInterview() {
 
     setAudioLevel(0);
     setSpeakingState(false, "stop_cleanup");
-    setStatus("Disconnected");
+    if (shouldFinalizeSession) {
+      try {
+        const response = await fetch(`${API_URL}/api/interview/end`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: sessionIdToFinalize }),
+        });
+        const data = await response.json();
+        diagnostic("interview_end_response", {
+          requestOk: response.ok && Boolean(data?.success),
+          sessionStatus: data?.sessionStatus || null,
+        });
+        setInterviewEnded(true);
+      } catch (endError) {
+        diagnostic("interview_end_request_failed", {
+          errorName: endError?.name || "Error",
+        });
+        // Local interview termination still completes; the dashboard will
+        // show the session as active if the backend could not be reached.
+        setInterviewEnded(true);
+      }
+      setStatus("Interview ended");
+    } else {
+      setStatus("Disconnected");
+    }
     stoppingRef.current = false;
   }
 
@@ -891,6 +1192,8 @@ export function useGeminiLiveInterview() {
     messages,
     status,
     error,
+    interviewComplete,
+    interviewEnded,
     audioLevel,
     isAiSpeaking,
     startingRef,

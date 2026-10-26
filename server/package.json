@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon --watch src --watch package.json src/server.js",
-    "test": "node --test src/services/interviewTest.js"
+    "test": "node --test src/services/interviewTest.js src/services/adminAuth.test.js"
   },
   "dependencies": {
     "@google/genai": "^2.31.0",

@@ -5,20 +5,63 @@ const { classifyConsent } = require("./rules/consentRules");
 const { evaluateAge } = require("./rules/ageRules");
 const { classifyLocation } = require("./rules/locationRules");
 const { fallbackInterpretation } = require("./geminiService");
+const { liveVoiceInstructions } = require("./liveVoiceInstructions");
 const activeQuestionBank = require("../data/questionBank.json");
 const workbookQuestionMapping = require(
   "../data/workbook-reference/UC_question_bank_exact_workbook_mapping.json",
 );
+const interviewController = require("../controllers/interviewController");
 
 const {
   startInterview,
-  submitAnswer,
+  submitAnswer: submitInterviewAnswer,
   getReport,
+  listReports,
+  endInterview,
   getTotalQuestions,
 } = require("./interview");
 
 const householdQuestion =
   "Apne ghar ke baare mein thoda bataiye — ghar mein kaun kaun hai, aur din bhar kaun kya karta hai?";
+
+test("Live system instructions keep internal orchestration out of spoken dialogue", () => {
+  assert.match(liveVoiceInstructions, /Speak only candidate-facing interview dialogue/);
+  assert.match(liveVoiceInstructions, /remain silent until the application supplies/);
+  assert.match(liveVoiceInstructions, /Never narrate thoughts, plans, language selection/);
+  assert.match(liveVoiceInstructions, /Never mention the system, application, server, backend/);
+  assert.match(liveVoiceInstructions, /feminine Hindi\/Hinglish forms/);
+});
+
+async function submitAnswer(payload, options = {}) {
+  return submitInterviewAnswer(payload, {
+    interpretAnswerImpl: async () => ({
+      understanding: "The answer is relevant to the interview question.",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      clarificationQuestion: "",
+    }),
+    ...options,
+  });
+}
+
+function callReportEndpoint(sessionId) {
+  let status;
+  let body;
+  interviewController.getReport(
+    { params: { sessionId } },
+    {
+      status(value) {
+        status = value;
+        return this;
+      },
+      json(value) {
+        body = value;
+        return value;
+      },
+    },
+  );
+  return { status, body };
+}
 
 test("Fallback: recognizes clear Hindi, Hinglish, and English household answers", () => {
   const clearAnswers = [
@@ -53,6 +96,89 @@ test("Fallback: asks for clarification on incomplete or unrelated household answ
     assert.equal(result.answerStatus, "unclear", answer);
     assert.equal(result.needsClarification, true, answer);
   }
+});
+
+test("Interview: interpretation failure holds the current question and asks for a retry", async () => {
+  const started = await startAtHousehold();
+  const answerPayload = {
+    sessionId: started.sessionId,
+    answer: "Mere pati salon mein kaam karte hain aur bachche school jaate hain",
+    expectedQuestionId: "A3",
+    diagnosticRequestId: "interpretation-failure-test",
+  };
+
+  const failed = await submitAnswer(answerPayload, {
+    interpretAnswerImpl: async () => {
+      throw new Error("simulated interpretation failure");
+    },
+  });
+
+  assert.equal(failed.status, 200);
+  assert.equal(failed.body.interpretationUnavailable, true);
+  assert.equal(failed.body.clarificationRequired, true);
+  assert.equal(failed.body.question.id, "A3");
+  assert.match(failed.body.message, /एक बार फिर बताइए/);
+
+  const retried = await submitAnswer(answerPayload, {
+    interpretAnswerImpl: async () => ({
+      understanding: "Household members and roles were provided.",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      clarificationQuestion: "",
+    }),
+  });
+
+  assert.equal(retried.status, 200);
+  assert.equal(retried.body.question.id, "A4");
+});
+
+test("Interview: concurrent duplicate interpretations cannot skip a question", async () => {
+  const started = await startAtHousehold();
+  let releaseInterpretation;
+  const interpretationGate = new Promise((resolve) => {
+    releaseInterpretation = resolve;
+  });
+  let interpretationCalls = 0;
+  const interpretAnswerImpl = async () => {
+    interpretationCalls += 1;
+    await interpretationGate;
+    return {
+      understanding: "The candidate described household members.",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      clarificationQuestion: "",
+    };
+  };
+  const answer = {
+    sessionId: started.sessionId,
+    expectedQuestionId: "A3",
+    answer: "Mere do bachche hain",
+  };
+
+  const firstSubmission = submitAnswer({
+    ...answer,
+    diagnosticRequestId: "duplicate-a3-first",
+  }, { interpretAnswerImpl });
+  const duplicateSubmission = submitAnswer({
+    ...answer,
+    diagnosticRequestId: "duplicate-a3-second",
+  }, { interpretAnswerImpl });
+
+  assert.equal(interpretationCalls, 2);
+  releaseInterpretation();
+  const results = await Promise.all([firstSubmission, duplicateSubmission]);
+
+  assert.equal(results.filter((result) => result.status === 200).length, 1);
+  const staleResult = results.find((result) => result.status === 409);
+  assert.equal(staleResult?.body.staleQuestion, true);
+  assert.equal(staleResult?.body.currentQuestionId, "A4");
+
+  const report = getReport(started.sessionId).body.report;
+  assert.deepEqual(
+    report.answers.map((item) => item.questionId),
+    ["A2_NAME", "A0", "A1", "A2", "A3"],
+  );
+  assert.equal(results.find((result) => result.status === 200).body.question.id, "A4");
 });
 
 async function startAtConsent() {
@@ -224,8 +350,197 @@ test("Interview: approved name question is counted and matches the workbook mapp
   );
 });
 
+test("Interview: completes the active question-bank sequence and report endpoint in order", async () => {
+  const expectedIds = activeQuestionBank.questions.map((item) => item.Step);
+  const started = startInterview();
+  assert.equal(started.totalQuestions, expectedIds.length);
+
+  const answerFor = (questionId) => {
+    switch (questionId) {
+      case "A2_NAME":
+        return "Sunita";
+      case "A0":
+        return "Haan, Hindi mein";
+      case "A1":
+        return "Delhi";
+      case "A2":
+        return "25";
+      case "A3":
+        return "I have two children";
+      case "A4":
+        return "They study in class 4";
+      case "A5":
+        return "Their grandmother looks after them after school";
+      default:
+        return "I can explain my relevant experience";
+    }
+  };
+
+  let question = started.question;
+  for (let index = 0; index < expectedIds.length; index += 1) {
+    const expectedQuestionId = expectedIds[index];
+    assert.equal(question.id, expectedQuestionId, `question at position ${index + 1}`);
+
+    let result = await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId,
+      answer: answerFor(expectedQuestionId),
+      diagnosticRequestId: `full-sequence-${index + 1}`,
+    });
+
+    assert.equal(result.status, 200, `HTTP result for ${expectedQuestionId}`);
+    if (expectedQuestionId === "A1") {
+      assert.equal(result.body.followUpRequired, true);
+      assert.equal(result.body.question.id, "A1_TRAVEL_CLARIFICATION");
+
+      result = await submitAnswer({
+        sessionId: started.sessionId,
+        expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+        answer: "Haan, main travel kar sakti hoon",
+      });
+      assert.equal(result.body.question.id, "A1_MOVE_TIMELINE");
+
+      result = await submitAnswer({
+        sessionId: started.sessionId,
+        expectedQuestionId: "A1_MOVE_TIMELINE",
+        answer: "Ek mahine mein",
+      });
+      assert.equal(result.body.question.id, expectedIds[index + 1]);
+      question = result.body.question;
+      continue;
+    }
+
+    if (index === expectedIds.length - 1) {
+      assert.equal(result.body.completed, true);
+      assert.equal(result.body.question, undefined);
+    } else {
+      assert.equal(result.body.completed, false, `completion state for ${expectedQuestionId}`);
+      question = result.body.question;
+      assert.ok(question, `next question after ${expectedQuestionId}`);
+      assert.equal(question.id, expectedIds[index + 1]);
+    }
+  }
+
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(report.status, "completed");
+  assert.equal(report.totalQuestions, expectedIds.length);
+  assert.equal(report.answeredQuestions, expectedIds.length + 2);
+  assert.equal(report.manualReviewRequired, true);
+  assert.deepEqual(
+    report.answers
+      .map((item) => item.questionId)
+      .filter((questionId) => expectedIds.includes(questionId)),
+    expectedIds,
+  );
+  assert.deepEqual(
+    report.answers
+      .filter((item) => item.questionId.startsWith("A1_"))
+      .map((item) => item.questionId),
+    ["A1_travel_clarification", "A1_move_timeline"],
+  );
+
+  const endpoint = callReportEndpoint(started.sessionId);
+  assert.equal(endpoint.status, 200);
+  assert.equal(endpoint.body.success, true);
+  assert.equal(endpoint.body.report.status, "completed");
+  assert.deepEqual(
+    endpoint.body.report.answers
+      .map((item) => item.questionId)
+      .filter((questionId) => expectedIds.includes(questionId)),
+    expectedIds,
+  );
+  assert.equal(endpoint.body.report.answers.length, expectedIds.length + 2);
+  assert.equal(endpoint.body.report.manualReviewRequired, true);
+
+  const endedComplete = endInterview(started.sessionId);
+  assert.equal(endedComplete.body.sessionStatus, "completed");
+  assert.equal(getReport(started.sessionId).body.report.status, "completed");
+
+  const unknown = callReportEndpoint("not-a-session");
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.body.success, false);
+});
+
+test("Interview report endpoint marks an unfinished session as in progress", () => {
+  const started = startInterview();
+  const endpoint = callReportEndpoint(started.sessionId);
+
+  assert.equal(endpoint.status, 200);
+  assert.equal(endpoint.body.success, true);
+  assert.equal(endpoint.body.report.status, "in_progress");
+  assert.equal(endpoint.body.report.completedAt, null);
+  assert.equal(endpoint.body.report.answeredQuestions, 0);
+});
+
+test("Ending an incomplete interview finalizes its report once and preserves answers and review flags", async () => {
+  const started = await startInterview();
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Sunita",
+  });
+  const before = getReport(started.sessionId).body.report;
+  assert.equal(before.answeredQuestions, 1);
+  const flagResponse = await new Promise((resolve) => interviewController.flagManualReview(
+    { body: { sessionId: started.sessionId, reason: "Existing review flag" } },
+    { status() { return this; }, json(value) { resolve(value); return value; } },
+  ));
+  assert.equal(flagResponse.manualReviewRequired, true);
+
+  const firstEnd = endInterview(started.sessionId);
+  const firstEndedAt = firstEnd.body.endedAt;
+  assert.equal(firstEnd.body.sessionStatus, "incomplete");
+  assert.equal(firstEnd.body.answeredQuestions, 1);
+
+  const secondEnd = endInterview(started.sessionId);
+  assert.equal(secondEnd.body.sessionStatus, "incomplete");
+  assert.equal(secondEnd.body.endedAt, firstEndedAt);
+
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(report.status, "incomplete");
+  assert.equal(report.answeredQuestions, 1);
+  assert.equal(report.answers[0].questionId, "A2_NAME");
+  assert.equal(report.manualReviewRequired, true);
+  assert.equal(report.manualReviewReason, "Existing review flag");
+});
+
+test("Ending after a refusal preserves the manual-review terminal outcome", async () => {
+  const started = await startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Riya" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Nahi, main agree nahi karti" });
+  const ended = endInterview(started.sessionId);
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(ended.body.sessionStatus, "manual_review");
+  assert.equal(report.status, "manual_review");
+  assert.equal(report.answeredQuestions, 2);
+  assert.equal(report.manualReviewRequired, true);
+});
+
+test("Internal session list identifies the matching session and review status", async () => {
+  const first = await startInterview();
+  const second = await startInterview();
+  await submitAnswer({ sessionId: first.sessionId, answer: "Candidate Alpha", expectedQuestionId: "A2_NAME" });
+  await submitAnswer({ sessionId: second.sessionId, answer: "Candidate Beta", expectedQuestionId: "A2_NAME" });
+  await submitAnswer({ sessionId: second.sessionId, answer: "Nahi, main agree nahi karti", expectedQuestionId: "A0" });
+
+  const sessions = listReports().body.sessions;
+  const firstSummary = sessions.find((session) => session.sessionId === first.sessionId);
+  const secondSummary = sessions.find((session) => session.sessionId === second.sessionId);
+  assert.equal(firstSummary.candidateName, "Candidate Alpha");
+  assert.equal(firstSummary.status, "in_progress");
+  assert.equal(firstSummary.manualReviewRequired, false);
+  assert.equal(secondSummary.candidateName, "Candidate Beta");
+  assert.equal(secondSummary.status, "manual_review");
+  assert.equal(secondSummary.manualReviewRequired, true);
+  assert.equal(getReport(first.sessionId).body.report.sessionId, first.sessionId);
+});
+
 test("Interview: captures name, obtains consent, then progresses through A1, A2, and A3", async () => {
-  for (const name of ["Sunita", "Mera naam Sunita hai"]) {
+  for (const name of [
+    "Sunita",
+    "Mera naam Sunita hai",
+    "मेरा नाम सुनीता है",
+  ]) {
     const started = startInterview();
     assert.equal(started.question.id, "A2_NAME");
     const result = await submitAnswer({ sessionId: started.sessionId, answer: name });

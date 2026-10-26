@@ -1,6 +1,13 @@
 import GeminiVoicePrototype from "./GeminiVoicePrototype";
+import InternalAssessmentDashboard from "./components/InternalAssessmentDashboard";
+import AdminLogin from "./components/AdminLogin";
 
 export default function App() {
+  if (window.location.pathname === "/admin/login") return <AdminLogin />;
+  if (window.location.pathname === "/internal-assessment") {
+    return <InternalAssessmentDashboard />;
+  }
+
   return (
     <div className="min-h-screen bg-neutral-100 text-neutral-950">
       <header className="w-full border-b border-neutral-200 bg-white">
@@ -45,7 +52,7 @@ export default function App() {
         </div>
 
         <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-          <GeminiVoicePrototype />
+      <GeminiVoicePrototype />
         </section>
       </main>
     </div>

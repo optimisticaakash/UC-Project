@@ -103,6 +103,7 @@ function startInterview() {
     consentOutcome: "pending",
     startedAt: new Date().toISOString(),
     completedAt: null,
+    endedAt: null,
   };
 
   sessions.set(sessionId, session);
@@ -134,16 +135,23 @@ function classifyNameAnswer(answer) {
     return { clear: false, format: "uncertainty" };
   }
 
-  const nameToken = String.raw`[\p{L}][\p{L}'’.-]*`;
-  const nameSuffix = String.raw`(?:\s+${nameToken}){0,3}`;
+  // Devanagari vowel signs are Unicode marks, not letters. Include marks
+  // after the first letter so Hindi names remain valid when transcribed in
+  // Devanagari rather than Romanized Hindi.
+  const nameToken = String.raw`[\p{L}][\p{L}\p{M}'’.-]*`;
+  const nameSequence = String.raw`${nameToken}(?:\s+${nameToken}){0,3}`;
   const namePhrase = new RegExp(
-    String.raw`^(?:(?:mera naam|मेरा नाम)\s+${nameToken}${nameSuffix}\s*(?:hai|है)?|(?:my name is|i am|i'm)\s+${nameToken}${nameSuffix})$`,
+    String.raw`^(?:mera naam|मेरा नाम|my name is|i am|i'm)\s+(${nameSequence})(?:\s+(?:hai|है))?$`,
     "iu",
   );
-  const plainName = new RegExp(`^${nameToken}(?:\\s+${nameToken})?$`, "u");
+  const plainName = new RegExp(`^${nameSequence}$`, "u");
   const sentenceStarter = /^(?:i|we|my|mera|meri|mujhe|main|मैं|मेरा|मेरी)\s/iu;
 
-  if (namePhrase.test(normalized)) {
+  // Extract the candidate name from the supported introduction before
+  // validating its token shape. Keep the full input anchored to avoid
+  // accepting unrelated trailing sentences as a name.
+  const introducedName = namePhrase.exec(normalized)?.[1];
+  if (introducedName && plainName.test(introducedName.trim())) {
     return { clear: true, format: "introduced_name" };
   }
   if (!sentenceStarter.test(normalized) && plainName.test(normalized)) {
@@ -157,7 +165,9 @@ async function submitAnswer({
   answer,
   expectedQuestionId,
   diagnosticRequestId,
-}) {
+  diagnosticPromptTurn,
+  diagnosticSessionGeneration,
+}, { interpretAnswerImpl = interpretAnswer } = {}) {
   const session = sessions.get(sessionId);
 
   if (!session) {
@@ -203,6 +213,15 @@ async function submitAnswer({
     /^[a-zA-Z0-9_-]{1,64}$/.test(diagnosticRequestId)
       ? diagnosticRequestId
       : null;
+  const safePromptTurn =
+    Number.isSafeInteger(diagnosticPromptTurn) && diagnosticPromptTurn >= 0
+      ? diagnosticPromptTurn
+      : null;
+  const safeSessionGeneration =
+    Number.isSafeInteger(diagnosticSessionGeneration) &&
+    diagnosticSessionGeneration >= 0
+      ? diagnosticSessionGeneration
+      : null;
   const currentBankQuestion = questions[session.currentQuestionIndex];
   const currentQuestion = session.pendingFollowUp
     ? {
@@ -214,6 +233,36 @@ async function submitAnswer({
     : currentBankQuestion || null;
   const currentQuestionId = currentQuestion?.id || null;
   const sessionKey = sessionId.slice(-8);
+
+  function staleQuestionResponse() {
+    const latestBankQuestion = questions[session.currentQuestionIndex] || null;
+    const latestQuestion = session.pendingFollowUp
+      ? {
+          id: `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`,
+          Step: `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`,
+          text: session.pendingFollowUp.prompt,
+          category: "Location & movement",
+        }
+      : latestBankQuestion;
+
+    return {
+      status: 409,
+      body: {
+        success: false,
+        staleQuestion: true,
+        currentQuestionId: latestQuestion?.id || null,
+        clarificationRequired: Boolean(
+          session.pendingFollowUp || session.pendingChildApplicability,
+        ),
+        followUpRequired: Boolean(session.pendingFollowUp),
+        manualReviewRequired: Boolean(session.pendingFollowUp),
+        questionNumber: session.currentQuestionIndex + 1,
+        totalQuestions: questions.length,
+        question: latestQuestion,
+        message: "This answer belongs to an earlier question.",
+      },
+    };
+  }
 
   if (expectedQuestionId && !requestQuestionId) {
     return {
@@ -232,21 +281,7 @@ async function submitAnswer({
       expectedQuestionId: requestQuestionId,
       currentQuestionId,
     });
-    return {
-      status: 409,
-      body: {
-        success: false,
-        staleQuestion: true,
-        currentQuestionId,
-        clarificationRequired: Boolean(session.pendingFollowUp),
-        followUpRequired: Boolean(session.pendingFollowUp),
-        manualReviewRequired: Boolean(session.pendingFollowUp),
-        questionNumber: session.currentQuestionIndex + 1,
-        totalQuestions: questions.length,
-        question: currentQuestion,
-        message: "This answer belongs to an earlier question.",
-      },
-    };
+    return staleQuestionResponse();
   }
 
   const isNameQuestion =
@@ -541,6 +576,8 @@ async function submitAnswer({
     requestId: safeRequestId,
     sessionKey,
     expectedQuestionId: requestQuestionId || null,
+    promptTurn: safePromptTurn,
+    sessionGeneration: safeSessionGeneration,
     questionId: question.id,
     answerChars: cleanAnswer.length,
     path: "question",
@@ -772,6 +809,8 @@ async function submitAnswer({
       answerFormat: nameClassification.format,
       answerFieldType: typeof answer,
       answerChars: cleanAnswer.length,
+      promptTurn: safePromptTurn,
+      sessionGeneration: safeSessionGeneration,
     });
 
     if (!nameIsClear) {
@@ -810,11 +849,38 @@ async function submitAnswer({
   );
 
   if (!isSpecialQuestion) {
+    const interpretationQuestionIndex = session.currentQuestionIndex;
     try {
-      const interpretation = await interpretAnswer({
+      const interpretation = await interpretAnswerImpl({
         question: question.text,
         answer: cleanAnswer,
+        questionId: question.id,
+        diagnosticRequestId: safeRequestId,
+        diagnosticPromptTurn: safePromptTurn,
+        diagnosticSessionGeneration: safeSessionGeneration,
       });
+
+      // The Gemini call yields control while another request may accept the
+      // same answer. Re-check ownership before applying this interpretation
+      // or advancing the bank index a second time.
+      if (
+        session.currentQuestionIndex !== interpretationQuestionIndex ||
+        session.status !== "in_progress" ||
+        session.pendingFollowUp ||
+        session.pendingChildApplicability
+      ) {
+        console.info("[UC Interview Diagnostics] stale_answer_ignored", {
+          requestId: safeRequestId,
+          sessionKey,
+          expectedQuestionId: requestQuestionId,
+          currentQuestionId:
+            session.pendingFollowUp
+              ? `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`
+              : questions[session.currentQuestionIndex]?.id || null,
+          reason: "session_advanced_during_interpretation",
+        });
+        return staleQuestionResponse();
+      }
 
       answerRecord.interpretation = interpretation;
 
@@ -836,8 +902,35 @@ async function submitAnswer({
         };
       }
     } catch (error) {
-      console.error("Gemini interpretation error:", error.message);
-      answerRecord.interpretationError = true;
+      if (
+        session.currentQuestionIndex !== interpretationQuestionIndex ||
+        session.status !== "in_progress" ||
+        session.pendingFollowUp ||
+        session.pendingChildApplicability
+      ) {
+        return staleQuestionResponse();
+      }
+
+      console.error("[UC Interview Diagnostics] interpretation_unavailable", {
+        requestId: safeRequestId,
+        sessionKey,
+        questionId: question.id,
+        errorName: error?.name || "Error",
+      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          interpretationUnavailable: true,
+          message:
+            "माफ़ कीजिए, मैं आपका जवाब अभी समझ नहीं पा रही हूँ। कृपया एक बार फिर बताइए।",
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question,
+        },
+      };
     }
   }
 
@@ -925,6 +1018,34 @@ function flagManualReview(sessionId, reason) {
   };
 }
 
+function endInterview(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return {
+      status: 404,
+      body: { success: false, message: "Interview session not found." },
+    };
+  }
+
+  if (session.status === "in_progress") {
+    session.status = "incomplete";
+    session.endedAt = new Date().toISOString();
+  }
+
+  // Terminal outcomes (completed, rejected, manual_review) and an earlier
+  // incomplete end are intentionally idempotent and remain unchanged.
+  return {
+    status: 200,
+    body: {
+      success: true,
+      sessionId: session.sessionId,
+      sessionStatus: session.status,
+      endedAt: session.endedAt || session.completedAt,
+      answeredQuestions: session.answers.length,
+    },
+  };
+}
+
 function getReport(sessionId) {
   const session = sessions.get(sessionId);
 
@@ -938,6 +1059,14 @@ function getReport(sessionId) {
     };
   }
 
+  const manualChecks = session.manualChecks || [];
+  const manualReviewRequired = Boolean(
+    session.manualReviewRequired ||
+      session.status === "manual_review" ||
+      session.eligibilityOutcome === "manual_review" ||
+      manualChecks.some((check) => check.required),
+  );
+
   return {
     status: 200,
     body: {
@@ -945,17 +1074,47 @@ function getReport(sessionId) {
       report: {
         sessionId: session.sessionId,
         status: session.status,
-        manualReviewRequired: Boolean(session.manualReviewRequired),
+        manualReviewRequired,
+        manualReviewReason: session.manualReviewReason || null,
         eligibilityOutcome: session.eligibilityOutcome || null,
         locationOutcome: session.locationOutcome || null,
-        manualChecks: session.manualChecks || [],
+        manualChecks,
         consentOutcome: session.consentOutcome,
         startedAt: session.startedAt,
         completedAt: session.completedAt,
+        endedAt: session.endedAt || session.completedAt,
         totalQuestions: questions.length,
         answeredQuestions: session.answers.length,
         answers: session.answers,
       },
+    },
+  };
+}
+
+function listReports() {
+  return {
+    status: 200,
+    body: {
+      success: true,
+      sessions: [...sessions.values()]
+        .map((session) => ({
+          sessionId: session.sessionId,
+          candidateName:
+            session.answers.find((answer) => answer.questionId === "A2_NAME")?.answer ||
+            "Name not recorded",
+          status: session.status,
+          startedAt: session.startedAt,
+          completedAt: session.completedAt,
+          endedAt: session.endedAt || session.completedAt,
+          answeredQuestions: session.answers.length,
+          manualReviewRequired: Boolean(
+            session.manualReviewRequired ||
+              session.status === "manual_review" ||
+              session.eligibilityOutcome === "manual_review" ||
+              (session.manualChecks || []).some((check) => check.required),
+          ),
+        }))
+        .sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
     },
   };
 }
@@ -968,6 +1127,8 @@ module.exports = {
   startInterview,
   submitAnswer,
   getReport,
+  listReports,
+  endInterview,
   getTotalQuestions,
   flagManualReview,
 };
