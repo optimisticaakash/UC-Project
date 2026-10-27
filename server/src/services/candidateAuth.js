@@ -96,7 +96,7 @@ function createCandidateAuth({
     const attributes = [
       `${COOKIE_NAME}=${token}`,
       "HttpOnly",
-      "SameSite=Strict",
+      "SameSite=None",
       "Path=/api",
       `Max-Age=${maxAge}`,
     ];

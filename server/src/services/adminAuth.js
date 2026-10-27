@@ -49,7 +49,7 @@ function createAdminAuth({
     const parts = [
       `${COOKIE_NAME}=${token}`,
       "HttpOnly",
-      "SameSite=Strict",
+      "SameSite=None",
       "Path=/api",
       `Max-Age=${maxAge}`,
     ];
