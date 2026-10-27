@@ -48,9 +48,6 @@ app.use(
   }),
 );
 
-// Preflight OPTIONS requests ke liye
-app.options("*", cors());
-
 app.use(express.json());
 
 app.get("/api/health", (req, res) => {
