@@ -1,13 +1,18 @@
 import { createElement } from "react";
 import { candidateCompletionMessage } from "../utils/internalAssessment.js";
 
-export default function CandidateCompletion({ endedEarly = false }) {
+export default function CandidateCompletion({ outcome = "completed" }) {
+  const content = outcome === "manual_review"
+    ? ["Manual review required", "Our team will review your response."]
+    : outcome === "end_unconfirmed"
+      ? ["Interview status unavailable", "Please contact support for help."]
+      : outcome === "completed"
+        ? ["Interview completed", candidateCompletionMessage]
+        : ["Interview ended", "Thank you. The interview has ended."];
   return createElement(
     "section",
     { "aria-live": "polite", className: "uc-candidate-completion" },
-    createElement("h1", null, endedEarly ? "Interview ended" : "Interview complete"),
-    createElement("p", null, endedEarly
-      ? "धन्यवाद। आपका इंटरव्यू समाप्त हो गया है।"
-      : candidateCompletionMessage),
+    createElement("h1", null, content[0]),
+    createElement("p", null, content[1]),
   );
 }

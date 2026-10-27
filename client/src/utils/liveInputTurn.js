@@ -15,6 +15,12 @@ function transcriptKey(transcription, text) {
   return JSON.stringify([text, finished]);
 }
 
+export function isInternalSpeechMarker(value) {
+  return /^(?:(?:<\s*no\s+speech\s*>|no\s+speech|no\s+pause|\{\s*pause\s*\})\s*)+$/i.test(
+    typeof value === "string" ? value.trim() : "",
+  );
+}
+
 export function createLiveInputTurn() {
   let phase = "listening";
   let candidateActivity = false;
@@ -23,6 +29,7 @@ export function createLiveInputTurn() {
   let candidateResponseComplete = false;
   let transcript = "";
   let transcriptFinalized = false;
+  let answerIssued = false;
   let seenTranscripts = new Set();
   // Offsets are relative to the audio session. Keep these keys across model
   // turns so a delayed duplicate cannot be mistaken for the next answer.
@@ -35,11 +42,12 @@ export function createLiveInputTurn() {
     candidateResponseComplete = false;
     transcript = "";
     transcriptFinalized = false;
+    answerIssued = false;
     seenTranscripts = new Set();
   }
 
   function result(answer = null) {
-    return { transcript, answer };
+    return { transcript, answer, activity: false };
   }
 
   return {
@@ -54,8 +62,21 @@ export function createLiveInputTurn() {
       seenSessionTranscripts.clear();
     },
 
-    handleServerContent(content) {
+    finishModelPlayback() {
+      if (phase === "model") {
+        if (candidateActivity && candidateResponseComplete) {
+          phase = "candidate";
+        } else if (candidateActivity) {
+          phase = "candidate";
+        } else {
+          phase = "listening";
+        }
+      }
+    },
+
+    handleServerContent(content, { isPlaybackActive = false } = {}) {
       if (!content) return result();
+      let activity = false;
 
       if (content.interrupted && phase === "model") {
         candidateActivity = true;
@@ -63,15 +84,22 @@ export function createLiveInputTurn() {
       }
 
       if (content.interimInputTranscription?.text?.trim()) {
-        candidateActivity = true;
-        candidateInterimActivity = true;
+        const interim = content.interimInputTranscription.text.trim();
+        if (!isInternalSpeechMarker(interim) && phase !== "submitted") {
+          activity = true;
+          candidateActivity = true;
+          candidateInterimActivity = true;
+          candidateResponseComplete = false;
+          transcriptFinalized = false;
+          answerIssued = false;
+        }
       }
 
       const input = content.inputTranscription;
       const text = input?.text?.trim();
       let answer = null;
 
-      if (text && phase !== "submitted") {
+      if (text && !isInternalSpeechMarker(text) && phase !== "submitted") {
         const key = transcriptKey(input, text);
         const hasOffsets =
           input.startOffset !== undefined || input.endOffset !== undefined;
@@ -80,29 +108,28 @@ export function createLiveInputTurn() {
           : seenTranscripts.has(key);
 
         if (!duplicate) {
+          activity = true;
           candidateActivity = true;
           seenTranscripts.add(key);
           if (hasOffsets) seenSessionTranscripts.add(key);
           transcript = mergeTranscript(transcript, text);
           transcriptFinalized = input.finished !== false;
+          if (answerIssued) answerIssued = false;
+          if (input.finished === false) candidateResponseComplete = false;
         }
 
         // A finalized input transcription marks the candidate's speech as
         // complete even if it arrives before the model turnComplete event.
         // The model turn still must complete before submitting, so an
         // assistant-only turn cannot become a candidate answer.
-        if (
-          input.finished !== false &&
-          (phase === "model" || phase === "candidate")
-        ) {
-          candidateResponseComplete = true;
-        } else if (
-          input.finished !== false &&
-          phase === "listening" &&
-          !candidateInterimActivity
-        ) {
-          phase = "candidate";
-          candidateResponseComplete = true;
+        if (input.finished !== false) {
+          candidateInterimActivity = false;
+          if (phase === "listening") {
+            phase = "candidate";
+          }
+          if (phase === "model" || phase === "candidate") {
+            candidateResponseComplete = true;
+          }
         }
       }
 
@@ -113,28 +140,45 @@ export function createLiveInputTurn() {
             candidateResponseComplete = true;
           } else if (candidateActivity) {
             phase = "candidate";
-          } else {
+          } else if (!isPlaybackActive) {
             phase = "listening";
           }
         } else if (candidateActivity) {
           phase = "candidate";
-          candidateResponseComplete = true;
+          if (!candidateInterimActivity && candidateResponseComplete) {
+            if (transcript) {
+              transcriptFinalized = true;
+            }
+          }
         }
       }
 
-      if (
+      const canEmitAnswer =
         candidateActivity &&
         candidateResponseComplete &&
         transcriptFinalized &&
+        !candidateInterimActivity &&
         transcript &&
         phase !== "submitted" &&
-        phase !== "model"
-      ) {
+        !answerIssued &&
+        phase !== "model" &&
+        (!isPlaybackActive || modelTurnInterrupted);
+
+      if (canEmitAnswer) {
         answer = transcript;
-        phase = "submitted";
+        answerIssued = true;
       }
 
-      return result(answer);
+      return { transcript, answer, activity };
+    },
+
+    commitAnswer() {
+      if (answerIssued) phase = "submitted";
+    },
+
+    retry() {
+      phase = "listening";
+      resetCandidate();
     },
   };
 }

@@ -171,3 +171,49 @@ test("failed missing-prompt recovery does not loop or return a question", async 
   assert.equal(calls, 1);
   assert.equal(recovery.promptHandoff, null);
 });
+
+test("client prompt handoff delivers exact screening question sequence into work experience (B1 -> B2)", () => {
+  const approvedScreeningThroughWorkExperience = [
+    { id: "A2_NAME", text: "Namaste ji, sabse pehle aap apna naam bataiye." },
+    { id: "A0", text: "Namaste! Main UC ki screening assistant hoon. Ye baat-cheet sirf screening ke liye record hogi. Shuru karein? Aap Hindi mein baat karengi ya English mein?" },
+    { id: "A1", text: "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?" },
+    { id: "A1_TRAVEL_CLARIFICATION", text: "Agar kaam thoda door ho, to kya aap travel kar sakti hain ya zarurat padne par shift ho sakti hain?" },
+    { id: "A1_MOVE_TIMELINE", text: "Agar shift hona pade, to aap kab tak shift ho sakti hain?" },
+    { id: "A2", text: "Aadhaar card pe aapki date of birth kya likhi hai?" },
+    { id: "A3", text: "Apne ghar ke baare mein thoda bataiye — ghar mein kaun kaun hai, aur din bhar kaun kya karta hai?" },
+    { id: "A4", text: "(If kids) Bachche kis class mein padhte hain?" },
+    { id: "A5", text: "Jab aap kaam pe hoti hain, tab bachchon ka din kaise chalta hai — school ke baad unke saath kaun hota hai?" },
+    { id: "A6", text: "Aane wale ek saal mein ghar mein koi badi cheez plan hai — jaise shaadi, family badhana, ya shift hona?" },
+    { id: "A7", text: "Abhi aapka kaam kaise chal raha hai — kisi salon mein hain, ya ghar pe bhi clients aate hain?" },
+    { id: "A8", text: "Pichli jagah aap sabse zyada kaun si services karti thi? Pedicure-manicure kitni baar karti thi?" },
+    { id: "A9", text: "Abhi aap kaam pe ya market kaise jaati hain?" },
+    { id: "A10", text: "(Tablet shows card) Ye address aur service card zor se padhiye." },
+    { id: "A11", text: "Maan lijiye aap customer ke ghar pahunchi hain. Mujhe customer samajhkar Hindi ya English mein apna introduction dijiye." },
+    { id: "A12", text: "Kya kabhi pehle UC, Yes Madam ya kisi aur app ke through kaam kiya hai? Unme kaun se phone number use kiye the?" },
+    { id: "B1", text: "Pichli job mein ek din mein kitne ghante khade rehkar kaam hota tha? Shaam tak thakaan kaisi hoti thi?" },
+    { id: "B2", text: "Aapka beauty ka safar kaise shuru hua? Kahan kahan kaam kiya, aur wo salon kis area mein the?" },
+  ];
+
+  const deliveredQuestionIds = [];
+
+  for (const item of approvedScreeningThroughWorkExperience) {
+    const handoff = resolvePromptHandoff(200, {
+      success: true,
+      question: item,
+    });
+
+    assert.ok(handoff, `handoff must resolve for ${item.id}`);
+    assert.equal(handoff.questionId, item.id);
+    assert.equal(handoff.prompt, item.text);
+    assert.equal(handoff.clarificationRequired, false);
+    deliveredQuestionIds.push(handoff.questionId);
+  }
+
+  assert.deepEqual(
+    deliveredQuestionIds,
+    approvedScreeningThroughWorkExperience.map((item) => item.id),
+  );
+  // Verify that B2 (work experience) is index 17 and is only reached after all 14 screening questions and B1
+  assert.equal(deliveredQuestionIds[deliveredQuestionIds.length - 1], "B2");
+  assert.equal(deliveredQuestionIds.indexOf("B2"), 17);
+});

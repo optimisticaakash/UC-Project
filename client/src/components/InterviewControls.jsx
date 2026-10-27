@@ -2,7 +2,8 @@ export default function InterviewControls({
   start,
   stop,
   startingRef,
-  status,
+  isInterviewActive,
+  lifecycleBusy = false,
 }) {
   return (
     <div
@@ -19,7 +20,7 @@ export default function InterviewControls({
       <button
         className="uc-action uc-primary"
         onClick={start}
-        disabled={startingRef.current || status.startsWith("Connected")}
+        disabled={startingRef.current || lifecycleBusy || isInterviewActive}
       >
         <svg
           width="19"
@@ -41,6 +42,7 @@ export default function InterviewControls({
       <button
         className="uc-action uc-secondary"
         onClick={() => stop("user_requested")}
+        disabled={!isInterviewActive || lifecycleBusy}
       >
         <svg
           width="17"

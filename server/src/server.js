@@ -4,7 +4,10 @@ require("dotenv").config();
 
 const interviewRoutes = require("./routes/interviewRoutes");
 const adminRoutes = require("./routes/adminRoutes").router;
+const candidateRoutes = require("./routes/candidateRoutes").router;
+const { candidateAuth } = require("./routes/candidateRoutes");
 const interviewService = require("./services/interview");
+const { persistence } = require("./services/persistence");
 const { liveVoiceInstructions } = require("./services/liveVoiceInstructions");
 const { GoogleGenAI } = require("@google/genai");
 
@@ -29,13 +32,16 @@ app.get("/api/health", (req, res) => {
     success: true,
     message: "Urban Company Interviewer API is running",
     totalQuestions: interviewService.getTotalQuestions(),
+    storageMode: "mongodb",
+    storageConnected: persistence.isConnected(),
   });
 });
 
 app.use("/api/interview", interviewRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/candidate", candidateRoutes);
 
-app.post("/api/voice/session", async (req, res) => {
+app.post("/api/voice/session", candidateAuth.requireCandidate, async (req, res) => {
   try {
     if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({
@@ -81,6 +87,26 @@ app.post("/api/voice/session", async (req, res) => {
 
 async function startServer() {
   const PORT = process.env.PORT || 5001;
+  try {
+    await persistence.connect(process.env.MONGODB_URI);
+    const restoredCount = interviewService.restoreSessions(await persistence.loadSessions());
+    console.log(`[UC Persistence] MongoDB connected; restored ${restoredCount} interview sessions.`);
+  } catch (error) {
+    const code = error?.code ?? error?.cause?.code ?? null;
+    const failureKind =
+      code === 8000 || code === "8000"
+        ? "authentication_failed"
+        : code === "MONGODB_URI_REQUIRED"
+          ? "configuration_missing"
+          : "mongodb_unavailable";
+    console.error("[UC Persistence] MongoDB startup connection failed.", {
+      failureKind,
+      errorName: error?.name || "Error",
+      errorCode: code,
+      causeCode: error?.cause?.code ?? null,
+    });
+    console.error("[UC Persistence] Starting API in degraded mode; interview writes and reports remain unavailable until MongoDB reconnects.");
+  }
   return app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Loaded ${interviewService.getTotalQuestions()} questions from questionBank.json`);

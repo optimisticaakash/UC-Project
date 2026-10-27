@@ -1,7 +1,7 @@
-export default function AIOrb({ isAiSpeaking, audioLevel, messages }) {
-  const latestAiMessage =
-    messages.filter((message) => message.role === "AI").slice(-1)[0]?.text ||
-    "I’ll ask you a few questions about your salon skills and customer service.";
+import { getCandidateVisibleQuestion } from "../utils/interviewUiState.js";
+
+export default function AIOrb({ isAiSpeaking, audioLevel, currentQuestion }) {
+  const visibleQuestion = getCandidateVisibleQuestion(currentQuestion);
 
   return (
     <section aria-label="AI interviewer" aria-live="polite">
@@ -52,7 +52,7 @@ export default function AIOrb({ isAiSpeaking, audioLevel, messages }) {
           overflowWrap: "anywhere",
         }}
       >
-        {latestAiMessage}
+        {visibleQuestion}
       </p>
     </section>
   );

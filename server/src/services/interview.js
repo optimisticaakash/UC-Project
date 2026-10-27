@@ -90,11 +90,12 @@ function advanceToNextApplicableQuestion(session) {
   }
 }
 
-function startInterview() {
+function startInterview({ candidateId } = {}) {
   const sessionId = crypto.randomUUID();
 
   const session = {
     sessionId,
+    ...(candidateId ? { candidateId } : {}),
     currentQuestionIndex: 0,
     answers: [],
     status: "in_progress",
@@ -115,6 +116,30 @@ function startInterview() {
     questionNumber: 1,
     question: questions[0],
   };
+}
+
+function getSessionSnapshot(sessionId) {
+  const session = sessions.get(sessionId);
+  return session ? structuredClone(session) : null;
+}
+
+function restoreSessionSnapshot(sessionId, snapshot) {
+  if (snapshot) sessions.set(sessionId, structuredClone(snapshot));
+  else sessions.delete(sessionId);
+}
+
+function restoreSessions(restoredSessions) {
+  sessions.clear();
+  for (const session of restoredSessions) {
+    if (session?.sessionId && session.status && session.startedAt) {
+      sessions.set(session.sessionId, session);
+    }
+  }
+  return sessions.size;
+}
+
+function getSessionForPersistence(sessionId) {
+  return sessions.get(sessionId) || null;
 }
 
 function classifyNameAnswer(answer) {
@@ -152,10 +177,10 @@ function classifyNameAnswer(answer) {
   // accepting unrelated trailing sentences as a name.
   const introducedName = namePhrase.exec(normalized)?.[1];
   if (introducedName && plainName.test(introducedName.trim())) {
-    return { clear: true, format: "introduced_name" };
+    return { clear: true, format: "introduced_name", name: introducedName.trim() };
   }
   if (!sentenceStarter.test(normalized) && plainName.test(normalized)) {
-    return { clear: true, format: "plain_name" };
+    return { clear: true, format: "plain_name", name: normalized };
   }
   return { clear: false, format: "unsupported_phrase" };
 }
@@ -590,6 +615,15 @@ async function submitAnswer({
     answer: cleanAnswer,
     answeredAt: new Date().toISOString(),
   };
+  const pendingInterpretation = session.pendingInterpretation?.questionId === question.id
+    ? session.pendingInterpretation
+    : null;
+  if (pendingInterpretation && cleanAnswer !== pendingInterpretation.answerRecord?.answer) {
+    pendingInterpretation.retryAnswers ||= [];
+    if (!pendingInterpretation.retryAnswers.includes(cleanAnswer)) {
+      pendingInterpretation.retryAnswers.push(cleanAnswer);
+    }
+  }
 
   // A0: consent handling lives in consentRules.js.
   if (question.id === "A0") {
@@ -828,6 +862,7 @@ async function submitAnswer({
       };
     }
 
+    session.candidateName = nameClassification.name || cleanAnswer;
     session.answers.push(answerRecord);
     session.currentQuestionIndex += 1;
 
@@ -836,6 +871,7 @@ async function submitAnswer({
       body: {
         success: true,
         completed: false,
+        candidateName: session.candidateName,
         questionNumber: session.currentQuestionIndex + 1,
         totalQuestions: questions.length,
         question: questions[session.currentQuestionIndex],
@@ -917,6 +953,19 @@ async function submitAnswer({
         questionId: question.id,
         errorName: error?.name || "Error",
       });
+      // Preserve the verbatim answer in the persisted session while keeping
+      // the current question active. The next candidate answer retries this
+      // question; no interpretation or progression is fabricated here.
+      session.pendingInterpretation = pendingInterpretation || {
+        questionId: question.id,
+        answerRecord,
+        retryAnswers: [],
+      };
+      const rateLimited = error?.code === "AI_RATE_LIMIT" || error?.name === "RateLimitError" || error?.status === 429 || error?.statusCode === 429;
+      session.pendingInterpretation.failureCode = rateLimited
+        ? "AI_RATE_LIMIT"
+        : "AI_INTERPRETATION_UNAVAILABLE";
+      session.pendingInterpretation.failedAt = new Date().toISOString();
       return {
         status: 200,
         body: {
@@ -924,14 +973,25 @@ async function submitAnswer({
           completed: false,
           clarificationRequired: true,
           interpretationUnavailable: true,
-          message:
-            "माफ़ कीजिए, मैं आपका जवाब अभी समझ नहीं पा रही हूँ। कृपया एक बार फिर बताइए।",
+          code: session.pendingInterpretation.failureCode,
+          message: rateLimited
+            ? "AI service abhi busy hai. Aapka jawab save hai. Kripya kuch der baad isi sawal ka jawab dobara dein."
+            : "माफ़ कीजिए, आपका जवाब सुरक्षित है, लेकिन अभी समझा नहीं जा सका। कृपया इसी सवाल का जवाब दोबारा दें।",
           questionNumber: session.currentQuestionIndex + 1,
           totalQuestions: questions.length,
           question,
         },
       };
     }
+  }
+
+  // A successful interpretation resolves any previously saved retry state.
+  if (session.pendingInterpretation?.questionId === question.id) {
+    answerRecord.previousInterpretationAttempts = [
+      session.pendingInterpretation.answerRecord?.answer,
+      ...(session.pendingInterpretation.retryAnswers || []),
+    ].filter((attempt) => attempt && attempt !== answerRecord.answer);
+    session.pendingInterpretation = null;
   }
 
   if (question.id === "A3") {
@@ -1073,6 +1133,7 @@ function getReport(sessionId) {
       success: true,
       report: {
         sessionId: session.sessionId,
+        candidateId: session.candidateId || null,
         status: session.status,
         manualReviewRequired,
         manualReviewReason: session.manualReviewReason || null,
@@ -1086,6 +1147,14 @@ function getReport(sessionId) {
         totalQuestions: questions.length,
         answeredQuestions: session.answers.length,
         answers: session.answers,
+        pendingInterpretation: session.pendingInterpretation
+          ? {
+              questionId: session.pendingInterpretation.questionId,
+              questionText: session.pendingInterpretation.answerRecord?.questionText || null,
+              answer: session.pendingInterpretation.answerRecord?.answer || "",
+              status: "interpretation_pending_retry",
+            }
+          : null,
       },
     },
   };
@@ -1099,6 +1168,7 @@ function listReports() {
       sessions: [...sessions.values()]
         .map((session) => ({
           sessionId: session.sessionId,
+          candidateId: session.candidateId || null,
           candidateName:
             session.answers.find((answer) => answer.questionId === "A2_NAME")?.answer ||
             "Name not recorded",
@@ -1131,4 +1201,8 @@ module.exports = {
   endInterview,
   getTotalQuestions,
   flagManualReview,
+  getSessionSnapshot,
+  restoreSessionSnapshot,
+  restoreSessions,
+  getSessionForPersistence,
 };

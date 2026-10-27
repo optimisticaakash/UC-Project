@@ -3,23 +3,28 @@ import AIOrb from "./components/AIOrb";
 import InterviewControls from "./components/InterviewControls";
 import InterviewStatus from "./components/InterviewStatus";
 import CandidateCompletion from "./components/CandidateCompletion.js";
+import { isTerminalInterviewState } from "./utils/interviewUiState.js";
 import "./GeminiVoicePrototype.css";
 // -----------------------------------------------------------------------------
 // Gemini Live voice interview component
 // -----------------------------------------------------------------------------
 export default function GeminiVoicePrototype() {
 const {
-  messages,
-  status,
   error,
-  interviewComplete,
-  interviewEnded,
+  interviewLifecycle,
+  currentQuestion,
+  isProcessingAnswer,
+  isPreparingResponse,
+  isWaitingForBackend,
   audioLevel,
   isAiSpeaking,
+  isInterviewActive,
   startingRef,
   start,
   stop,
 } = useGeminiLiveInterview();
+  const interviewTerminal = isTerminalInterviewState(interviewLifecycle);
+  const lifecycleBusy = interviewLifecycle === "starting" || interviewLifecycle === "ending";
 
   // ---------------------------------------------------------------------------
   // Interview UI
@@ -39,22 +44,32 @@ const {
     >
       {/* One main heading and one status */}
       {/* Interview status */}
-      {interviewComplete || interviewEnded ? <CandidateCompletion endedEarly={interviewEnded} /> : <InterviewStatus status={status} error={error} />}
+      {interviewTerminal
+        ? <CandidateCompletion outcome={interviewLifecycle} />
+        : <InterviewStatus
+            lifecycle={interviewLifecycle}
+            isAiSpeaking={isAiSpeaking}
+            isProcessingAnswer={isProcessingAnswer}
+            isPreparingResponse={isPreparingResponse}
+            isWaitingForBackend={isWaitingForBackend}
+            error={error}
+          />}
 
       {/* One orb, centered */}
-      {!interviewComplete && !interviewEnded && <AIOrb
+      {!interviewTerminal && <AIOrb
         isAiSpeaking={isAiSpeaking}
         audioLevel={audioLevel}
-        messages={messages}
+        currentQuestion={currentQuestion}
       />}
 
       {/* One set of interview buttons */}
       {/* Interview controls */}
-      {!interviewComplete && !interviewEnded && <InterviewControls
+      {!interviewTerminal && <InterviewControls
         start={start}
         stop={stop}
         startingRef={startingRef}
-        status={status}
+        isInterviewActive={isInterviewActive}
+        lifecycleBusy={lifecycleBusy}
       />}
     </main>
   );

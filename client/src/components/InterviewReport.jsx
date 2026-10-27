@@ -8,7 +8,7 @@ function ResultBadge({ children }) {
   );
 }
 
-export default function InterviewReport({ report, loading, error, onRetry }) {
+export default function InterviewReport({ report, loading, error, onRetry, onDownload }) {
   const view = createInterviewReportView(report);
 
   if (loading) {
@@ -28,6 +28,7 @@ export default function InterviewReport({ report, loading, error, onRetry }) {
         <h2 id="uc-report-title">Interview report</h2>
         {view && <ResultBadge>{view.statusLabel}</ResultBadge>}
       </div>
+      {report?.candidateName && <p className="text-sm text-neutral-600">Candidate: {report.candidateName}</p>}
 
       {error && (
         <div role="alert" className="uc-report-error">
@@ -40,15 +41,15 @@ export default function InterviewReport({ report, loading, error, onRetry }) {
         </div>
       )}
 
-      {view && !view.isFinal && (
-        <p role="status">This interview is not complete yet. No final report is available.</p>
-      )}
-
-      {view?.isFinal && (
+      {view && (
         <>
           <div className="uc-report-summary">
+            {report?.sessionId && <span>Session: {report.sessionId}</span>}
+            <span>Status: {view.status || "Unavailable"}</span>
             <span>Answers recorded: {view.answeredQuestions}</span>
             <span>Question bank size: {view.totalQuestions}</span>
+            {report?.startedAt && <span>Started: {new Date(report.startedAt).toLocaleString()}</span>}
+            {(report?.completedAt || report?.endedAt) && <span>Ended: {new Date(report.completedAt || report.endedAt).toLocaleString()}</span>}
             {view.consentOutcome && <span>Consent: {view.consentOutcome}</span>}
             {view.eligibilityOutcome && (
               <span>Eligibility outcome: {view.eligibilityOutcome}</span>
@@ -63,6 +64,14 @@ export default function InterviewReport({ report, loading, error, onRetry }) {
             </p>
           )}
 
+          {view.pendingInterpretation?.answer && (
+            <div className="my-4 rounded-xl border border-neutral-300 bg-neutral-50 p-4">
+              <h3 className="font-semibold">Answer awaiting interpretation retry</h3>
+              <p className="mt-1 text-sm text-neutral-600">{view.pendingInterpretation.questionId}{view.pendingInterpretation.questionText ? ` · ${view.pendingInterpretation.questionText}` : ""}</p>
+              <p className="mt-2 whitespace-pre-wrap">{view.pendingInterpretation.answer}</p>
+            </div>
+          )}
+
           {view.manualChecks.length > 0 && (
             <div className="uc-report-checks">
               <h3>Manual checks</h3>
@@ -70,9 +79,10 @@ export default function InterviewReport({ report, loading, error, onRetry }) {
                 {view.manualChecks.map((check, index) => (
                   <li key={`${check.questionId || "check"}-${index}`}>
                     {check.questionId || "Interview check"}: {check.outcome || "Review required"}
+                    {check.area && ` · Area: ${check.area}`}
                     {check.travelWillingness && ` · Travel: ${check.travelWillingness}`}
-                    {check.moveTimelineAnswer && ` · Timeline recorded`}
-                    {check.followUpAnswer && ` · Follow-up recorded`}
+                    {check.moveTimelineAnswer && ` · Timeline: ${check.moveTimelineAnswer}`}
+                    {check.followUpAnswer && ` · Follow-up: ${check.followUpAnswer}`}
                   </li>
                 ))}
               </ul>
@@ -95,6 +105,7 @@ export default function InterviewReport({ report, loading, error, onRetry }) {
                   </div>
                   {entry.questionText && <p className="uc-report-question">{entry.questionText}</p>}
                   <p className="uc-report-answer">{entry.answer || "No answer recorded"}</p>
+                  {entry.previousInterpretationAttempts?.map((attempt, attemptIndex) => <p className="mt-2 text-sm text-neutral-600" key={`prior-answer-${attemptIndex}`}>Prior answer attempt: {attempt}</p>)}
                   {entry.interpretation?.understanding && (
                     <p className="uc-report-interpretation">
                       Recorded interpretation: {entry.interpretation.understanding}
@@ -111,6 +122,7 @@ export default function InterviewReport({ report, loading, error, onRetry }) {
                       {entry.travelWillingness && (
                         <span>Travel willingness: {entry.travelWillingness}</span>
                       )}
+                      {entry.location && <span>Area: {entry.location}</span>}
                       {entry.childPresence && <span>Children: {entry.childPresence}</span>}
                     </div>
                   )}
@@ -118,6 +130,7 @@ export default function InterviewReport({ report, loading, error, onRetry }) {
               ))}
             </ol>
           )}
+          {onDownload && <div className="mt-8 border-t border-neutral-200 pt-5 print:hidden"><button className="inline-flex min-h-10 items-center justify-center rounded-lg bg-neutral-950 px-4 text-sm font-semibold text-white transition hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-neutral-900/20" onClick={onDownload} type="button">Download PDF</button></div>}
         </>
       )}
     </section>

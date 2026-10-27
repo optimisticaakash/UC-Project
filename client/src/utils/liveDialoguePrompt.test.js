@@ -5,7 +5,9 @@ import {
   buildInitialQuestionPrompt,
   buildQuestionHandoffPrompt,
   buildRepeatPrompt,
+  buildWaitingAnnouncementPrompt,
 } from "./liveDialoguePrompt.js";
+import { WAIT_ANNOUNCEMENT_TEXT } from "./requestWaitAnnouncement.js";
 
 const internalNarration =
   "The user selected Hindi, so I will acknowledge this and wait for the backend's next prompt.";
@@ -45,6 +47,13 @@ test("repeat handoffs retain the exact active prompt", () => {
   assert.match(repeated, /Repeat the exact active question or clarification/i);
 });
 
+test("the waiting voice prompt speaks only the approved Hinglish announcement", () => {
+  const prompt = buildWaitingAnnouncementPrompt(WAIT_ANNOUNCEMENT_TEXT);
+  assert.ok(prompt.endsWith(WAIT_ANNOUNCEMENT_TEXT));
+  assert.match(prompt, /only exception to the usual interview dialogue instructions/i);
+  assert.doesNotMatch(prompt, /no pause|<no speech>|\{pause\}|Processing candidate answer/i);
+});
+
 test("the previously observed internal narration is never supplied as dialogue", () => {
   for (const prompt of [
     buildInitialQuestionPrompt("Aapka naam kya hai?"),
@@ -54,4 +63,32 @@ test("the previously observed internal narration is never supplied as dialogue",
   ]) {
     assert.equal(prompt.includes(internalNarration), false);
   }
+});
+
+test("question handoffs strictly prohibit echoing or acknowledging candidate answers", () => {
+  const question = "Aapka current address kya hai? (Kripya apna area aur city batayein)";
+  const prompt = buildQuestionHandoffPrompt(question);
+
+  assert.match(prompt, /Do not repeat, echo, or acknowledge the candidate's previous answer/i);
+  assert.match(prompt, /Process candidate answers silently without speaking them back/i);
+  assert.doesNotMatch(prompt, /begin with one brief, relevant acknowledgement/i);
+  assert.ok(prompt.endsWith(question));
+});
+
+test("clarification prompts strictly prohibit repeating candidate answers", () => {
+  const clarification = "Kripya apna poora address batayein.";
+  const prompt = buildClarificationPrompt(clarification);
+
+  assert.match(prompt, /Do not repeat the candidate's answer/i);
+  assert.match(prompt, /Never repeat, echo, paraphrase, or quote what the candidate just said/i);
+  assert.ok(prompt.endsWith(clarification));
+});
+
+test("A2_NAME handoff to A0 allows personalized greeting with candidate name", () => {
+  const questionA0 =
+    "Namaste! Main UC ki screening assistant hoon. Ye baat-cheet sirf screening ke liye record hogi. Shuru karein? Aap Hindi mein baat karengi ya English mein?";
+  const prompt = buildQuestionHandoffPrompt(questionA0, "Aarti");
+
+  assert.match(prompt, /Begin by greeting the candidate warmly: "Namaste Aarti ji!"/);
+  assert.ok(prompt.endsWith(questionA0));
 });

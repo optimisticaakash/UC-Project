@@ -52,36 +52,30 @@ test("turnComplete alone does not release the barrier before scheduled audio end
   assert.equal((await pending).ready, true);
 });
 
-test("an empty queue still waits one second before allowing the response handoff", async () => {
+test("an already idle queue releases immediately without an unconditional one-second delay", async () => {
   const queue = createPlaybackQueue();
-  let releasePause;
-  let handoffAllowed = false;
-  const pending = waitForPlaybackAndPause({
+  let paused = false;
+  const result = await waitForPlaybackAndPause({
     playbackQueue: queue,
-    pause: (ms) => {
-      assert.equal(ms, 1000);
-      return new Promise((resolve) => { releasePause = resolve; });
-    },
+    pause: async () => { paused = true; },
     isCurrent: () => true,
-  }).then((result) => {
-    handoffAllowed = result.ready;
-    return result;
   });
 
-  await Promise.resolve();
-  assert.equal(handoffAllowed, false);
-  releasePause();
-  assert.equal((await pending).ready, true);
-  assert.equal(handoffAllowed, true);
+  assert.equal(paused, false);
+  assert.equal(result.ready, true);
+  assert.equal(result.playbackOutcome, "played");
 });
 
 test("audio scheduled during the pause must finish before a fresh one-second gap", async () => {
   const queue = createPlaybackQueue();
+  const initialSource = {};
   const lateSource = {};
   const pauses = [];
   let releaseFirstPause;
   let releaseSecondPause;
   let handoffAllowed = false;
+
+  queue.sourceStarted(initialSource);
 
   const pending = waitForPlaybackAndPause({
     playbackQueue: queue,
@@ -98,6 +92,7 @@ test("audio scheduled during the pause must finish before a fresh one-second gap
     return result;
   });
 
+  queue.sourceEnded(initialSource);
   await Promise.resolve();
   queue.sourceStarted(lateSource);
   releaseFirstPause();
@@ -231,4 +226,32 @@ test("an explicit interruption drains stopped sources without duplicate completi
 
   assert.deepEqual(result, { ready: true, playbackOutcome: "interrupted" });
   assert.deepEqual(events, [1000]);
+});
+
+test("a playback source that never ends is stopped and the prompt handoff recovers once", async () => {
+  const queue = createPlaybackQueue();
+  const source = { stopCount: 0, stop() { this.stopCount += 1; } };
+  let stallRecoveries = 0;
+  let handoffs = 0;
+  queue.sourceStarted(source);
+
+  const result = await waitForPlaybackAndPause({
+    playbackQueue: queue,
+    pause: async () => {},
+    isCurrent: () => true,
+    drainTimeoutMs: 10,
+    onDrainTimeout: () => {
+      stallRecoveries += 1;
+      source.stop();
+    },
+  });
+  if (result.ready) handoffs += 1;
+  queue.sourceEnded(source); // A late ended event must not hand off twice.
+
+  assert.equal(result.ready, true);
+  assert.equal(result.playbackOutcome, "playback_stalled");
+  assert.equal(stallRecoveries, 1);
+  assert.equal(source.stopCount, 1);
+  assert.equal(handoffs, 1);
+  assert.equal(queue.activeSourceCount, 0);
 });

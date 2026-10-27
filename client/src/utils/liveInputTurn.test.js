@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLiveInputTurn } from "./liveInputTurn.js";
+import { createLiveInputTurn, isInternalSpeechMarker } from "./liveInputTurn.js";
 
 function finalTranscript(text, startOffset, endOffset) {
   return {
@@ -129,7 +129,7 @@ test("unfinished late transcription waits for its finalized event", () => {
   );
 });
 
-test("candidate final before response turnComplete waits for that response", () => {
+test("candidate final after interim submits immediately and does not require another turnComplete", () => {
   const turn = createLiveInputTurn();
   turn.beginModelTurn();
   turn.handleServerContent({ turnComplete: true });
@@ -137,11 +137,11 @@ test("candidate final before response turnComplete waits for that response", () 
 
   assert.equal(
     turn.handleServerContent(finalTranscript("My answer", "4s", "5s")).answer,
-    null,
+    "My answer",
   );
   assert.equal(
     turn.handleServerContent({ turnComplete: true }).answer,
-    "My answer",
+    null,
   );
 });
 
@@ -157,11 +157,11 @@ test("interim transcription is ignored and finalized text submits once", () => {
   );
   assert.equal(
     turn.handleServerContent(finalTranscript("My answer", "5s", "6s")).answer,
-    null,
+    "My answer",
   );
   assert.equal(
     turn.handleServerContent({ turnComplete: true }).answer,
-    "My answer",
+    null,
   );
   assert.equal(
     turn.handleServerContent(finalTranscript("My answer", "5s", "6s")).answer,
@@ -182,18 +182,20 @@ test("transcription chunks are merged into the complete finalized answer", () =>
       finished: false,
     },
   });
-  turn.handleServerContent({
-    inputTranscription: {
-      text: "I can travel",
-      startOffset: "13s",
-      endOffset: "15s",
-      finished: true,
-    },
-  });
-
+  assert.equal(
+    turn.handleServerContent({
+      inputTranscription: {
+        text: "I can travel",
+        startOffset: "13s",
+        endOffset: "15s",
+        finished: true,
+      },
+    }).answer,
+    "I can travel",
+  );
   assert.equal(
     turn.handleServerContent({ turnComplete: true }).answer,
-    "I can travel",
+    null,
   );
 });
 
@@ -213,20 +215,20 @@ test("identical candidate answers on separate prompt turns both submit", () => {
 
   assert.equal(
     turn.handleServerContent(finalTranscript("Yes", "7s", "8s")).answer,
-    null,
+    "Yes",
   );
-  assert.equal(turn.handleServerContent({ turnComplete: true }).answer, "Yes");
+  assert.equal(turn.handleServerContent({ turnComplete: true }).answer, null);
 
   turn.beginModelTurn();
   turn.handleServerContent({ turnComplete: true });
   turn.handleServerContent({ interimInputTranscription: { text: "Yes" } });
   assert.equal(
     turn.handleServerContent(finalTranscript("Yes", "9s", "10s")).answer,
-    null,
+    "Yes",
   );
   assert.equal(
     turn.handleServerContent({ turnComplete: true }).answer,
-    "Yes",
+    null,
   );
 });
 
@@ -263,4 +265,88 @@ test("duplicate final transcription in an interrupted turn submits once", () => 
   turn.handleServerContent({ interrupted: true });
   assert.equal(turn.handleServerContent({ turnComplete: true }).answer, "My answer");
   assert.equal(turn.handleServerContent(final).answer, null);
+});
+
+test("internal no-speech and pause markers do not become candidate answers", () => {
+  const turn = createLiveInputTurn();
+  turn.beginModelTurn();
+  turn.handleServerContent({ turnComplete: true });
+  for (const marker of ["no pause", "<no speech>", "<no speech>{pause}", "{pause}"]) {
+    const result = turn.handleServerContent({
+      inputTranscription: { text: marker, finished: true },
+    });
+    assert.equal(result.answer, null, marker);
+    assert.equal(result.transcript, "", marker);
+  }
+  assert.equal(isInternalSpeechMarker("<no speech>{pause}"), true);
+  assert.equal(isInternalSpeechMarker("I paused before I answered"), false);
+});
+
+test("empty and whitespace speech events do not count as activity or submit answers", () => {
+  const turn = createLiveInputTurn();
+  turn.beginModelTurn();
+  const emptyEvents = ["", "   ", null];
+  for (const text of emptyEvents) {
+    const result = turn.handleServerContent({ inputTranscription: { text, finished: true } });
+    assert.equal(result.answer, null);
+    assert.equal(result.transcript, "");
+    assert.equal(result.activity, false);
+  }
+  assert.equal(turn.handleServerContent({ turnComplete: true }).answer, null);
+});
+
+test("answer remains open during the settle window and can include continued speech", () => {
+  const turn = createLiveInputTurn();
+  turn.beginModelTurn();
+  turn.handleServerContent({ turnComplete: true });
+  turn.handleServerContent({ interimInputTranscription: { text: "I would" } });
+  assert.equal(turn.handleServerContent(finalTranscript("I would travel", "1s", "2s")).answer, "I would travel");
+  assert.equal(turn.handleServerContent({ interimInputTranscription: { text: "if needed" } }).answer, null);
+  assert.equal(turn.handleServerContent(finalTranscript("I would travel if needed", "1s", "4s")).answer, "I would travel if needed");
+  turn.commitAnswer();
+  assert.equal(turn.handleServerContent(finalTranscript("I would travel if needed", "1s", "4s")).answer, null);
+});
+
+test("interim speech activity prevents premature answer emission until final transcription", () => {
+  const turn = createLiveInputTurn();
+  turn.beginModelTurn();
+  turn.handleServerContent({ turnComplete: true });
+
+  // Candidate is speaking: interim arrives
+  const interimResult = turn.handleServerContent({ interimInputTranscription: { text: "Mera naam" } });
+  assert.equal(interimResult.answer, null);
+  assert.equal(interimResult.activity, true);
+
+  // An unprompted turnComplete from the model arrives while candidate is speaking
+  const turnCompleteResult = turn.handleServerContent({ turnComplete: true });
+  assert.equal(turnCompleteResult.answer, null, "Should not advance before candidate finishes speaking");
+
+  // Candidate finishes speaking: final transcription arrives
+  const finalResult = turn.handleServerContent(finalTranscript("Mera naam Priya hai", "1s", "3s"));
+  assert.equal(finalResult.answer, "Mera naam Priya hai");
+});
+
+test("candidate speech arriving while AI question playback is active does not advance until playback completes", () => {
+  const turn = createLiveInputTurn();
+  turn.beginModelTurn();
+
+  // Model generation finishes, but physical audio playback is still active in speakers
+  turn.handleServerContent({ turnComplete: true }, { isPlaybackActive: true });
+
+  // Mic picks up candidate speech while audio is playing
+  const duringPlayback = turn.handleServerContent(
+    finalTranscript("Haan main ready hoon", "1s", "2s"),
+    { isPlaybackActive: true },
+  );
+  assert.equal(duringPlayback.answer, null, "Must not advance while question audio is playing");
+
+  // AI question playback completes physically from speakers
+  turn.finishModelPlayback();
+
+  // Now candidate answer is emitted cleanly after playback completes
+  const afterPlayback = turn.handleServerContent(
+    finalTranscript("Haan main ready hoon", "1s", "2s"),
+    { isPlaybackActive: false },
+  );
+  assert.equal(afterPlayback.answer, "Haan main ready hoon");
 });

@@ -11,14 +11,17 @@ const workbookQuestionMapping = require(
   "../data/workbook-reference/UC_question_bank_exact_workbook_mapping.json",
 );
 const interviewController = require("../controllers/interviewController");
+const { persistence } = require("./persistence");
 
 const {
   startInterview,
   submitAnswer: submitInterviewAnswer,
   getReport,
+  getSessionForPersistence,
   listReports,
   endInterview,
   getTotalQuestions,
+  flagManualReview,
 } = require("./interview");
 
 const householdQuestion =
@@ -26,6 +29,8 @@ const householdQuestion =
 
 test("Live system instructions keep internal orchestration out of spoken dialogue", () => {
   assert.match(liveVoiceInstructions, /Speak only candidate-facing interview dialogue/);
+  assert.match(liveVoiceInstructions, /Never repeat, echo, quote, or paraphrase the candidate's answer/);
+  assert.match(liveVoiceInstructions, /Process candidate answers silently without speaking them back/);
   assert.match(liveVoiceInstructions, /remain silent until the application supplies/);
   assert.match(liveVoiceInstructions, /Never narrate thoughts, plans, language selection/);
   assert.match(liveVoiceInstructions, /Never mention the system, application, server, backend/);
@@ -44,22 +49,31 @@ async function submitAnswer(payload, options = {}) {
   });
 }
 
-function callReportEndpoint(sessionId) {
+async function callReportEndpoint(sessionId) {
   let status;
   let body;
-  interviewController.getReport(
-    { params: { sessionId } },
-    {
-      status(value) {
-        status = value;
-        return this;
+  const wasConnected = persistence.isConnected;
+  const wasFindSessionById = persistence.findSessionById;
+  persistence.isConnected = () => true;
+  persistence.findSessionById = async (id) => getSessionForPersistence(id);
+  try {
+    await interviewController.getReport(
+      { params: { sessionId } },
+      {
+        status(value) {
+          status = value;
+          return this;
+        },
+        json(value) {
+          body = value;
+          return value;
+        },
       },
-      json(value) {
-        body = value;
-        return value;
-      },
-    },
-  );
+    );
+  } finally {
+    persistence.isConnected = wasConnected;
+    persistence.findSessionById = wasFindSessionById;
+  }
   return { status, body };
 }
 
@@ -109,7 +123,7 @@ test("Interview: interpretation failure holds the current question and asks for 
 
   const failed = await submitAnswer(answerPayload, {
     interpretAnswerImpl: async () => {
-      throw new Error("simulated interpretation failure");
+      throw Object.assign(new Error("RESOURCE_EXHAUSTED"), { name: "RateLimitError", status: 429 });
     },
   });
 
@@ -117,7 +131,13 @@ test("Interview: interpretation failure holds the current question and asks for 
   assert.equal(failed.body.interpretationUnavailable, true);
   assert.equal(failed.body.clarificationRequired, true);
   assert.equal(failed.body.question.id, "A3");
-  assert.match(failed.body.message, /एक बार फिर बताइए/);
+  assert.match(failed.body.message, /safe|save|सुरक्षित/i);
+  const failedSession = getSessionForPersistence(started.sessionId);
+  assert.equal(failedSession.currentQuestionIndex, 4);
+  assert.equal(failedSession.pendingInterpretation.answerRecord.answer, answerPayload.answer);
+  assert.equal(failedSession.pendingInterpretation.failureCode, "AI_RATE_LIMIT");
+  assert.equal(getReport(started.sessionId).body.report.pendingInterpretation.answer, answerPayload.answer);
+  assert.equal(failedSession.answers.some((entry) => entry.questionId === "A3"), false);
 
   const retried = await submitAnswer(answerPayload, {
     interpretAnswerImpl: async () => ({
@@ -130,6 +150,7 @@ test("Interview: interpretation failure holds the current question and asks for 
 
   assert.equal(retried.status, 200);
   assert.equal(retried.body.question.id, "A4");
+  assert.equal(getSessionForPersistence(started.sessionId).pendingInterpretation, null);
 });
 
 test("Interview: concurrent duplicate interpretations cannot skip a question", async () => {
@@ -191,6 +212,7 @@ async function startAtConsent() {
     diagnosticRequestId: "name-opening-test",
   });
   assert.equal(nameResult.body.question.id, "A0");
+  assert.equal(nameResult.body.candidateName, "Sunita");
   return started;
 }
 
@@ -241,6 +263,7 @@ test("Interview: explicit Hindi or English no-children answers skip only A4 and 
     assert.equal(result.status, 200, answer);
     assert.equal(result.body.clarificationRequired, undefined, answer);
     assert.equal(result.body.question.id, "A6", answer);
+    assert.equal(result.body.questionNumber, activeQuestionBank.questions.findIndex((item) => item.Step === "A6") + 1);
 
     const report = getReport(started.sessionId).body.report;
     assert.equal(report.answers.find((item) => item.questionId === "A3")?.childPresence, "none");
@@ -439,7 +462,7 @@ test("Interview: completes the active question-bank sequence and report endpoint
     ["A1_travel_clarification", "A1_move_timeline"],
   );
 
-  const endpoint = callReportEndpoint(started.sessionId);
+  const endpoint = await callReportEndpoint(started.sessionId);
   assert.equal(endpoint.status, 200);
   assert.equal(endpoint.body.success, true);
   assert.equal(endpoint.body.report.status, "completed");
@@ -456,14 +479,14 @@ test("Interview: completes the active question-bank sequence and report endpoint
   assert.equal(endedComplete.body.sessionStatus, "completed");
   assert.equal(getReport(started.sessionId).body.report.status, "completed");
 
-  const unknown = callReportEndpoint("not-a-session");
+  const unknown = await callReportEndpoint("not-a-session");
   assert.equal(unknown.status, 404);
   assert.equal(unknown.body.success, false);
 });
 
-test("Interview report endpoint marks an unfinished session as in progress", () => {
+test("Interview report endpoint marks an unfinished session as in progress", async () => {
   const started = startInterview();
-  const endpoint = callReportEndpoint(started.sessionId);
+  const endpoint = await callReportEndpoint(started.sessionId);
 
   assert.equal(endpoint.status, 200);
   assert.equal(endpoint.body.success, true);
@@ -481,11 +504,8 @@ test("Ending an incomplete interview finalizes its report once and preserves ans
   });
   const before = getReport(started.sessionId).body.report;
   assert.equal(before.answeredQuestions, 1);
-  const flagResponse = await new Promise((resolve) => interviewController.flagManualReview(
-    { body: { sessionId: started.sessionId, reason: "Existing review flag" } },
-    { status() { return this; }, json(value) { resolve(value); return value; } },
-  ));
-  assert.equal(flagResponse.manualReviewRequired, true);
+  const flagResponse = flagManualReview(started.sessionId, "Existing review flag");
+  assert.equal(flagResponse.body.manualReviewRequired, true);
 
   const firstEnd = endInterview(started.sessionId);
   const firstEndedAt = firstEnd.body.endedAt;
@@ -1262,4 +1282,321 @@ test("Interview: age 39 is saved for manual review", async () => {
   assert.equal(result.body.eligibilityOutcome, "manual_review");
   assert.equal(result.body.manualReviewRequired, true);
   assert.equal(report.eligibilityOutcome, "manual_review");
+});
+
+test("Interview regression: exact sequence from A2_NAME through all screening questions into work experience (B1 -> B2)", async () => {
+  const mappingFlow = workbookQuestionMapping.questionFlow;
+  const started = startInterview();
+
+  assert.equal(started.totalQuestions, 50);
+  assert.equal(started.question.id, "A2_NAME");
+  assert.equal(started.question.text, mappingFlow[0]["Bot says (primary)"]);
+  assert.equal(started.question.category, mappingFlow[0].Block);
+
+  const approvedAnswers = {
+    A2_NAME: "Priya Sharma",
+    A0: "Haan, main Hindi mein baat karungi",
+    A1: "Koramangala, Bangalore",
+    A1_TRAVEL_CLARIFICATION: "Haan, main 5 km travel kar sakti hoon",
+    A1_MOVE_TIMELINE: "Ek mahine ke andar",
+    A2: "15/08/1996",
+    A3: "Ghar mein mere pati aur do bachche hain, pati private job karte hain",
+    A4: "Bade bachche 4th class mein hain aur chhota 1st mein",
+    A5: "Jab main kaam pe hoti hoon tab dadi unka dhyan rakhti hain",
+    A6: "Agle ek saal mein aisi koi shaadi ya shifting ka plan nahi hai",
+    A7: "Abhi main ek local salon mein kaam karti hoon, apna parlor nahi hai",
+    A8: "Waxing, facial aur manicure-pedicure sab regular karti hoon",
+    A9: "Main apni two-wheeler scooty se aati jaati hoon",
+    A10: "Pooja Sharma, Koramangala 4th block, Rica waxing and cleanup",
+    A11: "Namaste maam, main Urban Company se aayi hoon aapki service ke liye",
+    A12: "Nahi, maine pehle kisi app-based service mein kaam nahi kiya",
+    B1: "Pichli job mein 7-8 ghante khade rehkar kaam karti thi, mujhe koi dikkat nahi hoti",
+    B2: "Maine 4 saal pehle beauty parlor course kiya tha aur tab se do salons mein kaam kiya hai",
+  };
+
+  const expectedProgression = [
+    "A2_NAME",
+    "A0",
+    "A1",
+    "A1_TRAVEL_CLARIFICATION",
+    "A1_MOVE_TIMELINE",
+    "A2",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "A7",
+    "A8",
+    "A9",
+    "A10",
+    "A11",
+    "A12",
+    "B1",
+    "B2",
+  ];
+
+  let currentQuestion = started.question;
+  const recordedSteps = [currentQuestion.id];
+
+  for (let i = 0; i < expectedProgression.length - 1; i++) {
+    const stepId = expectedProgression[i];
+    const nextExpectedId = expectedProgression[i + 1];
+
+    assert.equal(currentQuestion.id, stepId, `step index ${i}`);
+
+    const result = await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: stepId,
+      answer: approvedAnswers[stepId],
+      diagnosticRequestId: `regression-${stepId}`,
+    });
+
+    assert.equal(result.status, 200, `submission status for ${stepId}`);
+    assert.equal(result.body.completed, false, `session must not complete prematurely at ${stepId}`);
+    assert.ok(result.body.question, `question must be returned after ${stepId}`);
+    assert.equal(result.body.question.id, nextExpectedId, `advancement after ${stepId}`);
+
+    currentQuestion = result.body.question;
+    recordedSteps.push(currentQuestion.id);
+
+    // Verify against workbook mapping for regular bank questions
+    const mappedItem = mappingFlow.find((item) => item.Step === currentQuestion.id);
+    if (mappedItem) {
+      assert.equal(currentQuestion.text, mappedItem["Bot says (primary)"], `text match for ${currentQuestion.id}`);
+      assert.equal(currentQuestion.category, mappedItem.Block, `block match for ${currentQuestion.id}`);
+    }
+  }
+
+  assert.deepEqual(recordedSteps, expectedProgression);
+
+  // Also verify that without children, A4 and A5 are skipped and sequence resumes at A6 -> ... -> B2
+  const noKidsStarted = startInterview();
+  const noKidsAnswers = {
+    ...approvedAnswers,
+    A1_TRAVEL_CLARIFICATION: "Nahi, main travel nahi kar sakti",
+    A2: "25",
+    A3: "Ghar mein sirf main aur mere pati hain, mere koi bachche nahi hain",
+  };
+
+  const expectedNoKidsProgression = [
+    "A2_NAME",
+    "A0",
+    "A1",
+    "A1_TRAVEL_CLARIFICATION",
+    "A2",
+    "A3",
+    "A6",
+    "A7",
+    "A8",
+    "A9",
+    "A10",
+    "A11",
+    "A12",
+    "B1",
+    "B2",
+  ];
+
+  let noKidsQuestion = noKidsStarted.question;
+  const noKidsSteps = [noKidsQuestion.id];
+
+  for (let i = 0; i < expectedNoKidsProgression.length - 1; i++) {
+    const stepId = expectedNoKidsProgression[i];
+    const nextExpectedId = expectedNoKidsProgression[i + 1];
+
+    assert.equal(noKidsQuestion.id, stepId);
+
+    const result = await submitAnswer({
+      sessionId: noKidsStarted.sessionId,
+      expectedQuestionId: stepId,
+      answer: noKidsAnswers[stepId],
+      diagnosticRequestId: `regression-nokids-${stepId}`,
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.completed, false);
+    assert.equal(result.body.question.id, nextExpectedId);
+
+    noKidsQuestion = result.body.question;
+    noKidsSteps.push(noKidsQuestion.id);
+  }
+
+  assert.deepEqual(noKidsSteps, expectedNoKidsProgression);
+});
+
+test("Interview regression: unclear answers, repeated transcripts, and answer retries cannot skip questions", async () => {
+  const started = startInterview();
+  assert.equal(started.question.id, "A2_NAME");
+
+  // 1. Unclear name keeps A2_NAME
+  let res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "pata nahi",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A2_NAME");
+
+  // Valid name advances to A0
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Priya",
+  });
+  assert.equal(res.body.question.id, "A0");
+
+  // 2. Repeated transcript / stale question ID A2_NAME returns 409 and holds on A0
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Priya",
+  });
+  assert.equal(res.status, 409);
+  assert.equal(res.body.staleQuestion, true);
+  assert.equal(res.body.question.id, "A0");
+
+  // 3. Unclear consent keeps A0
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "shayad",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A0");
+
+  // Valid consent advances to A1
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan, Hindi mein",
+  });
+  assert.equal(res.body.question.id, "A1");
+
+  // 4. Stale question ID A0 returns 409 and holds on A1
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan dobara",
+  });
+  assert.equal(res.status, 409);
+  assert.equal(res.body.staleQuestion, true);
+  assert.equal(res.body.question.id, "A1");
+
+  // Location answer triggers travel clarification
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Delhi",
+  });
+  assert.equal(res.body.question.id, "A1_TRAVEL_CLARIFICATION");
+
+  // 5. Ambiguous travel keeps A1_TRAVEL_CLARIFICATION
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Haan, lekin travel nahi kar sakti",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A1_TRAVEL_CLARIFICATION");
+
+  // Willing travel triggers move timeline
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Haan, main travel kar sakti hoon",
+  });
+  assert.equal(res.body.question.id, "A1_MOVE_TIMELINE");
+
+  // 6. Unclear timeline keeps A1_MOVE_TIMELINE
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_MOVE_TIMELINE",
+    answer: "maybe",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A1_MOVE_TIMELINE");
+
+  // Clear timeline advances to A2
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_MOVE_TIMELINE",
+    answer: "Ek mahine mein",
+  });
+  assert.equal(res.body.question.id, "A2");
+
+  // 7. Unclear DOB keeps A2
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "kal",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A2");
+
+  // Clear age advances to A3
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "25",
+  });
+  assert.equal(res.body.question.id, "A3");
+
+  // 8. Ambiguous child presence on A3 keeps A3 pending
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A3",
+    answer: "Ghar mein sab log rehte hain",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A3");
+
+  // Clarify children presence -> advances to A4
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A3",
+    answer: "Haan mere do bachche hain",
+  });
+  assert.equal(res.body.question.id, "A4");
+
+  // Answer A4 -> A5
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A4",
+    answer: "4th class mein hain",
+  });
+  assert.equal(res.body.question.id, "A5");
+
+  // Answer A5 -> A6
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A5",
+    answer: "Dadi dekhti hain",
+  });
+  assert.equal(res.body.question.id, "A6");
+
+  // 9. Interpretation failure on A6 retains A6 and asks for retry without advancing
+  const failingInterpretation = async () => {
+    const error = new Error("Resource has been exhausted (e.g. check quota)");
+    error.status = 429;
+    throw error;
+  };
+
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A6",
+    answer: "Koi plan nahi hai",
+  }, { interpretAnswerImpl: failingInterpretation });
+
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.interpretationUnavailable, true);
+  assert.equal(res.body.code, "AI_RATE_LIMIT");
+  assert.equal(res.body.question.id, "A6");
+
+  // Retry with successful interpretation resolves retry state and advances exactly one step to A7
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A6",
+    answer: "Agle ek saal mein ghar mein koi badi cheez plan nahi ho rahi hai",
+  });
+  assert.equal(Boolean(res.body.clarificationRequired), false);
+  assert.equal(res.body.question.id, "A7");
 });

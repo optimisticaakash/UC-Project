@@ -1,4 +1,9 @@
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const INTERPRETATION_TIMEOUT_MS = 15000;
+const INTERPRETATION_REQUEST_OPTIONS = Object.freeze({
+  retries: Object.freeze({ strategy: "none" }),
+  timeout_ms: INTERPRETATION_TIMEOUT_MS,
+});
 
 let clientPromise;
 
@@ -25,10 +30,13 @@ async function generateText(input) {
 
   const ai = await getClient();
 
-  const response = await ai.interactions.create({
-    model: MODEL,
-    input: input.trim(),
-  });
+  const response = await ai.interactions.create(
+    {
+      model: MODEL,
+      input: input.trim(),
+    },
+    INTERPRETATION_REQUEST_OPTIONS,
+  );
 
   const text = response.output_text;
 
@@ -129,6 +137,7 @@ async function interpretAnswer({
   diagnosticRequestId,
   diagnosticPromptTurn,
   diagnosticSessionGeneration,
+  generateTextImpl = generateText,
 }) {
   if (
     typeof question !== "string" ||
@@ -187,7 +196,7 @@ Candidate answer: ${answer.trim()}
   console.info("[UC Answer Interpretation] model_request_started", diagnosticMetadata);
 
   try {
-    raw = await generateText(prompt);
+    raw = await generateTextImpl(prompt);
   } catch (error) {
     console.info("[UC Answer Interpretation] model_request_failed", {
       ...diagnosticMetadata,
@@ -197,14 +206,17 @@ Candidate answer: ${answer.trim()}
       ),
     });
     const message = error?.message || "";
-    const isTemporaryAIError =
-      message.includes("429") ||
-      /rate.?limit|quota|temporarily unavailable|503|timeout/i.test(message);
-
-    if (isTemporaryAIError) {
-      return fallbackInterpretation({ question, answer });
+    // A heuristic fallback can classify a rate-limited answer as
+    // "sufficient". Keep the failure explicit so the interview service can
+    // retain the answer and ask for a retry without advancing the question.
+    if (
+      error?.name === "RateLimitError" || error?.status === 429 ||
+      error?.statusCode === 429 || message.includes("429") || /rate.?limit|quota/i.test(message)
+    ) {
+      error.code = "AI_RATE_LIMIT";
+    } else if (/temporarily unavailable|503|timeout/i.test(message)) {
+      error.code = "AI_INTERPRETATION_UNAVAILABLE";
     }
-
     throw error;
   }
 
@@ -273,4 +285,5 @@ module.exports = {
   generateText,
   interpretAnswer,
   fallbackInterpretation,
+  INTERPRETATION_REQUEST_OPTIONS,
 };

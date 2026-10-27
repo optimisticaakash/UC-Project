@@ -17,6 +17,9 @@ export function createInterviewReportView(report) {
 
   return {
     status: report.status,
+    candidateName: report.candidateName || null,
+    startedAt: report.startedAt || null,
+    completedAt: report.completedAt || report.endedAt || null,
     statusLabel: STATUS_LABELS[report.status] || "Interview status unavailable",
     isFinal: isFinalInterviewReport(report),
     totalQuestions: Number.isFinite(report.totalQuestions)
@@ -32,5 +35,6 @@ export function createInterviewReportView(report) {
     locationOutcome: report.locationOutcome || null,
     manualChecks: Array.isArray(report.manualChecks) ? report.manualChecks : [],
     answers: Array.isArray(report.answers) ? report.answers : [],
+    pendingInterpretation: report.pendingInterpretation || null,
   };
 }
