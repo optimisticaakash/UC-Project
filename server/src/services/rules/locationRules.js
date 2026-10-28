@@ -1,12 +1,16 @@
 function classifyLocation(answer) {
   const text = answer.trim().toLowerCase();
 
-  // An empty or vague response needs clarification.
+  // An empty, vague, or irrelevant response needs clarification.
+  const irrelevantPattern =
+    /\b(?:biryani|pizza|burger|cricket|movie|movies|anime|song|songs|dance|dancing|gaana|khana|aaloo|aloo|potato|football|habba\s+jabba|bla\s+bla|asdf|qwerty)\b/i;
+
   if (
     !text ||
     /^(pata nahi|not sure|don't know|dont know|samajh nahi aaya)[.!?]*$/i.test(
       text,
-    )
+    ) ||
+    irrelevantPattern.test(text)
   ) {
     return {
       outcome: "clarification",

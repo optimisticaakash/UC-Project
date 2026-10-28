@@ -3,6 +3,7 @@ const { persistence } = require("../services/persistence");
 const { isDeepStrictEqual } = require("node:util");
 const crypto = require("node:crypto");
 const { generateInterviewReportPdf, getReportPdfHash } = require("../services/reportPdf");
+const { syncAnswerToSheet } = require("../services/googleSheetsService");
 const reportPdfJobs = new Map();
 
 const sessionWrites = new Map();
@@ -292,6 +293,20 @@ async function submitAnswerUnlocked(req, res) {
       ),
     });
 
+    if (result.status < 400) {
+      const liveSession = interviewService.getSessionForPersistence(sessionId);
+      const lastAnswer = liveSession?.answers?.[liveSession.answers.length - 1];
+      if (lastAnswer) {
+        void syncAnswerToSheet({
+          session: liveSession,
+          answerRecord: lastAnswer,
+          candidateName: liveSession.candidateName,
+        }).catch((syncErr) => {
+          console.error("Google Sheets async sync error:", syncErr?.name || "Error");
+        });
+      }
+    }
+
     if (body.completed && result.status < 400) {
       await generateAndPersistReportPdf(sessionId).catch((error) => {
         console.error("Final report PDF generation failed:", error?.name || "Error", error?.code || null);
@@ -549,6 +564,82 @@ async function interpretCandidateAnswer(req, res) {
   }
 }
 
+async function pauseInterview(req, res) {
+  const sessionId = req.body?.sessionId;
+  if (!sessionId) {
+    return res.status(400).json({ success: false, message: "Session ID is required." });
+  }
+  return serializeSessionWrite(sessionId, async () => {
+    try {
+      if (req.candidate) {
+        const ownedSession = interviewService.getSessionForPersistence(sessionId);
+        if (!ownedSession || ownedSession.candidateId !== req.candidate.candidateId) {
+          return res.status(404).json({ success: false, message: "Interview session not found." });
+        }
+      }
+      const result = await persistMutation(sessionId, () => interviewService.pauseInterview(sessionId));
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      if (error?.persistenceFailure || error?.name?.startsWith("Mongo")) {
+        console.error("Interview pause persistence failed:", error?.name || "Error", error?.code || null);
+        return persistenceUnavailable(res);
+      }
+      console.error("Pause interview error:", error?.name || "Error");
+      return res.status(500).json({ success: false, message: "Unable to pause the interview session." });
+    }
+  });
+}
+
+async function resumeInterview(req, res) {
+  const sessionId = req.body?.sessionId;
+  if (!sessionId) {
+    return res.status(400).json({ success: false, message: "Session ID is required." });
+  }
+  return serializeSessionWrite(sessionId, async () => {
+    try {
+      if (req.candidate) {
+        const ownedSession = interviewService.getSessionForPersistence(sessionId);
+        if (!ownedSession || ownedSession.candidateId !== req.candidate.candidateId) {
+          return res.status(404).json({ success: false, message: "Interview session not found." });
+        }
+      }
+      const result = await persistMutation(sessionId, () => interviewService.resumeInterview(sessionId));
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      if (error?.persistenceFailure || error?.name?.startsWith("Mongo")) {
+        console.error("Interview resume persistence failed:", error?.name || "Error", error?.code || null);
+        return persistenceUnavailable(res);
+      }
+      console.error("Resume interview error:", error?.name || "Error");
+      return res.status(500).json({ success: false, message: "Unable to resume the interview session." });
+    }
+  });
+}
+
+async function getActiveSession(req, res) {
+  try {
+    const candidateId = req.candidate?.candidateId;
+    if (!candidateId) {
+      return res.status(400).json({ success: false, message: "Candidate ID required." });
+    }
+    let active = interviewService.getActiveSessionForCandidate(candidateId);
+    if (!active && persistence.isConnected()) {
+      const storedSessions = await persistence.listSessionsByCandidate(candidateId);
+      const activeStored = storedSessions.find(
+        (s) => s.status === "in_progress" || s.status === "paused",
+      );
+      if (activeStored) {
+        ensureSessionLoaded(activeStored);
+        active = interviewService.getActiveSessionForCandidate(candidateId);
+      }
+    }
+    return res.status(200).json({ success: true, activeSession: active || null });
+  } catch (error) {
+    console.error("Get active session error:", error?.name || "Error");
+    return res.status(500).json({ success: false, message: "Unable to check active session." });
+  }
+}
+
 module.exports = {
   startInterview,
   submitAnswer,
@@ -559,6 +650,9 @@ module.exports = {
   listCandidateInterviews,
   listCandidateInterviewsForCurrentUser,
   endInterview,
+  pauseInterview,
+  resumeInterview,
+  getActiveSession,
   interpretCandidateAnswer,
   flagManualReview,
 };

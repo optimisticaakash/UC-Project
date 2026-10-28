@@ -1600,3 +1600,235 @@ test("Interview regression: unclear answers, repeated transcripts, and answer re
   assert.equal(Boolean(res.body.clarificationRequired), false);
   assert.equal(res.body.question.id, "A7");
 });
+
+test("Pause and Resume: preserves current state, rejects answers while paused, and resumes safely", async () => {
+  const {
+    pauseInterview,
+    resumeInterview,
+    getActiveSessionForCandidate,
+  } = require("./interview");
+
+  const started = startInterview({ candidateId: "candidate-pause-test" });
+  assert.equal(started.question.id, "A2_NAME");
+
+  // Answer name
+  let res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Anjali Gupta",
+  });
+  assert.equal(res.body.question.id, "A0");
+
+  // Pause interview
+  const pauseRes = pauseInterview(started.sessionId);
+  assert.equal(pauseRes.status, 200);
+  assert.equal(pauseRes.body.sessionStatus, "paused");
+  assert.equal(pauseRes.body.question.id, "A0");
+  assert.equal(pauseRes.body.candidateName, "Anjali Gupta");
+
+  // Trying to submit an answer while paused is rejected
+  const answerWhilePaused = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan, main agree karti hoon",
+  });
+  assert.equal(answerWhilePaused.status, 409);
+  assert.equal(answerWhilePaused.body.code, "INTERVIEW_PAUSED");
+
+  // Check active session retrieval
+  const activeSession = getActiveSessionForCandidate("candidate-pause-test");
+  assert.ok(activeSession);
+  assert.equal(activeSession.sessionId, started.sessionId);
+  assert.equal(activeSession.status, "paused");
+  assert.equal(activeSession.question.id, "A0");
+
+  // Resume interview
+  const resumeRes = resumeInterview(started.sessionId);
+  assert.equal(resumeRes.status, 200);
+  assert.equal(resumeRes.body.sessionStatus, "in_progress");
+  assert.equal(resumeRes.body.isResumed, true);
+  assert.equal(resumeRes.body.question.id, "A0");
+
+  // Now submit answer after resume succeeds
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan, main agree karti hoon",
+  });
+  assert.equal(res.body.question.id, "A1");
+
+  // End interview after pause transitions to incomplete cleanly
+  const pauseAgain = pauseInterview(started.sessionId);
+  assert.equal(pauseAgain.status, 200);
+  const endRes = endInterview(started.sessionId);
+  assert.equal(endRes.body.sessionStatus, "incomplete");
+
+  // Cannot resume ended interview
+  const resumeEnded = resumeInterview(started.sessionId);
+  assert.equal(resumeEnded.status, 400);
+});
+
+test("Sanity Check: rejects gibberish names like 'habba jabba' and accepts valid names", async () => {
+  const started = startInterview();
+  assert.equal(started.question.id, "A2_NAME");
+
+  // 'habba jabba' must trigger clarification
+  let res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "habba jabba",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A2_NAME");
+
+  // Keyboard mash must trigger clarification
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "asdf qwerty",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A2_NAME");
+
+  // Real name is accepted
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Sunita Verma",
+  });
+  assert.equal(res.body.question.id, "A0");
+  assert.equal(res.body.candidateName, "Sunita Verma");
+});
+
+test("Sanity Check: rejects irrelevant answers on location question A1", async () => {
+  const started = startInterview();
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Meena",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan agree karti hoon",
+  });
+
+  // Irrelevant food answer on location question
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Mujhe biryani pasand hai",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A1");
+  assert.match(res.body.message, /area/i);
+});
+
+test("Sanity Check: evaluates contextual short answers appropriately", () => {
+  // In confirmation questions, 'haan' or 'yes' is sufficient
+  const confirmResult = fallbackInterpretation({
+    question: "Kya aap pedicure kar leti hain?",
+    answer: "Haan",
+  });
+  assert.equal(confirmResult.answerStatus, "sufficient");
+  assert.equal(confirmResult.needsClarification, false);
+
+  // In confirmation questions, 'no' is sufficient
+  const negativeResult = fallbackInterpretation({
+    question: "Kya aap bikini wax karti hain?",
+    answer: "Nahi",
+  });
+  assert.equal(negativeResult.answerStatus, "sufficient");
+  assert.equal(negativeResult.needsClarification, false);
+
+  // In open-ended household question, 'yes' alone is unclear
+  const openResult = fallbackInterpretation({
+    question: householdQuestion,
+    answer: "Haan",
+  });
+  assert.equal(openResult.needsClarification, true);
+
+  // Uncertainty 'not sure' needs clarification
+  const uncertainResult = fallbackInterpretation({
+    question: "Aap kab tak join kar sakti hain?",
+    answer: "Not sure",
+  });
+  assert.equal(uncertainResult.needsClarification, true);
+  assert.equal(uncertainResult.answerStatus, "unclear");
+});
+
+test("Contextual Follow-up: asks relevant probe when candidate is uncertain and captures follow-up", async () => {
+  const started = startInterview();
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Kavita",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Ji haan",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Koramangala, travel nahi kar sakti",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "26",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A3",
+    answer: "Ghar mein pati aur 1 bachcha hai",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A4",
+    answer: "4 saal ka hai",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A5",
+    answer: "Dadi sambhalti hain",
+  });
+
+  // Now on A6 (pregnancy/baby plan), candidate expresses uncertainty: "not sure"
+  const uncertainInterpretation = async () => ({
+    understanding: "Candidate expressed uncertainty about their future plans.",
+    answerStatus: "unclear",
+    needsClarification: true,
+    clarificationQuestion: "Agar abhi aap expecting hain to bata dijiye.",
+  });
+
+  const followUpRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A6",
+    answer: "Shayad, abhi confirm nahi hai",
+  }, { interpretAnswerImpl: uncertainInterpretation });
+
+  // A contextual follow-up probe is returned
+  assert.equal(followUpRes.body.followUpRequired, true);
+  assert.equal(followUpRes.body.question.id, "A6_FOLLOW_UP");
+
+  // Answering the follow-up clarifies and advances to next question A7
+  const answerFollowUpRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A6_FOLLOW_UP",
+    answer: "Abhi koi pregnancy plan nahi hai, bilkul ready hoon",
+  });
+
+  assert.equal(answerFollowUpRes.body.question.id, "A7");
+  assert.equal(answerFollowUpRes.body.followUpCaptured, true);
+
+  // Check that the follow-up is saved in the report
+  const report = getReport(started.sessionId);
+  const followUpInReport = report.body.report.answers.find(
+    (a) => a.questionId === "A6_FOLLOW_UP",
+  );
+  assert.ok(followUpInReport);
+  assert.equal(followUpInReport.isFollowUp, true);
+  assert.equal(followUpInReport.answer, "Abhi koi pregnancy plan nahi hai, bilkul ready hoon");
+});

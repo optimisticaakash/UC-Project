@@ -101,6 +101,45 @@ function fallbackInterpretation({ question, answer }) {
 
   const isLikelyIrrelevant = irrelevantPatterns.test(a) && !answerHasContext;
 
+  const isConfirmationQuestion =
+    /^(?:kya\s+aap|kya\s+tum|do\s+you|are\s+you|can\s+you|will\s+you|would\s+you|have\s+you)\b|\b(?:kar\s+sakti\s+hain|kar\s+sakte\s+ho|karti\s+hain|karengi|willing|ready|experience\s+hai|seekhna\s+chahti\s+hain|padh\s+leti\s+hain)\b/iu.test(q);
+
+  const isAffirmative =
+    /^(?:yes|yeah|yep|sure|haan|han|ji|ji\s+haan|ji\s+han|bilkul|ready|willing|thik\s+hai|theek\s+hai|हाँ|हां|जी|जी\s+हाँ|जी\s+हां|बिल्कुल)[.!?।\s]*$/iu.test(a);
+
+  const isNegative =
+    /^(?:no|nope|nahi|nahin|nhi|never|not\s+willing|not\s+ready|नहीं|नही)[.!?।\s]*$/iu.test(a);
+
+  const isUncertain =
+    /^(?:not\s+sure|unsure|pata\s+nahi|pata\s+nahin|don't\s+know|dont\s+know|maybe|shayad|no\s+idea|samajh\s+nahi\s+aaya|पता\s+नहीं|शायद)[.!?।\s]*$/iu.test(a);
+
+  if (isUncertain) {
+    return {
+      understanding: "Candidate expressed uncertainty or hesitance.",
+      answerStatus: "unclear",
+      needsClarification: true,
+      clarificationQuestion: "Kripya is baare mein thoda aur spasht batayein.",
+    };
+  }
+
+  if (isConfirmationQuestion && isAffirmative) {
+    return {
+      understanding: "Candidate gave a clear affirmative confirmation in context.",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      clarificationQuestion: "",
+    };
+  }
+
+  if (isConfirmationQuestion && isNegative) {
+    return {
+      understanding: "Candidate gave a clear negative response in context.",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      clarificationQuestion: "",
+    };
+  }
+
   if (words.length < 2) {
     return {
       understanding: "The answer is too short to understand clearly.",
@@ -153,6 +192,11 @@ You are an answer interpreter for a salon professional interview.
 Understand the candidate's answer only in the context of the question.
 Do not decide hiring eligibility, reject candidates, or assign scores.
 Do not invent information.
+
+Guidelines for evaluating answers:
+- Contextual evaluation: evaluate short answers like "yes", "no", "haan", "nahi" in the context of the question. If the question asks for confirmation, willingness, or experience, a clear affirmative or negative is "sufficient".
+- Irrelevant responses or gibberish (e.g. "habba jabba", food, random topics) must be marked as "irrelevant" with needsClarification true.
+- If the candidate expresses uncertainty (e.g. "not sure", "pata nahi", "maybe") or skips the question, mark as "unclear" with needsClarification true and ask a natural, polite follow-up.
 
 Return only valid JSON:
 {

@@ -142,6 +142,39 @@ function getSessionForPersistence(sessionId) {
   return sessions.get(sessionId) || null;
 }
 
+const KNOWN_NONSENSE_TOKENS = new Set([
+  "habba", "jabba", "bla", "blah", "asdf", "qwerty", "zxcv", "test", "testing",
+  "foo", "bar", "baz", "qux", "xyz", "abc", "na", "none", "unknown", "random",
+  "kuch", "bhi", "koi",
+]);
+
+function isSaneName(name) {
+  if (!name || typeof name !== "string") return false;
+  const cleaned = name.trim().toLowerCase();
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 4) return false;
+  if (tokens.every((t) => KNOWN_NONSENSE_TOKENS.has(t))) return false;
+  if (/\b(?:habba\s+jabba|jabba\s+habba|bla\s+bla|blah\s+blah)\b/iu.test(cleaned)) return false;
+  for (const t of tokens) {
+    if (/^[a-z]{3,}$/i.test(t) && !/[aeiouy]/i.test(t)) return false;
+  }
+  return true;
+}
+
+function getCurrentQuestionForSession(session) {
+  if (session.pendingFollowUp) {
+    const isProbe = session.pendingFollowUp.type === "contextual_probe";
+    const suffix = isProbe ? "FOLLOW_UP" : session.pendingFollowUp.type.toUpperCase();
+    return {
+      id: `${session.pendingFollowUp.questionId}_${suffix}`,
+      Step: `${session.pendingFollowUp.questionId}_${suffix}`,
+      text: session.pendingFollowUp.prompt,
+      category: session.pendingFollowUp.category || "Location & movement",
+    };
+  }
+  return questions[session.currentQuestionIndex] || null;
+}
+
 function classifyNameAnswer(answer) {
   if (typeof answer !== "string") {
     return { clear: false, format: "non_string" };
@@ -176,10 +209,10 @@ function classifyNameAnswer(answer) {
   // validating its token shape. Keep the full input anchored to avoid
   // accepting unrelated trailing sentences as a name.
   const introducedName = namePhrase.exec(normalized)?.[1];
-  if (introducedName && plainName.test(introducedName.trim())) {
+  if (introducedName && plainName.test(introducedName.trim()) && isSaneName(introducedName.trim())) {
     return { clear: true, format: "introduced_name", name: introducedName.trim() };
   }
-  if (!sentenceStarter.test(normalized) && plainName.test(normalized)) {
+  if (!sentenceStarter.test(normalized) && plainName.test(normalized) && isSaneName(normalized)) {
     return { clear: true, format: "plain_name", name: normalized };
   }
   return { clear: false, format: "unsupported_phrase" };
@@ -202,6 +235,18 @@ async function submitAnswer({
         success: false,
         code: "SESSION_NOT_FOUND",
         message: "Interview session not found.",
+      },
+    };
+  }
+
+  if (session.status === "paused") {
+    return {
+      status: 409,
+      body: {
+        success: false,
+        code: "INTERVIEW_PAUSED",
+        message: "Interview is paused. Please resume before submitting an answer.",
+        sessionStatus: "paused",
       },
     };
   }
@@ -247,28 +292,12 @@ async function submitAnswer({
     diagnosticSessionGeneration >= 0
       ? diagnosticSessionGeneration
       : null;
-  const currentBankQuestion = questions[session.currentQuestionIndex];
-  const currentQuestion = session.pendingFollowUp
-    ? {
-        id: `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`,
-        Step: `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`,
-        text: session.pendingFollowUp.prompt,
-        category: "Location & movement",
-      }
-    : currentBankQuestion || null;
+  const currentQuestion = getCurrentQuestionForSession(session);
   const currentQuestionId = currentQuestion?.id || null;
   const sessionKey = sessionId.slice(-8);
 
   function staleQuestionResponse() {
-    const latestBankQuestion = questions[session.currentQuestionIndex] || null;
-    const latestQuestion = session.pendingFollowUp
-      ? {
-          id: `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`,
-          Step: `${session.pendingFollowUp.questionId}_${session.pendingFollowUp.type.toUpperCase()}`,
-          text: session.pendingFollowUp.prompt,
-          category: "Location & movement",
-        }
-      : latestBankQuestion;
+    const latestQuestion = getCurrentQuestionForSession(session);
 
     return {
       status: 409,
@@ -582,6 +611,70 @@ async function submitAnswer({
           success: true,
           completed: false,
           manualReviewRequired: true,
+          followUpCaptured: true,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: questions[session.currentQuestionIndex],
+        },
+      };
+    }
+
+    if (pending.type === "contextual_probe") {
+      const isStillUnclear =
+        /^(?:pata\s+nahi|pata\s+nahin|not\s+sure|don't\s+know|dont\s+know|unsure|maybe|shayad|no\s+idea|samajh\s+nahi\s+aaya|skip|aage\s+badho|pass)[.!?\s]*$/i.test(
+          normalized,
+        );
+
+      session.answers.push({
+        questionId: `${pending.questionId}_FOLLOW_UP`,
+        parentQuestionId: pending.questionId,
+        questionText: pending.prompt,
+        category: pending.category || "General",
+        originalAnswer: pending.originalAnswer,
+        answer: followUpAnswer,
+        answeredAt: new Date().toISOString(),
+        isFollowUp: true,
+      });
+
+      if (isStillUnclear) {
+        session.manualChecks = session.manualChecks || [];
+        session.manualChecks.push({
+          questionId: pending.questionId,
+          outcome: "uncertain_after_followup",
+          originalAnswer: pending.originalAnswer,
+          followUpAnswer,
+          required: true,
+          createdAt: new Date().toISOString(),
+        });
+        session.manualReviewRequired = true;
+      }
+
+      session.pendingFollowUp = null;
+      advanceToNextApplicableQuestion(session);
+
+      if (session.currentQuestionIndex >= questions.length) {
+        session.status = "completed";
+        session.completedAt = new Date().toISOString();
+
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: true,
+            manualReviewRequired: Boolean(session.manualReviewRequired),
+            followUpCaptured: true,
+            answeredQuestions: session.answers.length,
+            totalQuestions: questions.length,
+          },
+        };
+      }
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          manualReviewRequired: Boolean(session.manualReviewRequired),
           followUpCaptured: true,
           questionNumber: session.currentQuestionIndex + 1,
           totalQuestions: questions.length,
@@ -921,6 +1014,100 @@ async function submitAnswer({
       answerRecord.interpretation = interpretation;
 
       if (interpretation.needsClarification) {
+        const isUncertainOrSkipped =
+          /^(?:not\s+sure|unsure|pata\s+nahi|pata\s+nahin|don't\s+know|dont\s+know|maybe|shayad|no\s+idea|samajh\s+nahi\s+aaya|skip|aage\s+badho|pass)[.!?।\s]*$/i.test(
+            cleanAnswer,
+          ) ||
+          /uncertain|hesitan|unsure|skip/i.test(interpretation.understanding);
+
+        const bankQ = questions[session.currentQuestionIndex];
+        const probe =
+          bankQ && bankQ["Follow-up probe"] && bankQ["Follow-up probe"] !== "—"
+            ? bankQ["Follow-up probe"]
+            : null;
+
+        session.followUpsGiven = session.followUpsGiven || {};
+        if (isUncertainOrSkipped && !session.followUpsGiven[question.id]) {
+          session.followUpsGiven[question.id] = true;
+          const probeText =
+            probe ||
+            interpretation.clarificationQuestion ||
+            "Aap is baare mein thoda aur spasht batayein.";
+          session.pendingFollowUp = {
+            questionId: question.id,
+            type: "contextual_probe",
+            prompt: probeText,
+            originalAnswer: cleanAnswer,
+            category: question.category,
+          };
+          return {
+            status: 200,
+            body: {
+              success: true,
+              completed: false,
+              clarificationRequired: true,
+              followUpRequired: true,
+              followUp: session.pendingFollowUp,
+              message: probeText,
+              questionNumber: session.currentQuestionIndex + 1,
+              totalQuestions: questions.length,
+              question: {
+                id: `${question.id}_FOLLOW_UP`,
+                Step: `${question.id}_FOLLOW_UP`,
+                text: probeText,
+                category: question.category,
+              },
+            },
+          };
+        }
+
+        session.clarificationAttempts = session.clarificationAttempts || {};
+        session.clarificationAttempts[question.id] =
+          (session.clarificationAttempts[question.id] || 0) + 1;
+
+        if (session.clarificationAttempts[question.id] >= 3) {
+          session.manualChecks = session.manualChecks || [];
+          session.manualChecks.push({
+            questionId: question.id,
+            outcome: "repeated_unclear_answers",
+            answer: cleanAnswer,
+            required: true,
+            createdAt: new Date().toISOString(),
+          });
+          session.manualReviewRequired = true;
+          answerRecord.manualReviewRequired = true;
+          answerRecord.manualReviewReason = "Repeated unclear answers";
+          session.answers.push(answerRecord);
+          advanceToNextApplicableQuestion(session);
+
+          if (session.currentQuestionIndex >= questions.length) {
+            session.status = "completed";
+            session.completedAt = new Date().toISOString();
+            return {
+              status: 200,
+              body: {
+                success: true,
+                completed: true,
+                manualReviewRequired: true,
+                answeredQuestions: session.answers.length,
+                totalQuestions: questions.length,
+              },
+            };
+          }
+
+          return {
+            status: 200,
+            body: {
+              success: true,
+              completed: false,
+              manualReviewRequired: true,
+              questionNumber: session.currentQuestionIndex + 1,
+              totalQuestions: questions.length,
+              question: questions[session.currentQuestionIndex],
+            },
+          };
+        }
+
         return {
           status: 200,
           body: {
@@ -1087,7 +1274,7 @@ function endInterview(sessionId) {
     };
   }
 
-  if (session.status === "in_progress") {
+  if (session.status === "in_progress" || session.status === "paused") {
     session.status = "incomplete";
     session.endedAt = new Date().toISOString();
   }
@@ -1104,6 +1291,96 @@ function endInterview(sessionId) {
       answeredQuestions: session.answers.length,
     },
   };
+}
+
+function pauseInterview(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return {
+      status: 404,
+      body: { success: false, message: "Interview session not found." },
+    };
+  }
+  if (session.status !== "in_progress") {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: "Only an active in-progress interview session can be paused.",
+        sessionStatus: session.status,
+      },
+    };
+  }
+  session.status = "paused";
+  session.pausedAt = new Date().toISOString();
+  return {
+    status: 200,
+    body: {
+      success: true,
+      sessionId: session.sessionId,
+      sessionStatus: "paused",
+      pausedAt: session.pausedAt,
+      questionNumber: session.currentQuestionIndex + 1,
+      totalQuestions: questions.length,
+      question: getCurrentQuestionForSession(session),
+      candidateName: session.candidateName || null,
+    },
+  };
+}
+
+function resumeInterview(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return {
+      status: 404,
+      body: { success: false, message: "Interview session not found." },
+    };
+  }
+  if (session.status !== "paused" && session.status !== "in_progress") {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: "This interview session cannot be resumed because it has already ended.",
+        sessionStatus: session.status,
+      },
+    };
+  }
+  if (session.status === "paused") {
+    session.status = "in_progress";
+    session.resumedAt = new Date().toISOString();
+  }
+  return {
+    status: 200,
+    body: {
+      success: true,
+      sessionId: session.sessionId,
+      sessionStatus: session.status,
+      questionNumber: session.currentQuestionIndex + 1,
+      totalQuestions: questions.length,
+      question: getCurrentQuestionForSession(session),
+      candidateName: session.candidateName || null,
+      isResumed: true,
+    },
+  };
+}
+
+function getActiveSessionForCandidate(candidateId) {
+  if (!candidateId) return null;
+  for (const session of sessions.values()) {
+    if (session.candidateId === candidateId && (session.status === "in_progress" || session.status === "paused")) {
+      return {
+        sessionId: session.sessionId,
+        status: session.status,
+        questionNumber: session.currentQuestionIndex + 1,
+        totalQuestions: questions.length,
+        question: getCurrentQuestionForSession(session),
+        candidateName: session.candidateName || null,
+        answersCount: session.answers?.length || 0,
+      };
+    }
+  }
+  return null;
 }
 
 function getReport(sessionId) {
@@ -1205,4 +1482,8 @@ module.exports = {
   restoreSessionSnapshot,
   restoreSessions,
   getSessionForPersistence,
+  pauseInterview,
+  resumeInterview,
+  getActiveSessionForCandidate,
+  getCurrentQuestionForSession,
 };
