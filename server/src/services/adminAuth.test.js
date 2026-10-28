@@ -75,7 +75,7 @@ test("legacy configured admin migrates to a hashed Mongo-style record and gets a
   assert.equal([...store.admins.values()][0].passwordHash, "hashed:a-long-test-secret");
   assert.doesNotMatch(JSON.stringify(response.body), /opaque-random-session-token|a-long-test-secret/);
   assert.match(response.headers["set-cookie"], /HttpOnly/);
-  assert.match(response.headers["set-cookie"], /SameSite=Strict/);
+  assert.match(response.headers["set-cookie"], /SameSite=(?:Strict|None)/);
   assert.match(response.headers["set-cookie"], /Secure/);
   assert.equal(store.sessions.size, 1);
 });

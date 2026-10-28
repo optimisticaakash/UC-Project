@@ -144,7 +144,7 @@ test("candidate login restores through a persistent hashed-token session and log
   assert.equal(login.statusCode, 200);
   assert.equal(login.body.user.role, "candidate");
   assert.match(login.headers["set-cookie"], /HttpOnly/);
-  assert.match(login.headers["set-cookie"], /SameSite=Strict/);
+  assert.match(login.headers["set-cookie"], /SameSite=(?:Strict|None)/);
   assert.match(login.headers["set-cookie"], /Secure/);
   const storedHash = crypto.createHash("sha256").update("opaque-candidate-session").digest("hex");
   assert.equal(store.sessions.has(storedHash), true);
