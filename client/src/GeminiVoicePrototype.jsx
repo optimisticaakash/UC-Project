@@ -21,6 +21,8 @@ const {
   isInterviewActive,
   startingRef,
   start,
+  pause,
+  resume,
   stop,
 } = useGeminiLiveInterview();
   const interviewTerminal = isTerminalInterviewState(interviewLifecycle);
@@ -66,9 +68,12 @@ const {
       {/* Interview controls */}
       {!interviewTerminal && <InterviewControls
         start={start}
+        pause={pause}
+        resume={resume}
         stop={stop}
         startingRef={startingRef}
         isInterviewActive={isInterviewActive}
+        isPaused={interviewLifecycle === "paused"}
         lifecycleBusy={lifecycleBusy}
       />}
     </main>

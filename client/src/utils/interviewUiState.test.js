@@ -72,3 +72,13 @@ test("pre-interview state displays introductory placeholder rather than initial 
     "Namaste ji, sabse pehle aap apna naam bataiye.",
   );
 });
+
+test("interview paused state is non-terminal and has friendly status and recovery messaging", () => {
+  assert.equal(getInterviewUiModel({ lifecycle: "paused" }).statusLabel, "Interview paused");
+  assert.equal(isTerminalInterviewState("paused"), false);
+  assert.equal(getInterviewUiModel({ lifecycle: "paused" }).voiceLabel, null);
+  assert.equal(
+    getCandidateSafeError("The connection was interrupted. Your progress is saved. Click Resume Interview to continue."),
+    "The connection was interrupted. Your progress is saved. Click Resume Interview to continue.",
+  );
+});

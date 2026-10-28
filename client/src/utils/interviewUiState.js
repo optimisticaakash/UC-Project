@@ -2,6 +2,7 @@ const UI_STATES = {
   ready: { statusLabel: "Ready to start", terminal: false },
   starting: { statusLabel: "Starting interview...", terminal: false },
   in_progress: { statusLabel: "Interview in progress", terminal: false },
+  paused: { statusLabel: "Interview paused", terminal: false },
   ending: { statusLabel: "Ending interview...", terminal: false },
   completed: { statusLabel: "Interview completed", terminal: true },
   ended: { statusLabel: "Interview ended", terminal: true },
@@ -20,9 +21,12 @@ const SAFE_CANDIDATE_ERRORS = new Set([
   "I couldn't hear you. Please continue speaking or try again.",
   "Sorry, the connection was interrupted. Please restart the interview.",
   "Sorry, the connection closed. Please restart the interview.",
+  "The connection was interrupted. Your progress is saved. Click Resume Interview to continue.",
   "Microphone permission is needed. Please allow access and try again.",
   "Sorry, the interview couldn't start. Please check your connection and try again.",
   "I couldn't confirm that the interview ended. Please contact support.",
+  "Sorry, the interview couldn't be paused. Please try again.",
+  "Sorry, the interview couldn't be resumed. Please try again.",
 ]);
 
 export function getCandidateVisibleQuestion(currentQuestion) {

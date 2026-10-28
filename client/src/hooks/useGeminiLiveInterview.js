@@ -112,6 +112,32 @@ export function useGeminiLiveInterview() {
 
   useEffect(() => {
     mountedRef.current = true;
+    (async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/interview/active`, {
+          credentials: "include",
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data?.success && data.activeSession && mountedRef.current) {
+            const active = data.activeSession;
+            interviewSessionIdRef.current = active.sessionId;
+            currentQuestionIdRef.current = active.question?.id || null;
+            setCurrentQuestion(active.question?.text || "");
+            activePromptRef.current = active.question?.text
+              ? {
+                  questionId: active.question.id || null,
+                  text: active.question.text,
+                  clarificationRequired: false,
+                }
+              : null;
+            setInterviewLifecycle("paused");
+          }
+        }
+      } catch {
+        // Silently continue if unauthenticated or network unavailable
+      }
+    })();
     return () => {
       mountedRef.current = false;
       liveGenerationRef.current += 1;
@@ -753,14 +779,14 @@ export function useGeminiLiveInterview() {
     tick();
   }
 
-  async function start() {
+  async function startOrResume(isResume = false) {
     if (startingRef.current || connectedRef.current) return;
     clearAnswerSettleTimer();
     clearNoSpeechTimer();
 
     const generation = ++liveGenerationRef.current;
     setInterviewLifecycle("starting");
-    setCurrentQuestion("");
+    if (!isResume) setCurrentQuestion("");
     setIsInterviewActive(false);
     setIsProcessingAnswer(false);
     setPreparingResponse(false);
@@ -793,13 +819,21 @@ export function useGeminiLiveInterview() {
       }
       liveToken = tokenData.token;
 
-      // Start the official Urban Company interview session
-      const interviewResponse = await fetch(`${API_URL}/api/interview/start`, {
+      // Start or Resume the official Urban Company interview session
+      const interviewEndpoint = isResume
+        ? `${API_URL}/api/interview/resume`
+        : `${API_URL}/api/interview/start`;
+      const interviewBody = isResume && interviewSessionIdRef.current
+        ? JSON.stringify({ sessionId: interviewSessionIdRef.current })
+        : JSON.stringify({});
+
+      const interviewResponse = await fetch(interviewEndpoint, {
         method: "POST",
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
+        body: interviewBody,
       });
 
       const interviewData = await interviewResponse.json();
@@ -810,7 +844,7 @@ export function useGeminiLiveInterview() {
       }
       if (!interviewResponse.ok || !interviewData.success) {
         throw new Error(
-          interviewData.message || "Interview session start nahi hua.",
+          interviewData.message || (isResume ? "Interview session resume nahi hua." : "Interview session start nahi hua."),
         );
       }
 
@@ -1211,8 +1245,13 @@ export function useGeminiLiveInterview() {
           );
           console.error("[Gemini Live] Error:", messageText);
           void stop("connection_error").finally(() => {
-            setError("Sorry, the connection was interrupted. Please restart the interview.");
-            setInterviewLifecycle("error");
+            if (interviewSessionIdRef.current) {
+              setInterviewLifecycle("paused");
+              setError("The connection was interrupted. Your progress is saved. Click Resume Interview to continue.");
+            } else {
+              setError("Sorry, the connection was interrupted. Please restart the interview.");
+              setInterviewLifecycle("error");
+            }
           });
         },
 
@@ -1224,8 +1263,13 @@ export function useGeminiLiveInterview() {
           connectedRef.current = false;
           setIsInterviewActive(false);
           setPreparingResponse(false);
-          setInterviewLifecycle("error");
-          setError("Sorry, the connection closed. Please restart the interview.");
+          if (interviewSessionIdRef.current) {
+            setInterviewLifecycle("paused");
+            setError("The connection was interrupted. Your progress is saved. Click Resume Interview to continue.");
+          } else {
+            setInterviewLifecycle("error");
+            setError("Sorry, the connection closed. Please restart the interview.");
+          }
           diagnostic("live_connection_closed", {
             scheduledSources: playbackSourcesRef.current.size,
           });
@@ -1298,26 +1342,30 @@ export function useGeminiLiveInterview() {
         promptTurn: promptTurnRef.current,
         sentAt: initialPromptSentAt,
       };
+      const promptType = isResume ? "question_handoff" : "initial_question";
       diagnostic("prompt_handoff_started", {
-        promptType: "initial_question",
+        promptType,
         promptChars: interviewData.question.text.length,
       });
       try {
+        const promptText = isResume
+          ? buildQuestionHandoffPrompt(interviewData.question.text, interviewData.candidateName)
+          : buildInitialQuestionPrompt(interviewData.question.text);
         session.sendClientContent({
-        turns: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: buildInitialQuestionPrompt(interviewData.question.text),
-              },
-            ],
-          },
-        ],
-        turnComplete: true,
+          turns: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: promptText,
+                },
+              ],
+            },
+          ],
+          turnComplete: true,
         });
         diagnostic("prompt_handoff_sent", {
-          promptType: "initial_question",
+          promptType,
           sendCallElapsedMs: Number((performance.now() - initialPromptSentAt).toFixed(1)),
         });
       } catch (err) {
@@ -1335,15 +1383,103 @@ export function useGeminiLiveInterview() {
         err,
         "Voice connection start nahi ho paaya.",
       );
-      console.error("[Gemini Live] Start failed:", messageText);
-      setInterviewLifecycle("error");
+      console.error("[Gemini Live] Start/Resume failed:", messageText);
+      setInterviewLifecycle(isResume ? "paused" : "error");
       setPreparingResponse(false);
       setError(err?.name === "NotAllowedError" || err?.name === "SecurityError"
         ? "Microphone permission is needed. Please allow access and try again."
-        : "Sorry, the interview couldn't start. Please check your connection and try again.");
+        : isResume
+          ? "Sorry, the interview couldn't be resumed. Please try again."
+          : "Sorry, the interview couldn't start. Please check your connection and try again.");
       await stop("start_failure");
     } finally {
       startingRef.current = false;
+    }
+  }
+
+  async function start() {
+    return startOrResume(false);
+  }
+
+  async function resume() {
+    return startOrResume(true);
+  }
+
+  async function pause() {
+    if (stoppingRef.current) return;
+    const sessionId = interviewSessionIdRef.current;
+    if (sessionId) {
+      try {
+        await fetch(`${API_URL}/api/interview/pause`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+        });
+      } catch (err) {
+        console.warn("[Interview] Pause endpoint warning:", err);
+      }
+    }
+
+    answerRequestRef.current?.cancel("interview_paused");
+    cancelPendingWaitAnnouncement("interview_paused");
+    clearAnswerSettleTimer();
+    clearNoSpeechTimer();
+    clearPreparingResponseTimer();
+    liveGenerationRef.current += 1;
+    connectedRef.current = false;
+    authorizedModelTurnRef.current = false;
+    setIsInterviewActive(false);
+    setIsProcessingAnswer(false);
+    setPreparingResponse(false);
+
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    for (const source of playbackSourcesRef.current) {
+      try {
+        source.stop();
+      } catch {}
+    }
+    playbackQueueRef.current.cancelAll("session_paused");
+    playbackSourcesRef.current.clear();
+
+    if (processorRef.current) {
+      processorRef.current.onaudioprocess = null;
+      try {
+        processorRef.current.disconnect();
+      } catch {}
+    }
+
+    try {
+      micSourceRef.current?.disconnect();
+      outputAnalyserRef.current?.disconnect();
+      outputGainRef.current?.disconnect();
+      micMuteGainRef.current?.disconnect();
+      sessionRef.current?.close();
+      micStreamRef.current?.getTracks().forEach((track) => track.stop());
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        await audioContextRef.current.close();
+      }
+    } catch {}
+
+    sessionRef.current = null;
+    audioContextRef.current = null;
+    micStreamRef.current = null;
+    micSourceRef.current = null;
+    processorRef.current = null;
+    micMuteGainRef.current = null;
+    outputAnalyserRef.current = null;
+    outputGainRef.current = null;
+    nextPlayTimeRef.current = 0;
+    inputTurnRef.current.reset();
+
+    setAudioLevel(0);
+    setSpeakingState(false, "pause_cleanup");
+    if (mountedRef.current) {
+      setInterviewLifecycle("paused");
     }
   }
 
@@ -1471,6 +1607,8 @@ export function useGeminiLiveInterview() {
     isInterviewActive,
     startingRef,
     start,
+    pause,
+    resume,
     stop,
   };
 }
