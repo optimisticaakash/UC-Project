@@ -302,3 +302,81 @@ test("candidate account deletion is a recoverable sign-in tombstone and retains 
   assert.equal((await invoke(auth.login, { body: { loginIdentifier: "candidate@example.test", password: "valid-password" }, ip: "deleted-candidate-login" })).statusCode, 401);
   assert.equal((await invoke(auth.deleteAccount, { params: { candidateId } })).statusCode, 404);
 });
+
+test("candidate login in local development sets SameSite=Lax without Secure for local HTTP cookie acceptance", async () => {
+  const store = fakeStore();
+  const candidateId = "66666666-6666-4666-8666-666666666666";
+  store.candidates.set(candidateId, {
+    candidateId,
+    name: "Local Candidate",
+    loginIdentifier: "local.cand@example.test",
+    passwordHash: "hashed:local-secret",
+    active: true,
+  });
+
+  const auth = createCandidateAuth({
+    store,
+    passwordVerifier: async (password, hash) => hash === `hashed:${password}`,
+    isProduction: () => false,
+    tokenFactory: () => "local-dev-candidate-token",
+  });
+
+  const response = await invoke(auth.login, {
+    body: { loginIdentifier: "local.cand@example.test", password: "local-secret" },
+    ip: "127.0.0.1",
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.user.role, "candidate");
+  const cookieHeader = response.headers["set-cookie"];
+  assert.match(cookieHeader, /HttpOnly/);
+  assert.match(cookieHeader, /SameSite=Lax/);
+  assert.doesNotMatch(cookieHeader, /Secure/);
+
+  // Extract cookie and verify requireCandidate
+  const match = cookieHeader.match(/uc_candidate_session=([^;]+)/);
+  assert.ok(match);
+  const token = match[1];
+
+  const req = { headers: { cookie: `uc_candidate_session=${token}` } };
+  const guard = await invoke(auth.requireCandidate, req);
+  assert.equal(guard.nextCalled, true);
+  assert.equal(req.candidate.candidateId, candidateId);
+  assert.equal(req.candidate.role, "candidate");
+});
+
+test("candidate session validation rejects unauthenticated, expired, and wrong-role requests", async () => {
+  const store = fakeStore();
+  const auth = createCandidateAuth({ store });
+
+  // Missing cookie
+  const unauth = await invoke(auth.requireCandidate, { headers: {} });
+  assert.equal(unauth.statusCode, 401);
+  assert.equal(unauth.body.success, false);
+
+  // Expired session
+  const expiredHash = crypto.createHash("sha256").update("expired-token").digest("hex");
+  store.sessions.set(expiredHash, {
+    tokenHash: expiredHash,
+    role: "candidate",
+    principalId: "any-cand-id",
+    expiresAt: new Date(Date.now() - 10000), // past
+  });
+  const expired = await invoke(auth.requireCandidate, {
+    headers: { cookie: "uc_candidate_session=expired-token" },
+  });
+  assert.equal(expired.statusCode, 401);
+
+  // Admin session passed to candidate route
+  const adminHash = crypto.createHash("sha256").update("admin-session-token").digest("hex");
+  store.sessions.set(adminHash, {
+    tokenHash: adminHash,
+    role: "admin",
+    principalId: "admin-id",
+    expiresAt: new Date(Date.now() + 60000),
+  });
+  const wrongRole = await invoke(auth.requireCandidate, {
+    headers: { cookie: "uc_candidate_session=admin-session-token" },
+  });
+  assert.equal(wrongRole.statusCode, 403);
+});

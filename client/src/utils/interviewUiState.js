@@ -8,6 +8,7 @@ const UI_STATES = {
   ended: { statusLabel: "Interview ended", terminal: true },
   manual_review: { statusLabel: "Manual review required", terminal: true },
   rejected: { statusLabel: "Interview ended", terminal: true },
+  terminated: { statusLabel: "Interview terminated", terminal: true },
   end_unconfirmed: { statusLabel: "Interview status unavailable", terminal: true },
   error: { statusLabel: "Interview paused", terminal: false },
 };
@@ -47,7 +48,9 @@ export function resolveTerminalInterviewState({
   sessionStatus = null,
   manualReviewRequired = false,
   eligibilityOutcome = null,
+  terminated = false,
 } = {}) {
+  if (terminated || sessionStatus === "terminated") return "terminated";
   if (manualReviewRequired || sessionStatus === "manual_review") return "manual_review";
   if (eligibilityOutcome === "reject" || sessionStatus === "rejected") return "rejected";
   if (completed || sessionStatus === "completed") return "completed";
@@ -79,4 +82,16 @@ export function getInterviewUiModel({
 }
 
 export const WAITING_STATUS = "Preparing next question...";
+
+export function canResumeSession(session) {
+  return Boolean(
+    session &&
+      session.sessionId &&
+      (session.status === "in_progress" || session.status === "paused")
+  );
+}
+
+export function shouldDisplayInterviewView({ isInterviewOpen = false } = {}) {
+  return Boolean(isInterviewOpen);
+}
 

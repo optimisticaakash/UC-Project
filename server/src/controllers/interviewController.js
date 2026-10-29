@@ -3,7 +3,16 @@ const { persistence } = require("../services/persistence");
 const { isDeepStrictEqual } = require("node:util");
 const crypto = require("node:crypto");
 const { generateInterviewReportPdf, getReportPdfHash } = require("../services/reportPdf");
-const { syncAnswerToSheet } = require("../services/googleSheetsService");
+const {
+  syncAnswerToSheet,
+  syncSessionSummaryToSheet,
+  readSheetRows,
+  formatRow,
+  formatAnswerRow,
+  formatScreeningRow,
+  resolveCandidateName,
+  isConfigured,
+} = require("../services/googleSheetsService");
 const reportPdfJobs = new Map();
 
 const sessionWrites = new Map();
@@ -62,6 +71,7 @@ function serializeSessionWrite(sessionId, operation) {
 
 function classifyDiagnosticResponse(status, body) {
   if (status >= 400 || !body.success) return "error";
+  if (body.terminated || body.sessionStatus === "terminated") return "terminated";
   if (body.completed && body.manualReviewRequired) return "manual_review_terminal";
   if (body.completed && body.eligibilityOutcome === "reject") return "rejected_terminal";
   if (body.completed) return "completed_terminal";
@@ -152,11 +162,28 @@ function persistenceUnavailable(res) {
   });
 }
 
+async function resolveActiveSessionForCandidate(candidateId) {
+  if (!candidateId) return null;
+  let active = interviewService.getActiveSessionForCandidate(candidateId);
+  if (!active && persistence.isConnected()) {
+    const storedSessions = await persistence.listSessionsByCandidate(candidateId);
+    const activeStored = storedSessions.find(
+      (s) => s.status === "in_progress" || s.status === "paused",
+    );
+    if (activeStored) {
+      ensureSessionLoaded(activeStored);
+      active = interviewService.getActiveSessionForCandidate(candidateId);
+    }
+  }
+  return active;
+}
+
 async function startInterview(req, res) {
   let started;
   try {
+    const candidateId = req.candidate?.candidateId;
     started = interviewService.startInterview({
-      candidateId: req.candidate?.candidateId,
+      candidateId,
     });
     try {
       await persistence.saveSession(interviewService.getSessionForPersistence(started.sessionId));
@@ -232,6 +259,9 @@ async function submitAnswerUnlocked(req, res) {
     });
 
     const sessionId = req.body?.sessionId;
+    const sessionBefore = interviewService.getSessionForPersistence(sessionId);
+    const prevAnswersCount = sessionBefore?.answers?.length || 0;
+
     const result = await persistMutation(sessionId, () =>
       interviewService.submitAnswer(req.body || {}),
     );
@@ -295,15 +325,21 @@ async function submitAnswerUnlocked(req, res) {
 
     if (result.status < 400) {
       const liveSession = interviewService.getSessionForPersistence(sessionId);
-      const lastAnswer = liveSession?.answers?.[liveSession.answers.length - 1];
-      if (lastAnswer) {
-        void syncAnswerToSheet({
-          session: liveSession,
-          answerRecord: lastAnswer,
-          candidateName: liveSession.candidateName,
-        }).catch((syncErr) => {
-          console.error("Google Sheets async sync error:", syncErr?.name || "Error");
-        });
+      const currentAnswersCount = liveSession?.answers?.length || 0;
+      if (currentAnswersCount > prevAnswersCount) {
+        for (let i = prevAnswersCount; i < currentAnswersCount; i++) {
+          const newAnswer = liveSession.answers[i];
+          if (newAnswer) {
+            void syncAnswerToSheet({
+              session: liveSession,
+              answerRecord: newAnswer,
+              candidateName: req.candidate?.candidateId === liveSession.candidateId ? req.candidate?.name : undefined,
+              persistenceImpl: persistence,
+            }).catch((syncErr) => {
+              console.error("Google Sheets async sync error:", syncErr?.name || "Error");
+            });
+          }
+        }
       }
     }
 
@@ -425,6 +461,41 @@ async function listReports(req, res) {
   }
 }
 
+async function deleteReport(req, res) {
+  try {
+    if (!persistence.isConnected()) return persistenceUnavailable(res);
+    const sessionId = req.params.sessionId;
+    if (!sessionId || typeof sessionId !== "string") {
+      return res.status(400).json({ success: false, message: "A valid session ID is required." });
+    }
+    const storedSession = await persistence.findSessionById(sessionId);
+    const inMemorySession = interviewService.getSessionForPersistence(sessionId);
+
+    if (!storedSession && !inMemorySession) {
+      return res.status(404).json({
+        success: false,
+        message: "Interview report not found.",
+      });
+    }
+
+    await persistence.deleteSession(sessionId);
+    interviewService.deleteReport(sessionId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Interview report deleted successfully.",
+      sessionId,
+    });
+  } catch (error) {
+    console.error("Delete report error:", error?.name || "Error");
+    if (error?.name?.startsWith("Mongo") || !persistence.isConnected()) return persistenceUnavailable(res);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to delete the interview report.",
+    });
+  }
+}
+
 async function getAdminStats(req, res) {
   try {
     if (!persistence.isConnected()) return persistenceUnavailable(res);
@@ -504,6 +575,16 @@ async function endInterview(req, res) {
     }
     const result = await persistMutation(sessionId, () => interviewService.endInterview(sessionId));
     if (result.status < 400 && result.body?.sessionStatus && result.body.sessionStatus !== "in_progress") {
+      const liveSession = interviewService.getSessionForPersistence(sessionId);
+      if (liveSession) {
+        void syncSessionSummaryToSheet({
+          session: liveSession,
+          candidateName: req.candidate?.candidateId === liveSession.candidateId ? req.candidate?.name : undefined,
+          persistenceImpl: persistence,
+        }).catch((syncErr) => {
+          console.error("Google Sheets async summary error:", syncErr?.name || "Error");
+        });
+      }
       await generateAndPersistReportPdf(sessionId).catch((error) => {
         console.error("Final report PDF generation failed:", error?.name || "Error", error?.code || null);
       });
@@ -622,21 +703,122 @@ async function getActiveSession(req, res) {
     if (!candidateId) {
       return res.status(400).json({ success: false, message: "Candidate ID required." });
     }
-    let active = interviewService.getActiveSessionForCandidate(candidateId);
-    if (!active && persistence.isConnected()) {
-      const storedSessions = await persistence.listSessionsByCandidate(candidateId);
-      const activeStored = storedSessions.find(
-        (s) => s.status === "in_progress" || s.status === "paused",
-      );
-      if (activeStored) {
-        ensureSessionLoaded(activeStored);
-        active = interviewService.getActiveSessionForCandidate(candidateId);
-      }
-    }
+    const active = await resolveActiveSessionForCandidate(candidateId);
     return res.status(200).json({ success: true, activeSession: active || null });
   } catch (error) {
     console.error("Get active session error:", error?.name || "Error");
     return res.status(500).json({ success: false, message: "Unable to check active session." });
+  }
+}
+
+async function getResponses(req, res) {
+  try {
+    const sheetId = process.env.GOOGLE_SHEET_ID;
+    const sheetUrl = sheetId
+      ? `https://docs.google.com/spreadsheets/d/${sheetId}/edit`
+      : "https://docs.google.com/spreadsheets/d/1N4_FZJMovlwRxtN1HvSGsAhbAmi1GaX1KKqrpZGE-58/edit";
+
+    let sheetData = null;
+    if (isConfigured()) {
+      try {
+        const sheetResult = await readSheetRows();
+        if (sheetResult.success && Array.isArray(sheetResult.rows)) {
+          sheetData = sheetResult.rows;
+        }
+      } catch (err) {
+        console.warn("[UC Responses] Google Sheets read failed, falling back to MongoDB:", err?.name || "Error");
+      }
+    }
+
+    if (sheetData !== null) {
+      return res.status(200).json({
+        success: true,
+        source: "google_sheets",
+        sheetUrl,
+        responses: sheetData,
+        rows: sheetData,
+        total: sheetData.length,
+      });
+    }
+
+    // Fallback: Aggregate from MongoDB sessions
+    let sessions = [];
+    if (persistence.isConnected()) {
+      try {
+        sessions = await persistence.loadSessions();
+      } catch (err) {
+        console.warn("[UC Responses] Failed to load sessions from persistence:", err?.name);
+      }
+    }
+
+    if (!sessions || sessions.length === 0) {
+      sessions = typeof interviewService.getAllSessions === "function" ? interviewService.getAllSessions() : [];
+    }
+
+    let candidateMap = new Map();
+    if (persistence.isConnected()) {
+      try {
+        const candidates = await persistence.listCandidates();
+        candidateMap = new Map(candidates.map((c) => [c.candidateId, c.name]));
+      } catch {}
+    }
+
+    const rows = [];
+    for (const session of sessions) {
+      const candidateName =
+        candidateMap.get(session.candidateId) ||
+        "Unresolved candidate (needs review)";
+
+      const answers = Array.isArray(session.answers) ? session.answers : [];
+      for (const answerRecord of answers) {
+        const ansRow = formatAnswerRow({
+          session,
+          answerRecord,
+          candidateName,
+          reportId: session.reportId || session.sessionId,
+        });
+
+        rows.push({
+          sessionId: session.sessionId,
+          reportId: session.reportId || session.sessionId,
+          candidateId: session.candidateId || "N/A",
+          candidateName,
+          questionId: answerRecord.questionId,
+          question: ansRow[3],
+          officialQuestion: answerRecord.questionText || ansRow[3],
+          candidateResponse: ansRow[4],
+          whatSheSaid: ansRow[4],
+          bucket: ansRow[5],
+          result: ansRow[6],
+          correct: ansRow[7],
+          keyQuote: ansRow[8],
+          interpretedStatus: ansRow[6] || "recorded",
+          followUps: answerRecord.followUpAnswer ? `Follow-up: ${answerRecord.followUpAnswer}` : "None",
+          validationResult: ansRow[6] || "recorded",
+          manualReviewRequired: session.manualReviewRequired ? "Yes" : "No",
+          interviewStatus: session.status || "in_progress",
+          timestamp: ansRow[0],
+          reportReference: `/api/interview/${session.sessionId}/report`,
+        });
+      }
+    }
+
+    rows.sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+
+    return res.status(200).json({
+      success: true,
+      source: "mongodb",
+      sheetUrl,
+      responses: rows,
+      rows,
+      total: rows.length,
+    });
+  } catch (error) {
+    console.error("Get responses error:", error?.name || "Error");
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve interview responses.",
+    });
   }
 }
 
@@ -646,6 +828,7 @@ module.exports = {
   getReport,
   downloadReportPdf,
   listReports,
+  deleteReport,
   getAdminStats,
   listCandidateInterviews,
   listCandidateInterviewsForCurrentUser,
@@ -655,4 +838,5 @@ module.exports = {
   getActiveSession,
   interpretCandidateAnswer,
   flagManualReview,
+  getResponses,
 };

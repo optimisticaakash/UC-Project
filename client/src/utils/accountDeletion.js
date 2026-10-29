@@ -17,3 +17,9 @@ export function getCandidateStatusAction(candidate) {
   if (candidate?.deletedAt) return "removed";
   return candidate?.active ? "deactivate" : "activate";
 }
+
+export function getReportDeletionConfirmation(session) {
+  if (!session?.sessionId) return null;
+  const candidate = session.candidateName ? `for ${session.candidateName}` : "";
+  return `Delete interview report ${candidate} (Session ID: ${session.sessionId})? This report and its recorded answers will be permanently deleted. This action cannot be undone.`.replace(/\s+/g, " ");
+}

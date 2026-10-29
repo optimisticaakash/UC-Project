@@ -370,6 +370,21 @@ function createPersistence({
       return record?.state || null;
     },
 
+    async deleteSession(sessionId) {
+      if (!this.isConnected()) throw new Error("MongoDB interview storage is not connected.");
+      if (!sessionId || typeof sessionId !== "string") return false;
+      const record = await sessionModel.findOne({ sessionId }, { state: 1 }).lean();
+      if (!record) return false;
+      if (connection.db && record.state?.reportPdfRef?.fileId) {
+        try {
+          const bucket = gridFsBucketFactory(connection.db);
+          await bucket.delete(new mongoose.Types.ObjectId(record.state.reportPdfRef.fileId)).catch(() => {});
+        } catch {}
+      }
+      const result = await sessionModel.deleteOne({ sessionId });
+      return result.deletedCount > 0;
+    },
+
     async getOrCreateReportPdf({ sessionId, reportHash, filename, generatePdf }) {
       if (!this.isConnected() || !connection.db) throw new Error("MongoDB report storage is not connected.");
       const writeKey = `${sessionId}:${reportHash}`;

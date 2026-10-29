@@ -15,12 +15,33 @@ export function resolvePromptHandoff(status, data) {
 
   if (!prompt) return null;
 
-  return {
+  const handoff = {
     questionId: data.question?.id || data.currentQuestionId || null,
     prompt,
     clarificationRequired,
     staleRecovery,
   };
+
+  if (data.warningLevel !== undefined && data.warningLevel !== null) {
+    handoff.warningLevel = data.warningLevel;
+  }
+  if (data.warning !== undefined) {
+    handoff.warning = Boolean(data.warning);
+  }
+  if (data.warningMessage) {
+    handoff.warningMessage = data.warningMessage;
+  }
+  if (data.repeatedQuestionText) {
+    handoff.repeatedQuestionText = data.repeatedQuestionText;
+  }
+  if (data.language) {
+    handoff.language = data.language;
+  }
+  if (data.acknowledgement) {
+    handoff.acknowledgement = data.acknowledgement;
+  }
+
+  return handoff;
 }
 
 export async function recoverMissingPrompt({

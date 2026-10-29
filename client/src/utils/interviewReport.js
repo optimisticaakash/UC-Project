@@ -1,10 +1,11 @@
-const FINAL_STATUSES = new Set(["completed", "incomplete", "manual_review", "rejected"]);
+const FINAL_STATUSES = new Set(["completed", "incomplete", "manual_review", "rejected", "terminated"]);
 
 const STATUS_LABELS = {
   completed: "Interview completed",
   incomplete: "Interview ended before completion",
   manual_review: "Manual review required",
   rejected: "Interview ended with an eligibility outcome",
+  terminated: "Interview terminated",
   in_progress: "Interview in progress",
 };
 
@@ -30,6 +31,8 @@ export function createInterviewReportView(report) {
       : 0,
     manualReviewRequired: Boolean(report.manualReviewRequired),
     manualReviewReason: report.manualReviewReason || null,
+    terminationReason: report.terminationReason || null,
+    terminatedAtQuestionId: report.terminatedAtQuestionId || null,
     consentOutcome: report.consentOutcome || null,
     eligibilityOutcome: report.eligibilityOutcome || null,
     locationOutcome: report.locationOutcome || null,

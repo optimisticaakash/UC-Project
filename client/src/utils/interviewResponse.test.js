@@ -217,3 +217,90 @@ test("client prompt handoff delivers exact screening question sequence into work
   assert.equal(deliveredQuestionIds[deliveredQuestionIds.length - 1], "B2");
   assert.equal(deliveredQuestionIds.indexOf("B2"), 17);
 });
+
+test("warning level 1 invalid answer response preserves warningLevel, message, and repeated question", () => {
+  const qText = "Namaste ji, sabse pehle aap apna naam bataiye.";
+  const spokenMessage =
+    `Maaf kijiye, mujhe aapka naam samajh nahi aaya. Kripya apna naam seedhe batayein: ${qText}`;
+  const handoff = resolvePromptHandoff(200, {
+    success: true,
+    completed: false,
+    clarificationRequired: true,
+    warningLevel: 1,
+    warning: false,
+    warningMessage: "Maaf kijiye, mujhe aapka naam samajh nahi aaya. Kripya apna naam seedhe batayein",
+    repeatedQuestionText: qText,
+    message: spokenMessage,
+    question: { id: "A2_NAME", text: qText },
+  });
+
+  assert.deepEqual(handoff, {
+    questionId: "A2_NAME",
+    prompt: spokenMessage,
+    clarificationRequired: true,
+    staleRecovery: false,
+    warningLevel: 1,
+    warning: false,
+    warningMessage: "Maaf kijiye, mujhe aapka naam samajh nahi aaya. Kripya apna naam seedhe batayein",
+    repeatedQuestionText: qText,
+  });
+});
+
+test("warning level 2 invalid answer response preserves warningLevel 2, warning: true, and repeated question", () => {
+  const qText = "Namaste ji, sabse pehle aap apna naam bataiye.";
+  const spokenMessage =
+    `Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya apna naam spasht batayein: ${qText}`;
+  const handoff = resolvePromptHandoff(200, {
+    success: true,
+    completed: false,
+    clarificationRequired: true,
+    warningLevel: 2,
+    warning: true,
+    warningMessage: "Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya apna naam spasht batayein",
+    repeatedQuestionText: qText,
+    message: spokenMessage,
+    question: { id: "A2_NAME", text: qText },
+  });
+
+  assert.deepEqual(handoff, {
+    questionId: "A2_NAME",
+    prompt: spokenMessage,
+    clarificationRequired: true,
+    staleRecovery: false,
+    warningLevel: 2,
+    warning: true,
+    warningMessage: "Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya apna naam spasht batayein",
+    repeatedQuestionText: qText,
+  });
+});
+
+test("valid A0 language response preserves language without entering terminal state", () => {
+  const handoff = resolvePromptHandoff(200, {
+    success: true,
+    completed: false,
+    language: "Hindi",
+    questionNumber: 3,
+    totalQuestions: 50,
+    question: { id: "A1", text: "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?" },
+  });
+
+  assert.deepEqual(handoff, {
+    questionId: "A1",
+    prompt: "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?",
+    clarificationRequired: false,
+    staleRecovery: false,
+    language: "Hindi",
+  });
+});
+
+test("resolvePromptHandoff preserves natural acknowledgement when provided by server", () => {
+  const handoff = resolvePromptHandoff(200, {
+    success: true,
+    completed: false,
+    acknowledgement: "Thank you, Priya ji!",
+    question: { id: "A0", text: "Namaste! Main UC ki screening assistant hoon." },
+  });
+
+  assert.equal(handoff.acknowledgement, "Thank you, Priya ji!");
+  assert.equal(handoff.questionId, "A0");
+});

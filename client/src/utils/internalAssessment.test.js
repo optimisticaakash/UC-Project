@@ -28,6 +28,13 @@ test("manual review completion is distinct and does not expose assessment detail
   assert.doesNotMatch(html, /score|assessment|sessionId/i);
 });
 
+test("terminated completion is distinct and explains termination gracefully", () => {
+  const html = renderToStaticMarkup(createElement(CandidateCompletion, { outcome: "terminated" }));
+  assert.match(html, /Interview terminated/);
+  assert.match(html, /The interview has ended because a relevant response was not provided after repeated warnings/i);
+  assert.doesNotMatch(html, /manual|review|score|assessment|sessionId/i);
+});
+
 test("internal report is accepted only for the selected session ID", () => {
   assert.equal(reportBelongsToSession({ sessionId: "session-a" }, "session-a"), true);
   assert.equal(reportBelongsToSession({ sessionId: "session-b" }, "session-a"), false);

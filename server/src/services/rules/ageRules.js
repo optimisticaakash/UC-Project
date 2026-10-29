@@ -4,8 +4,12 @@ function evaluateAge(answer) {
 
   // Accept an age phrase only when the whole answer matches, so unrelated
   // numbers in a sentence are not treated as the candidate's age.
+  // Supports Hindi (Devanagari & Romanized) and English age formats.
+  const prefix = String.raw`(?:(?:मैं|मेरी\s+उम्र|मेरी\s+उमर|मेरी\s+आयु|उम्र|उमर|meri\s+age|meri\s+umar|meri\s+umr|umar|umr|age|my\s+age\s+is|my\s+age|i\s+am|i'm)\s*(?:is|hai|है)?\s*)?`;
+  const unit = String.raw`(?:\s*(?:साल|वर्ष|saal|sal|varsh|years?(?:\s+old)?|yrs?)(?:\s*(?:का|की|के|ka|ki|ke))?)?`;
+  const suffix = String.raw`(?:\s*(?:है|हैं|हूँ|हूं|hai|hain|hoon|hun|ki\s+hoon|ka\s+hoon|की\s+हूँ))?`;
   const ageMatch = input.match(
-    /^(?:(?:मैं|मेरी उम्र|मेरी उमर|मेरी आयु|meri age|meri umar|meri umr|my age is|i am|i'm)\s*)?(\d{1,3})(?:\s*(?:साल|वर्ष)(?:\s*(?:का|की|के))?(?:\s*(?:है|हैं|हूँ|हूं))?|\s*(?:years?(?:\s+old)?|yrs?))?[.!?।]*$/iu,
+    new RegExp(String.raw`^${prefix}(\d{1,3})${unit}${suffix}[.!?।]*$`, "iu"),
   );
 
   if (ageMatch) {

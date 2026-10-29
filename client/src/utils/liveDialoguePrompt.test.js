@@ -3,8 +3,10 @@ import test from "node:test";
 import {
   buildClarificationPrompt,
   buildInitialQuestionPrompt,
+  buildInvalidWarningPrompt,
   buildQuestionHandoffPrompt,
   buildRepeatPrompt,
+  buildTerminationPrompt,
   buildWaitingAnnouncementPrompt,
 } from "./liveDialoguePrompt.js";
 import { WAIT_ANNOUNCEMENT_TEXT } from "./requestWaitAnnouncement.js";
@@ -91,4 +93,63 @@ test("A2_NAME handoff to A0 allows personalized greeting with candidate name", (
 
   assert.match(prompt, /Begin by greeting the candidate warmly: "Namaste Aarti ji!"/);
   assert.ok(prompt.endsWith(questionA0));
+});
+
+test("invalid answer warning level 1 instructs model to speak clarification and repeat complete question aloud", () => {
+  const spokenText =
+    "Maaf kijiye, mujhe aapka naam samajh nahi aaya. Kripya apna naam seedhe batayein: Namaste ji, sabse pehle aap apna naam bataiye.";
+  const prompt = buildInvalidWarningPrompt(spokenText, 1);
+
+  assert.match(prompt, /Speak the following polite clarification and repeat the complete interview question aloud exactly as written below/i);
+  assert.match(prompt, /Do not omit the question or repeat candidate words/i);
+  assert.match(prompt, /Never repeat, echo, paraphrase, or quote what the candidate just said/i);
+  assert.ok(prompt.endsWith(spokenText));
+});
+
+test("invalid answer warning level 2 instructs model to speak final warning and repeat complete question aloud", () => {
+  const spokenText =
+    "Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya apna naam spasht batayein: Namaste ji, sabse pehle aap apna naam bataiye.";
+  const prompt = buildInvalidWarningPrompt(spokenText, 2);
+
+  assert.match(prompt, /Speak the following final warning and repeat the complete interview question aloud exactly as written below/i);
+  assert.match(prompt, /Do not omit the question or repeat candidate words/i);
+  assert.ok(prompt.endsWith(spokenText));
+});
+
+test("termination prompt instructs model to speak termination message without asking new questions", () => {
+  const terminationMessage =
+    "Teen baar koshish karne ke baad bhi relevant jawab na milne ki wajah se interview aage nahi badh sakta. Aapka interview yahin samapt hota hai.";
+  const prompt = buildTerminationPrompt(terminationMessage);
+
+  assert.match(prompt, /Speak the following termination message clearly and politely to the candidate/i);
+  assert.match(prompt, /Do not ask any questions/i);
+  assert.ok(prompt.endsWith(terminationMessage));
+});
+
+test("question handoffs preserve selected English language in subsequent prompts", () => {
+  const question = "Aap Bangalore mein kis area mein rehti hain?";
+  const prompt = buildQuestionHandoffPrompt(question, "Sunita", "English");
+
+  assert.match(prompt, /Conduct this question in English as requested by the candidate/i);
+  assert.match(prompt, /Namaste Sunita ji!/);
+  assert.ok(prompt.endsWith(question));
+});
+
+test("question handoffs include natural brief acknowledgement when provided", () => {
+  const question = "Aapki umar kitni hai?";
+  const acknowledgement = "Theek hai, samajh gayi.";
+  const prompt = buildQuestionHandoffPrompt(question, null, "Hindi", acknowledgement);
+
+  assert.match(prompt, /First, say this brief natural acknowledgement: "Theek hai, samajh gayi\."/);
+  assert.ok(prompt.endsWith(question));
+});
+
+test("English question handoffs include natural brief English acknowledgement", () => {
+  const question = "How many years of salon experience do you have?";
+  const acknowledgement = "Thank you, Priya.";
+  const prompt = buildQuestionHandoffPrompt(question, "Priya", "English", acknowledgement);
+
+  assert.match(prompt, /Conduct this question in English as requested by the candidate/i);
+  assert.match(prompt, /First, say this brief natural acknowledgement: "Thank you, Priya\."/);
+  assert.ok(prompt.endsWith(question));
 });

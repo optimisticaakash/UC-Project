@@ -5,6 +5,7 @@ import {
   getCandidateDeletionConfirmation,
   getCandidateDeactivationConfirmation,
   getCandidateStatusAction,
+  getReportDeletionConfirmation,
 } from "./accountDeletion.js";
 
 test("admin deletion confirmation is unavailable for self and explains destructive effect for another admin", () => {
@@ -32,4 +33,15 @@ test("candidate delete confirmation explains the soft-delete and retained histor
   assert.match(message, /marked deleted/u);
   assert.match(message, /history, reports, and PDFs will be retained/u);
   assert.equal(getCandidateDeletionConfirmation({ ...candidate, deletedAt: "2026-01-01" }), null);
+});
+
+test("report deletion confirmation identifies candidate name, session ID, and warns of permanent removal", () => {
+  const session = { sessionId: "sess-12345", candidateName: "Priya Sharma" };
+  const message = getReportDeletionConfirmation(session);
+  assert.match(message, /Priya Sharma/);
+  assert.match(message, /sess-12345/);
+  assert.match(message, /permanently deleted/);
+  assert.match(message, /cannot be undone/);
+  assert.equal(getReportDeletionConfirmation(null), null);
+  assert.equal(getReportDeletionConfirmation({}), null);
 });

@@ -10,6 +10,7 @@ import {
   getCandidateDeletionConfirmation,
   getCandidateDeactivationConfirmation,
   getCandidateStatusAction,
+  getReportDeletionConfirmation,
 } from "../utils/accountDeletion.js";
 
 export default function InternalAssessmentDashboard() {
@@ -35,6 +36,7 @@ export default function InternalAssessmentDashboard() {
   const [stats, setStats] = useState(null);
   const [storageMode, setStorageMode] = useState("unknown");
   const [loadingSessions, setLoadingSessions] = useState(true);
+  const [deletingSessionId, setDeletingSessionId] = useState(null);
   const [error, setError] = useState("");
   const [authChecked, setAuthChecked] = useState(false);
   const [authorized, setAuthorized] = useState(false);
@@ -272,6 +274,38 @@ export default function InternalAssessmentDashboard() {
     }
   }
 
+  async function deleteReport(session) {
+    if (deletingSessionId) return;
+    const confirmation = getReportDeletionConfirmation(session);
+    if (!confirmation || !window.confirm(confirmation)) return;
+    setError("");
+    setAccountActionMessage("");
+    setDeletingSessionId(session.sessionId);
+    try {
+      const response = await fetch(`${API_URL}/api/interview/${encodeURIComponent(session.sessionId)}/report`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (response.status === 401) {
+        window.location.replace("/admin/login");
+        return;
+      }
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Interview report could not be deleted.");
+      }
+      setAccountActionMessage(data.message || "Interview report deleted successfully.");
+      await Promise.all([loadSessions(), loadStats()]);
+      if (selectedCandidate) {
+        await loadCandidateHistory(selectedCandidate);
+      }
+    } catch (deleteError) {
+      setError(deleteError.message || "Interview report could not be deleted.");
+    } finally {
+      setDeletingSessionId(null);
+    }
+  }
+
   useEffect(() => {
     let active = true;
     fetch(`${API_URL}/api/admin/me`, { credentials: "include" })
@@ -318,7 +352,10 @@ export default function InternalAssessmentDashboard() {
                 : "Report storage status could not be confirmed."}
             </p>
           </div>
-          <a className="inline-flex h-11 items-center justify-center rounded-lg border border-neutral-300 px-4 text-sm font-semibold text-neutral-800 transition hover:border-neutral-500 hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-neutral-900/10" href="/">Candidate interview portal</a>
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
+            <a className="inline-flex h-11 items-center justify-center rounded-lg bg-neutral-950 px-4 text-sm font-semibold text-white transition hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-neutral-900/20" href="/admin/responses">View Responses Log</a>
+            <a className="inline-flex h-11 items-center justify-center rounded-lg border border-neutral-300 px-4 text-sm font-semibold text-neutral-800 transition hover:border-neutral-500 hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-neutral-900/10" href="/">Candidate interview portal</a>
+          </div>
         </header>
         {accountActionMessage && <p className="rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm text-neutral-800 shadow-sm" role="status">{accountActionMessage}</p>}
 
@@ -362,9 +399,14 @@ export default function InternalAssessmentDashboard() {
         </section>
 
         <section aria-labelledby="dashboard-reports-heading" className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-6">
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold tracking-tight" id="dashboard-reports-heading">Interview Reports</h2>
-            <p className="mt-1 text-sm text-neutral-500">Recent candidate interviews and their current status</p>
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight" id="dashboard-reports-heading">Interview Reports</h2>
+              <p className="mt-1 text-sm text-neutral-500">Recent candidate interviews and their current status</p>
+            </div>
+            <a className="inline-flex h-9 items-center justify-center rounded-lg border border-neutral-300 bg-white px-3.5 text-xs font-semibold text-neutral-800 transition hover:bg-neutral-50" href="/admin/responses">
+              Responses Table →
+            </a>
           </div>
           {loadingSessions ? <p className="rounded-xl border border-dashed border-neutral-300 px-4 py-8 text-center text-sm text-neutral-500">Loading interview reports…</p> : sessions.length === 0 ? <div className="rounded-xl border border-dashed border-neutral-300 px-4 py-10 text-center">
             <p className="font-medium text-neutral-800">No interview reports yet</p>
@@ -382,6 +424,7 @@ export default function InternalAssessmentDashboard() {
               <div className="flex shrink-0 flex-wrap gap-2">
                 <button className="inline-flex h-10 items-center justify-center rounded-lg bg-neutral-950 px-4 text-sm font-semibold text-white transition hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-neutral-900/20" type="button" onClick={() => viewReport(session.sessionId)}>View Report</button>
                 <button className="inline-flex h-10 items-center justify-center rounded-lg border border-neutral-300 bg-white px-4 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-neutral-900/20" type="button" onClick={() => downloadReportPdf(session.sessionId)}>Download PDF</button>
+                <button className="inline-flex h-10 items-center justify-center rounded-lg border border-neutral-300 bg-white px-3.5 text-sm font-semibold text-neutral-800 transition hover:border-red-400 hover:text-red-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-neutral-900/10 disabled:cursor-not-allowed disabled:opacity-50" disabled={deletingSessionId === session.sessionId} onClick={() => deleteReport(session)} type="button">{deletingSessionId === session.sessionId ? "Deleting…" : "Delete"}</button>
               </div>
             </li>)}
           </ul>}
@@ -492,6 +535,7 @@ export default function InternalAssessmentDashboard() {
                 <div className="flex gap-2">
                   <button className="inline-flex h-9 items-center justify-center rounded-lg bg-neutral-950 px-3.5 text-sm font-semibold text-white transition hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-neutral-900/20" onClick={() => viewReport(item.sessionId)} type="button">Open report</button>
                   <button className="inline-flex h-9 items-center justify-center rounded-lg border border-neutral-300 bg-white px-3.5 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-100" onClick={() => downloadReportPdf(item.sessionId)} type="button">Download PDF</button>
+                  <button className="inline-flex h-9 items-center justify-center rounded-lg border border-neutral-300 bg-white px-3.5 text-sm font-semibold text-neutral-800 transition hover:border-red-400 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={deletingSessionId === item.sessionId} onClick={() => deleteReport({ ...item, candidateName: selectedCandidate.name })} type="button">{deletingSessionId === item.sessionId ? "Deleting…" : "Delete"}</button>
                 </div>
               </li>)}
             </ul>}

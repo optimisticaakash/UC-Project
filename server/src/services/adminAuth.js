@@ -46,14 +46,15 @@ function createAdminAuth({
   const loginAttempts = new Map();
 
   function sessionCookie(token, maxAge) {
+    const isProd = isProduction();
     const parts = [
       `${COOKIE_NAME}=${token}`,
       "HttpOnly",
-      "SameSite=None",
+      isProd ? "SameSite=None" : "SameSite=Lax",
       "Path=/api",
       `Max-Age=${maxAge}`,
     ];
-    if (isProduction()) parts.push("Secure");
+    if (isProd) parts.push("Secure");
     return parts.join("; ");
   }
 
