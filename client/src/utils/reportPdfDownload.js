@@ -1,5 +1,8 @@
+import { buildApiUrl } from "./apiUrl.js";
+
 export async function fetchReportPdf(apiUrl, sessionId, fetchImpl = fetch) {
-  const response = await fetchImpl(`${apiUrl}/api/interview/${encodeURIComponent(sessionId)}/report.pdf`, {
+  const url = buildApiUrl(apiUrl, `/api/interview/${encodeURIComponent(sessionId)}/report.pdf`);
+  const response = await fetchImpl(url, {
     credentials: "include",
   });
   if (!response.ok) {

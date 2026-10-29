@@ -1,3 +1,5 @@
+import { buildApiUrl } from "./apiUrl.js";
+
 export function resolvePromptHandoff(status, data) {
   const staleRecovery = Boolean(
     status === 409 && data?.staleQuestion && data.question?.text,
@@ -53,7 +55,8 @@ export async function recoverMissingPrompt({
   promptTurn,
   sessionGeneration,
 }) {
-  const response = await fetchImpl(`${apiUrl}/api/interview/answer`, {
+  const url = buildApiUrl(apiUrl, "/api/interview/answer");
+  const response = await fetchImpl(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     // An empty answer asks the existing stale-question guard for current state.
