@@ -5,11 +5,13 @@ import CandidateLogin from "./components/CandidateLogin";
 import SiteNavbar from "./components/SiteNavbar";
 import CandidateInterviewHistory from "./components/CandidateInterviewHistory";
 import AdminInterviewReportPage from "./components/AdminInterviewReportPage";
+import AdminResponsesPage from "./components/AdminResponsesPage";
 
 export default function App() {
   const path = window.location.pathname;
   let page;
   if (path === "/admin/login") page = <AdminLogin />;
+  else if (path === "/admin/responses" || path === "/internal-assessment/responses") page = <AdminResponsesPage />;
   else if (path === "/internal-assessment") page = <InternalAssessmentDashboard />;
   else if (path.startsWith("/internal-assessment/")) page = <AdminInterviewReportPage sessionId={decodeURIComponent(path.slice("/internal-assessment/".length))} />;
   else if (path === "/candidate/login") page = <CandidateLogin />;

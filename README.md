@@ -62,6 +62,9 @@ GEMINI_MODEL=gemini-3.6-flash
 ADMIN_USERNAME=your_legacy_admin_username
 ADMIN_PASSWORD=your_legacy_admin_password
 ADMIN_ALLOWED_ORIGIN=http://localhost:5173
+GOOGLE_SHEET_ID=your_google_spreadsheet_id
+GOOGLE_SERVICE_ACCOUNT_EMAIL=your_service_account@project.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 Use your own secret values. Do not commit .env files, API keys,
 passwords, or setup tokens to GitHub. Generate a long random value for
 ADMIN_SETUP_TOKEN; the backend requires at least 32 characters for
@@ -127,10 +130,30 @@ The backend exposes these application endpoints:
   POST   /api/answer              Submit an interview answer
   POST   /api/interpret           Interpret an answer
   POST   /api/manual-review       Request/record manual review
+  POST   /api/interview/pause     Pause an active interview session
+  POST   /api/interview/resume    Resume a paused interview session
+  GET    /api/interview/active    Get current active or paused session
   GET    /api/:sessionId/report   Retrieve a session report
 
 Interview routes may have authentication or request requirements; refer
 to the backend route definitions for exact payloads and access rules.
+
+Google Sheets Integration (Optional)
+The system supports idempotent, non-blocking synchronization of interview
+responses to a Google Sheet. MongoDB remains the primary source of truth.
+To enable Google Sheets synchronization:
+1. Create a Google Cloud Project and enable the Google Sheets API.
+2. Create a Service Account and download its JSON key file.
+3. Create a Google Spreadsheet and share it with the service account email
+   address with Editor permissions.
+4. Copy the Spreadsheet ID from the sheet's URL:
+   `https://docs.google.com/spreadsheets/d/<SPREADSHEET_ID>/edit`
+5. Configure the following environment variables on the backend (Render / .env):
+   - `GOOGLE_SHEET_ID`: The spreadsheet ID
+   - `GOOGLE_SERVICE_ACCOUNT_EMAIL`: The service account email
+   - `GOOGLE_PRIVATE_KEY`: The RSA private key from the JSON file
+If any of these variables are unset, the integration safely no-ops without
+affecting the interview flow or database persistence.
 Security Notes
 - Keep all API keys, MongoDB credentials, admin passwords, and setup
   tokens private.

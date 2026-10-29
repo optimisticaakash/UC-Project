@@ -519,3 +519,45 @@ test("failed Mongo persistence rejects interview start without retaining volatil
     interviewService.startInterview = originalStart;
   }
 });
+
+test("persistence.deleteSession deletes session document from Mongo and cleans up GridFS PDF", async () => {
+  const deletions = [];
+  const model = {
+    async init() {},
+    findOne({ sessionId }) {
+      return {
+        lean: async () =>
+          sessionId === "session-to-delete"
+            ? { state: { sessionId, reportPdfRef: { fileId: "507f1f77bcf86cd799439011" } } }
+            : null,
+      };
+    },
+    async deleteOne(filter) {
+      deletions.push(filter);
+      return { deletedCount: 1 };
+    },
+  };
+  const deletedFiles = [];
+  const bucket = {
+    async delete(id) { deletedFiles.push(id.toString()); },
+  };
+  const persistenceInstance = createPersistence({
+    sessionModel: model,
+    candidateModel: makeInitModel(),
+    adminModel: makeInitModel(),
+    authSessionModel: makeInitModel(),
+    adminBootstrapModel: makeInitModel(),
+    connection: { readyState: 1, db: {} },
+    gridFsBucketFactory: () => bucket,
+    connectImpl: async () => {},
+  });
+  await persistenceInstance.connect("mongodb://test.invalid/urban_company_ai");
+
+  const deleted = await persistenceInstance.deleteSession("session-to-delete");
+  assert.equal(deleted, true);
+  assert.deepEqual(deletions[0], { sessionId: "session-to-delete" });
+  assert.equal(deletedFiles[0], "507f1f77bcf86cd799439011");
+
+  const notFound = await persistenceInstance.deleteSession("nonexistent");
+  assert.equal(notFound, false);
+});

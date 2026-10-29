@@ -90,7 +90,7 @@ function fallbackInterpretation({ question, answer }) {
     };
   }
   const irrelevantPatterns =
-    /\b(mujhe|i like|i love|pasand hai|aaloo|aloo|potato|cricket|movie|movies|anime)\b/i;
+    /\b(mujhe|i like|i love|pasand hai|aaloo|aloo|potato|biryani|pizza|burger|cricket|movie|movies|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|asdf|qwerty|chair|table|desk|mobile|phone|laptop|pen|bottle|cat|dog|billi|kutta)\b/i;
 
   const questionKeywords = q
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
@@ -100,6 +100,67 @@ function fallbackInterpretation({ question, answer }) {
   const answerHasContext = questionKeywords.some((word) => a.includes(word));
 
   const isLikelyIrrelevant = irrelevantPatterns.test(a) && !answerHasContext;
+
+  const isOpenEnded =
+    /\b(?:kya\s+karengi|kya\s+karenge|what\s+would\s+you\s+do|kaise|how|kahan|where|kyun|why|kitna|kitne|how\s+much|how\s+many|steps\s+bataiye|kya\s+farak|kya\s+dhyan|kaun\s+kaun|safar|routine|kaise\s+manage)\b/i.test(
+      q,
+    );
+
+  const isConfirmationQuestion =
+    !isOpenEnded &&
+    (/^(?:kya\s+(?:aap|tum|kabhi)|do\s+you|are\s+you|can\s+you|will\s+you|would\s+you|have\s+you)\b/iu.test(
+      q,
+    ) ||
+      /\b(?:kar\s+sakti\s+hain|kar\s+sakte\s+ho|willing|ready|seekhna\s+chahti\s+hain|padh\s+leti\s+hain|kaam\s+kiya\s+hai|linked\s+hai)\b/iu.test(
+        q,
+      ));
+
+  const isAffirmative =
+    /^(?:yes|yeah|yep|sure|haan|han|ji|ji\s+haan|ji\s+han|bilkul|ready|willing|thik\s+hai|theek\s+hai|हाँ|हां|जी|जी\s+हाँ|जी\s+हां|बिल्कुल)[.!?।\s]*$/iu.test(a);
+
+  const isNegative =
+    /^(?:no|nope|nahi|nahin|nhi|never|not\s+willing|not\s+ready|नहीं|नही)[.!?।\s]*$/iu.test(a);
+
+  const isUncertain =
+    /^(?:not\s+sure|unsure|pata\s+nahi|pata\s+nahin|don't\s+know|dont\s+know|maybe|shayad|no\s+idea|samajh\s+nahi\s+aaya|पता\s+नहीं|शायद)[.!?।\s]*$/iu.test(a);
+
+  if (isUncertain) {
+    return {
+      understanding: "Candidate expressed uncertainty or hesitance.",
+      answerStatus: "unclear",
+      needsClarification: true,
+      clarificationQuestion: "Kripya is baare mein thoda aur spasht batayein.",
+    };
+  }
+
+  if (isOpenEnded && (isAffirmative || isNegative)) {
+    return {
+      understanding:
+        "Candidate gave a brief yes/no to an open-ended question that requires explanation.",
+      answerStatus: "unclear",
+      needsClarification: true,
+      clarificationQuestion:
+        "Could you please explain your answer in a little more detail?",
+    };
+  }
+
+  if (isConfirmationQuestion && isAffirmative) {
+    return {
+      understanding: "Candidate gave a clear affirmative confirmation in context.",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      clarificationQuestion: "",
+    };
+  }
+
+  if (isConfirmationQuestion && isNegative) {
+    return {
+      understanding: "Candidate gave a clear negative response in context.",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      clarificationQuestion: "",
+    };
+  }
 
   if (words.length < 2) {
     return {
@@ -153,6 +214,13 @@ You are an answer interpreter for a salon professional interview.
 Understand the candidate's answer only in the context of the question.
 Do not decide hiring eligibility, reject candidates, or assign scores.
 Do not invent information.
+
+Guidelines for evaluating answers:
+- Contextual evaluation: evaluate short answers like "yes", "no", "haan", "nahi" in the context of the question:
+  - For confirmation or binary availability questions (e.g. "Kya aap training attend kar sakti hain?", "Kya pehle kisi app pe kaam kiya hai?"), a clear affirmative or negative is "sufficient".
+  - For open-ended questions asking for explanations, experience details, customer scenarios ("Aap kya karengi?"), technical procedures, or background, a bare "yes", "no", "haan", or "nahi" is NOT sufficient and must be marked as "unclear" with needsClarification: true and a polite clarification question asking for details.
+- Irrelevant responses or gibberish (e.g. "habba jabba", "asdf qwerty", food items, random objects) must be marked as "irrelevant" with needsClarification true.
+- If the candidate expresses uncertainty (e.g. "not sure", "pata nahi", "maybe", "that might be difficult") or skips the question, mark as "unclear" with needsClarification true and ask a natural, polite follow-up.
 
 Return only valid JSON:
 {

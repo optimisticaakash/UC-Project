@@ -88,3 +88,21 @@ test("Candidate logout requires backend confirmation", async () => {
   assert.equal(request.url, "http://localhost:5001/api/candidate/logout");
   assert.equal(request.options.credentials, "include");
 });
+
+test("Candidate logout normalizes trailing slash in base URL and produces no double slash", async () => {
+  let request;
+  const baseUrlWithSlash = "https://uc-project-o71w.onrender.com/";
+  const result = await logoutCandidate(baseUrlWithSlash, async (url, options) => {
+    request = { url, options };
+    return { ok: true, status: 200, json: async () => ({ success: true }) };
+  });
+
+  assert.equal(result, true);
+  assert.equal(
+    request.url,
+    "https://uc-project-o71w.onrender.com/api/candidate/logout",
+  );
+  assert.equal(request.url.includes("//api"), false);
+  assert.equal(request.options.credentials, "include");
+});
+

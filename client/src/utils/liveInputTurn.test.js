@@ -350,3 +350,21 @@ test("candidate speech arriving while AI question playback is active does not ad
   );
   assert.equal(afterPlayback.answer, "Haan main ready hoon");
 });
+
+test("finishModelPlayback emits finalized candidate answer when audio queue ends", () => {
+  const turn = createLiveInputTurn();
+  turn.beginModelTurn();
+
+  // Model finishes generating, audio is playing
+  turn.handleServerContent({ turnComplete: true }, { isPlaybackActive: true });
+
+  // Candidate finishes speaking while audio is playing
+  turn.handleServerContent(
+    finalTranscript("Priya Sharma", "1s", "3s"),
+    { isPlaybackActive: true },
+  );
+
+  // Audio queue ends: finishModelPlayback immediately returns the finalized candidate answer
+  const endResult = turn.finishModelPlayback();
+  assert.equal(endResult.answer, "Priya Sharma");
+});

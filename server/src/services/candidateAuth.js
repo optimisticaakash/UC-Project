@@ -93,14 +93,15 @@ function createCandidateAuth({
   const loginAttempts = new Map();
 
   function cookie(token, maxAge) {
+    const isProd = isProduction();
     const attributes = [
       `${COOKIE_NAME}=${token}`,
       "HttpOnly",
-      "SameSite=None",
+      isProd ? "SameSite=None" : "SameSite=Lax",
       "Path=/api",
       `Max-Age=${maxAge}`,
     ];
-    if (isProduction()) attributes.push("Secure");
+    if (isProd) attributes.push("Secure");
     return attributes.join("; ");
   }
 

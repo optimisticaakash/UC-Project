@@ -2,11 +2,13 @@ const UI_STATES = {
   ready: { statusLabel: "Ready to start", terminal: false },
   starting: { statusLabel: "Starting interview...", terminal: false },
   in_progress: { statusLabel: "Interview in progress", terminal: false },
+  paused: { statusLabel: "Interview paused", terminal: false },
   ending: { statusLabel: "Ending interview...", terminal: false },
   completed: { statusLabel: "Interview completed", terminal: true },
   ended: { statusLabel: "Interview ended", terminal: true },
   manual_review: { statusLabel: "Manual review required", terminal: true },
   rejected: { statusLabel: "Interview ended", terminal: true },
+  terminated: { statusLabel: "Interview terminated", terminal: true },
   end_unconfirmed: { statusLabel: "Interview status unavailable", terminal: true },
   error: { statusLabel: "Interview paused", terminal: false },
 };
@@ -20,9 +22,12 @@ const SAFE_CANDIDATE_ERRORS = new Set([
   "I couldn't hear you. Please continue speaking or try again.",
   "Sorry, the connection was interrupted. Please restart the interview.",
   "Sorry, the connection closed. Please restart the interview.",
+  "The connection was interrupted. Your progress is saved. Click Resume Interview to continue.",
   "Microphone permission is needed. Please allow access and try again.",
   "Sorry, the interview couldn't start. Please check your connection and try again.",
   "I couldn't confirm that the interview ended. Please contact support.",
+  "Sorry, the interview couldn't be paused. Please try again.",
+  "Sorry, the interview couldn't be resumed. Please try again.",
 ]);
 
 export function getCandidateVisibleQuestion(currentQuestion) {
@@ -43,7 +48,9 @@ export function resolveTerminalInterviewState({
   sessionStatus = null,
   manualReviewRequired = false,
   eligibilityOutcome = null,
+  terminated = false,
 } = {}) {
+  if (terminated || sessionStatus === "terminated") return "terminated";
   if (manualReviewRequired || sessionStatus === "manual_review") return "manual_review";
   if (eligibilityOutcome === "reject" || sessionStatus === "rejected") return "rejected";
   if (completed || sessionStatus === "completed") return "completed";
@@ -75,4 +82,16 @@ export function getInterviewUiModel({
 }
 
 export const WAITING_STATUS = "Preparing next question...";
+
+export function canResumeSession(session) {
+  return Boolean(
+    session &&
+      session.sessionId &&
+      (session.status === "in_progress" || session.status === "paused")
+  );
+}
+
+export function shouldDisplayInterviewView({ isInterviewOpen = false } = {}) {
+  return Boolean(isInterviewOpen);
+}
 

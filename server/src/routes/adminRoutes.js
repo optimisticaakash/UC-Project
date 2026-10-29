@@ -20,5 +20,6 @@ router.patch("/candidates/:candidateId/deactivate", adminAuth.requireAdmin, cand
 router.patch("/candidates/:candidateId/activate", adminAuth.requireAdmin, candidateAuth.activate);
 router.delete("/candidates/:candidateId", adminAuth.requireAdmin, candidateAuth.deleteAccount);
 router.get("/candidates/:candidateId/interviews", adminAuth.requireAdmin, interviewController.listCandidateInterviews);
+router.get("/responses", adminAuth.requireAdmin, interviewController.getResponses);
 
 module.exports = { router, adminAuth, candidateAuth };

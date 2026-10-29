@@ -72,6 +72,22 @@ export function createLiveInputTurn() {
           phase = "listening";
         }
       }
+
+      let answer = null;
+      const canEmitAnswer =
+        candidateActivity &&
+        candidateResponseComplete &&
+        transcriptFinalized &&
+        !candidateInterimActivity &&
+        transcript &&
+        phase !== "submitted" &&
+        phase !== "model";
+
+      if (canEmitAnswer) {
+        answer = transcript;
+      }
+
+      return { transcript, answer, activity: false };
     },
 
     handleServerContent(content, { isPlaybackActive = false } = {}) {

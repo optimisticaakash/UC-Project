@@ -1,12 +1,24 @@
 function classifyLocation(answer) {
   const text = answer.trim().toLowerCase();
 
-  // An empty or vague response needs clarification.
+  // An empty, vague, or irrelevant response needs clarification.
+  const irrelevantPattern =
+    /\b(?:biryani|pizza|burger|cricket|movie|movies|anime|song|songs|dance|dancing|gaana|khana|aaloo|aloo|potato|football|habba\s+jabba|bla\s+bla|asdf|qwerty|chair|table|desk|sofa|bed|furniture|mobile|phone|smartphone|laptop|computer|tablet|pen|pencil|paper|book|bottle|cup|glass|plate|spoon|fork|fan|light|tv|television|ac|fridge|refrigerator|door|window|wall|floor|roof|cat|dog|billi|kutta|animal|bird|clothes|shirt|pant|shoes|chappal|samosa|chai|tea|coffee|ice\s*cream|zxcv|foo|bar|baz|qux|test|testing|kuch\s+bhi|koi\s+bhi|random)\b/i;
+
+  const isOnlyVehicle =
+    /^(?:car|bike|scooty|scooter|bus|metro|auto|train|gaadi|two\s*wheeler)[.!?\s]*$/i.test(text);
+
+  const hasRepeatedChars = /(.)\1{2,}/u.test(text);
+
   if (
     !text ||
+    text.length < 2 ||
     /^(pata nahi|not sure|don't know|dont know|samajh nahi aaya)[.!?]*$/i.test(
       text,
-    )
+    ) ||
+    irrelevantPattern.test(text) ||
+    isOnlyVehicle ||
+    hasRepeatedChars
   ) {
     return {
       outcome: "clarification",

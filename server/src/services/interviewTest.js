@@ -19,9 +19,12 @@ const {
   getReport,
   getSessionForPersistence,
   listReports,
+  deleteReport,
   endInterview,
   getTotalQuestions,
   flagManualReview,
+  classifyNameAnswer,
+  isSaneName,
 } = require("./interview");
 
 const householdQuestion =
@@ -595,21 +598,19 @@ test("Interview: captures name, obtains consent, then progresses through A1, A2,
 });
 
 test("Interview: empty or unclear name answers retain A2_NAME for clarification", async () => {
-  const started = startInterview();
-
   for (const answer of [
     "",
     "Pata nahi",
     "Mera naam kya hai",
     "Mera naam nahi pata",
   ]) {
+    const started = startInterview();
     const result = await submitAnswer({ sessionId: started.sessionId, answer });
     assert.equal(result.status, 200);
     assert.equal(result.body.clarificationRequired, true);
     assert.equal(result.body.question.id, "A2_NAME");
+    assert.equal(getReport(started.sessionId).body.report.answeredQuestions, 0);
   }
-
-  assert.equal(getReport(started.sessionId).body.report.answeredQuestions, 0);
 });
 
 test("Interview: a 17-character introduced name is accepted after clarification and advances to A0", async () => {
@@ -1600,3 +1601,1297 @@ test("Interview regression: unclear answers, repeated transcripts, and answer re
   assert.equal(Boolean(res.body.clarificationRequired), false);
   assert.equal(res.body.question.id, "A7");
 });
+
+test("Pause and Resume: preserves current state, rejects answers while paused, and resumes safely", async () => {
+  const {
+    pauseInterview,
+    resumeInterview,
+    getActiveSessionForCandidate,
+  } = require("./interview");
+
+  const started = startInterview({ candidateId: "candidate-pause-test" });
+  assert.equal(started.question.id, "A2_NAME");
+
+  // Answer name
+  let res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Anjali Gupta",
+  });
+  assert.equal(res.body.question.id, "A0");
+
+  // Pause interview
+  const pauseRes = pauseInterview(started.sessionId);
+  assert.equal(pauseRes.status, 200);
+  assert.equal(pauseRes.body.sessionStatus, "paused");
+  assert.equal(pauseRes.body.question.id, "A0");
+  assert.equal(pauseRes.body.candidateName, "Anjali Gupta");
+
+  // Trying to submit an answer while paused is rejected
+  const answerWhilePaused = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan, main agree karti hoon",
+  });
+  assert.equal(answerWhilePaused.status, 409);
+  assert.equal(answerWhilePaused.body.code, "INTERVIEW_PAUSED");
+
+  // Check active session retrieval
+  const activeSession = getActiveSessionForCandidate("candidate-pause-test");
+  assert.ok(activeSession);
+  assert.equal(activeSession.sessionId, started.sessionId);
+  assert.equal(activeSession.status, "paused");
+  assert.equal(activeSession.question.id, "A0");
+
+  // Resume interview
+  const resumeRes = resumeInterview(started.sessionId);
+  assert.equal(resumeRes.status, 200);
+  assert.equal(resumeRes.body.sessionStatus, "in_progress");
+  assert.equal(resumeRes.body.isResumed, true);
+  assert.equal(resumeRes.body.question.id, "A0");
+
+  // Now submit answer after resume succeeds
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan, main agree karti hoon",
+  });
+  assert.equal(res.body.question.id, "A1");
+
+  // End interview after pause transitions to incomplete cleanly
+  const pauseAgain = pauseInterview(started.sessionId);
+  assert.equal(pauseAgain.status, 200);
+  const endRes = endInterview(started.sessionId);
+  assert.equal(endRes.body.sessionStatus, "incomplete");
+
+  // Cannot resume ended interview
+  const resumeEnded = resumeInterview(started.sessionId);
+  assert.equal(resumeEnded.status, 400);
+});
+
+test("Sanity Check: rejects gibberish names like 'habba jabba' and accepts valid names", async () => {
+  const started = startInterview();
+  assert.equal(started.question.id, "A2_NAME");
+
+  // 'habba jabba' must trigger clarification
+  let res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "habba jabba",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A2_NAME");
+
+  // Keyboard mash must trigger clarification
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "asdf qwerty",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A2_NAME");
+
+  // Real name is accepted
+  res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Sunita Verma",
+  });
+  assert.equal(res.body.question.id, "A0");
+  assert.equal(res.body.candidateName, "Sunita Verma");
+});
+
+test("Sanity Check: rejects irrelevant answers on location question A1", async () => {
+  const started = startInterview();
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Meena",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan agree karti hoon",
+  });
+
+  // Irrelevant food answer on location question
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Mujhe biryani pasand hai",
+  });
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A1");
+  assert.match(res.body.message, /area/i);
+});
+
+test("Sanity Check: evaluates contextual short answers appropriately", () => {
+  // In confirmation questions, 'haan' or 'yes' is sufficient
+  const confirmResult = fallbackInterpretation({
+    question: "Kya aap pedicure kar leti hain?",
+    answer: "Haan",
+  });
+  assert.equal(confirmResult.answerStatus, "sufficient");
+  assert.equal(confirmResult.needsClarification, false);
+
+  // In confirmation questions, 'no' is sufficient
+  const negativeResult = fallbackInterpretation({
+    question: "Kya aap bikini wax karti hain?",
+    answer: "Nahi",
+  });
+  assert.equal(negativeResult.answerStatus, "sufficient");
+  assert.equal(negativeResult.needsClarification, false);
+
+  // In open-ended household question, 'yes' alone is unclear
+  const openResult = fallbackInterpretation({
+    question: householdQuestion,
+    answer: "Haan",
+  });
+  assert.equal(openResult.needsClarification, true);
+
+  // Uncertainty 'not sure' needs clarification
+  const uncertainResult = fallbackInterpretation({
+    question: "Aap kab tak join kar sakti hain?",
+    answer: "Not sure",
+  });
+  assert.equal(uncertainResult.needsClarification, true);
+  assert.equal(uncertainResult.answerStatus, "unclear");
+});
+
+test("Contextual Follow-up: asks relevant probe when candidate is uncertain and captures follow-up", async () => {
+  const started = startInterview();
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Kavita",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Ji haan",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Koramangala, travel nahi kar sakti",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "26",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A3",
+    answer: "Ghar mein pati aur 1 bachcha hai",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A4",
+    answer: "4 saal ka hai",
+  });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A5",
+    answer: "Dadi sambhalti hain",
+  });
+
+  // Now on A6 (pregnancy/baby plan), candidate expresses uncertainty: "not sure"
+  const uncertainInterpretation = async () => ({
+    understanding: "Candidate expressed uncertainty about their future plans.",
+    answerStatus: "unclear",
+    needsClarification: true,
+    clarificationQuestion: "Agar abhi aap expecting hain to bata dijiye.",
+  });
+
+  const followUpRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A6",
+    answer: "Shayad, abhi confirm nahi hai",
+  }, { interpretAnswerImpl: uncertainInterpretation });
+
+  // A contextual follow-up probe is returned
+  assert.equal(followUpRes.body.followUpRequired, true);
+  assert.equal(followUpRes.body.question.id, "A6_FOLLOW_UP");
+
+  // Answering the follow-up clarifies and advances to next question A7
+  const answerFollowUpRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A6_FOLLOW_UP",
+    answer: "Abhi koi pregnancy plan nahi hai, bilkul ready hoon",
+  });
+
+  assert.equal(answerFollowUpRes.body.question.id, "A7");
+  assert.equal(answerFollowUpRes.body.followUpCaptured, true);
+
+  // Check that the follow-up is saved in the report
+  const report = getReport(started.sessionId);
+  const followUpInReport = report.body.report.answers.find(
+    (a) => a.questionId === "A6_FOLLOW_UP",
+  );
+  assert.ok(followUpInReport);
+  assert.equal(followUpInReport.isFollowUp, true);
+  assert.equal(followUpInReport.answer, "Abhi koi pregnancy plan nahi hai, bilkul ready hoon");
+});
+
+test("Sanity Check: name question rejects repeated characters, single letters, and extracts introduced names", () => {
+  // Rejection of gibberish and invalid shapes
+  assert.equal(classifyNameAnswer("aaaa").clear, false);
+  assert.equal(classifyNameAnswer("zzzzz").clear, false);
+  assert.equal(classifyNameAnswer("a").clear, false);
+  assert.equal(classifyNameAnswer("").clear, false);
+  assert.equal(classifyNameAnswer("habba jabba").clear, false);
+  assert.equal(classifyNameAnswer("asdf qwerty").clear, false);
+  assert.equal(classifyNameAnswer("biryani").clear, false);
+  assert.equal(classifyNameAnswer("chair").clear, false);
+
+  // Correct extraction of introduced names without trailing 'hai'
+  const priyaIntro = classifyNameAnswer("Mera naam Priya hai");
+  assert.equal(priyaIntro.clear, true);
+  assert.equal(priyaIntro.name, "Priya");
+
+  const sunitaIntro = classifyNameAnswer("Mera naam Sunita");
+  assert.equal(sunitaIntro.clear, true);
+  assert.equal(sunitaIntro.name, "Sunita");
+
+  const anjaliIntro = classifyNameAnswer("mera naam Anjali Verma hai");
+  assert.equal(anjaliIntro.clear, true);
+  assert.equal(anjaliIntro.name, "Anjali Verma");
+
+  // Legitimate short or unfamiliar Indian names are accepted
+  for (const name of ["Om", "Anu", "Ali", "Uma", "Diya", "Pooja", "Tenzin", "Zoya", "Ira"]) {
+    const res = classifyNameAnswer(name);
+    assert.equal(res.clear, true, `Name '${name}' should be accepted`);
+    assert.equal(res.name, name);
+  }
+});
+
+test("Sanity Check: location question rejects random objects, repeated chars, and vehicle-only responses", () => {
+  // Irrelevant food and random objects
+  for (const invalid of [
+    "chair", "table", "mobile", "laptop", "pen", "bottle",
+    "biryani", "pizza", "aaaa", "x", "car", "bike",
+  ]) {
+    const res = classifyLocation(invalid);
+    assert.equal(res.outcome, "clarification", `Location '${invalid}' should require clarification`);
+    assert.equal(res.area, null);
+    assert.match(res.message, /area/i);
+  }
+
+  // Valid areas are accepted
+  const whitefield = classifyLocation("Whitefield");
+  assert.equal(whitefield.outcome, "manual_review");
+  assert.equal(whitefield.area, "Whitefield");
+
+  const koramangala = classifyLocation("Koramangala, Bangalore");
+  assert.equal(koramangala.outcome, "manual_review");
+  assert.equal(koramangala.area, "Koramangala, Bangalore");
+
+  const willing = classifyLocation("Bellandur, main travel kar sakti hoon");
+  assert.equal(willing.travelWillingness, "yes");
+  assert.equal(willing.followUp, "move_timeline");
+
+  const unwilling = classifyLocation("Indiranagar, travel nahi kar sakti");
+  assert.equal(unwilling.travelWillingness, "no");
+});
+
+test("Sanity Check: age question accepts Romanized Hindi and rejects ambiguous/nonsense values", () => {
+  // Romanized Hindi forms
+  assert.equal(evaluateAge("25 saal").age, 25);
+  assert.equal(evaluateAge("25 saal").outcome, "pass");
+  assert.equal(evaluateAge("28 sal").age, 28);
+  assert.equal(evaluateAge("meri age 28 hai").age, 28);
+  assert.equal(evaluateAge("meri umar 28 saal hai").age, 28);
+  assert.equal(evaluateAge("28 saal ki hoon").age, 28);
+  assert.equal(evaluateAge("meri age hai 25").age, 25);
+  assert.equal(evaluateAge("umar 30 hai").age, 30);
+
+  // Ambiguous, nonsense, and invalid inputs
+  assert.equal(evaluateAge("twenty or thirty").outcome, "clarification");
+  assert.equal(evaluateAge("shayad 25 ya 26").outcome, "clarification");
+  assert.equal(evaluateAge("25 or 26").outcome, "clarification");
+  assert.equal(evaluateAge("kal").outcome, "clarification");
+  assert.equal(evaluateAge("chair").outcome, "clarification");
+  assert.equal(evaluateAge("").outcome, "clarification");
+});
+
+test("Sanity Check: open-ended experience, scenarios, and routines reject bare haan/yes", () => {
+  // Open-ended scenario questions (C1, C6) must reject bare haan
+  const c6Result = fallbackInterpretation({
+    question: "Customer app ke bahar discount maang rahi hai. Kya karengi?",
+    answer: "haan",
+  });
+  assert.equal(c6Result.needsClarification, true);
+  assert.equal(c6Result.answerStatus, "unclear");
+
+  const c1Result = fallbackInterpretation({
+    question: "Facial mask ke time acne wali customer kehti hai jalan ho rahi hai. Aap kya karengi?",
+    answer: "yes",
+  });
+  assert.equal(c1Result.needsClarification, true);
+  assert.equal(c1Result.answerStatus, "unclear");
+
+  // Technical questions (K2, K7) must reject bare haan
+  const k7Result = fallbackInterpretation({
+    question: "Pedicure ke baad tools aur baaki saamaan ka kya karti hain?",
+    answer: "haan",
+  });
+  assert.equal(k7Result.needsClarification, true);
+  assert.equal(k7Result.answerStatus, "unclear");
+
+  const k2Result = fallbackInterpretation({
+    question: "Rica jaise lipo wax aur normal honey wax mein kya farak hota hai?",
+    answer: "yes",
+  });
+  assert.equal(k2Result.needsClarification, true);
+  assert.equal(k2Result.answerStatus, "unclear");
+
+  // Experience and routine questions (B2, B13) must reject bare haan
+  const b2Result = fallbackInterpretation({
+    question: "Aapka beauty ka safar kaise shuru hua? Kahan kahan kaam kiya hai?",
+    answer: "haan",
+  });
+  assert.equal(b2Result.needsClarification, true);
+  assert.equal(b2Result.answerStatus, "unclear");
+
+  const b13Result = fallbackInterpretation({
+    question: "Aapka weekend ka routine kya hota hai — Saturday-Sunday aap kya karti hain?",
+    answer: "haan",
+  });
+  assert.equal(b13Result.needsClarification, true);
+  assert.equal(b13Result.answerStatus, "unclear");
+
+  // Confirmation questions MUST remain valid with bare short answers
+  const a12Result = fallbackInterpretation({
+    question: "Kya kabhi pehle UC, Yes Madam ya kisi aur app ke through kaam kiya hai?",
+    answer: "Haan",
+  });
+  assert.equal(a12Result.needsClarification, false);
+  assert.equal(a12Result.answerStatus, "sufficient");
+
+  const b15Result = fallbackInterpretation({
+    question: "Kya aap poori training attend kar sakti hain?",
+    answer: "Nahi",
+  });
+  assert.equal(b15Result.needsClarification, false);
+  assert.equal(b15Result.answerStatus, "sufficient");
+
+  const b19Result = fallbackInterpretation({
+    question: "Kya aapka PAN, Aadhaar se linked hai aur dono mein naam same hai?",
+    answer: "Haan",
+  });
+  assert.equal(b19Result.needsClarification, false);
+  assert.equal(b19Result.answerStatus, "sufficient");
+});
+
+test("Natural Travel Flow: handles multi-turn travel uncertainty, cross-questions, options, and candidate agreement", async () => {
+  const started = startInterview();
+
+  // Answer name, consent, and give location without explicit travel willingness
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  const locRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Koramangala",
+  });
+  assert.equal(locRes.body.followUpRequired, true);
+  assert.equal(locRes.body.question.id, "A1_TRAVEL_CLARIFICATION");
+
+  // 1. Candidate expresses reluctance / uncertainty: "I'm not sure. That might be difficult."
+  const reluctantRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "I'm not sure. That might be difficult.",
+  });
+  assert.equal(reluctantRes.body.clarificationRequired, true);
+  assert.equal(reluctantRes.body.followUpRequired, true);
+  assert.equal(reluctantRes.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  // Bot naturally acknowledges concern and asks about conveyance vs timing
+  assert.match(reluctantRes.body.message, /Main samajh sakti hoon/i);
+  assert.match(reluctantRes.body.message, /conveyance/i);
+
+  // 2. Candidate asks a cross-question: "Travel karna kyun zaruri hai?"
+  const crossQRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Travel karna kyun zaruri hai?",
+  });
+  assert.equal(crossQRes.body.clarificationRequired, true);
+  assert.equal(crossQRes.body.followUpRequired, true);
+  assert.equal(crossQRes.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  // Bot explains verified salon-at-home cluster reason and explores practical options
+  assert.match(crossQRes.body.message, /salon-at-home/i);
+  assert.match(crossQRes.body.message, /3-4 km cluster/i);
+
+  // 3. Candidate changes mind and agrees: "Haan, main auto ya bus se manage kar lungi"
+  const agreedRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Haan, main auto ya bus se manage kar lungi",
+  });
+  // Moves to move timeline
+  assert.equal(agreedRes.body.followUpRequired, true);
+  assert.equal(agreedRes.body.question.id, "A1_MOVE_TIMELINE");
+
+  // 4. Candidate provides move timeline
+  const timelineRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_MOVE_TIMELINE",
+    answer: "15 din mein",
+  });
+  assert.equal(timelineRes.body.question.id, "A2");
+
+  // Check report records travelWillingness: "yes" and preserves follow-up records
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(report.travelWillingness, "yes");
+  const followUpAnswers = report.answers.filter((a) => a.questionId.startsWith("A1_"));
+  assert.ok(followUpAnswers.length >= 2, "Follow-up answers must be preserved in report");
+});
+
+test("Natural Travel Flow: handles candidate declining after travel probe without infinite loop", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Kavita" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Bellandur",
+  });
+
+  // Candidate is reluctant
+  const relRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Shayad mushkil hoga",
+  });
+  assert.match(relRes.body.message, /Main samajh sakti hoon/i);
+
+  // Candidate confirms refusal
+  const declineRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Nahi, main travel nahi kar sakti",
+  });
+  assert.equal(declineRes.body.question.id, "A2");
+  assert.equal(declineRes.body.travelWillingness, "no");
+  assert.equal(declineRes.body.manualReviewRequired, true);
+});
+
+test("Natural Travel Flow: handles persistent uncertainty after probe without blocking", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Rekha" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "HSR Layout",
+  });
+
+  // Turn 1: reluctant
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "I am not sure",
+  });
+
+  // Turn 2: still uncertain after probe
+  const uncertainRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Abhi kuch nahi keh sakti, pakka nahi pata",
+  });
+
+  // Accurately records uncertain, flags for manual review, and advances to A2
+  assert.equal(uncertainRes.body.question.id, "A2");
+  assert.equal(uncertainRes.body.travelWillingness, "uncertain");
+  assert.equal(uncertainRes.body.manualReviewRequired, true);
+
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(report.travelWillingness, "uncertain");
+  assert.equal(report.manualReviewRequired, true);
+});
+
+test("Natural Travel Flow on A9: handles conveyance concern, cross-questions, and husband dependence", async () => {
+  // Test conveyance concern on A9
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Geeta" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Whitefield, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahine mein" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Ghar mein main aur pati hain, koi bachche nahi hain" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Local parlor mein kaam karti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Waxing aur facial" });
+
+  // Now on A9 (travel mode): candidate expresses conveyance issue
+  const a9Res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Mere paas scooty nahi hai",
+  });
+  assert.equal(a9Res.body.followUpRequired, true);
+  assert.equal(a9Res.body.question.id, "A9_FOLLOW_UP");
+  assert.match(a9Res.body.message, /3-4 km cluster/i);
+
+  // Candidate agrees to travel by bus/auto on follow-up
+  const followUpRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9_FOLLOW_UP",
+    answer: "Haan, main bus ya auto se travel kar lungi",
+  });
+  assert.equal(followUpRes.body.question.id, "A10");
+  assert.equal(followUpRes.body.followUpCaptured, true);
+
+  // Check report retains follow-up answer linked to A9
+  const report = getReport(started.sessionId).body.report;
+  const a9FollowUp = report.answers.find((a) => a.questionId === "A9_FOLLOW_UP");
+  assert.ok(a9FollowUp);
+  assert.equal(a9FollowUp.parentQuestionId, "A9");
+  assert.equal(a9FollowUp.isFollowUp, true);
+});
+
+test("2-Warning Policy: A2_NAME gives 2 warnings and terminates on 3rd invalid attempt", async () => {
+  const started = startInterview();
+
+  // Attempt 1: repeat question naturally
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "habba jabba",
+  });
+  assert.equal(res1.status, 200);
+  assert.equal(res1.body.clarificationRequired, true);
+  assert.equal(res1.body.warningLevel, 1);
+  assert.equal(res1.body.question.id, "A2_NAME");
+  assert.match(res1.body.message, /naam/i);
+  assert.ok(res1.body.message.includes("Namaste ji, sabse pehle aap apna naam bataiye."));
+  assert.equal(res1.body.repeatedQuestionText, "Namaste ji, sabse pehle aap apna naam bataiye.");
+
+  // Attempt 2: clear warning that 1 final attempt remains
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "asdf qwerty",
+  });
+  assert.equal(res2.status, 200);
+  assert.equal(res2.body.clarificationRequired, true);
+  assert.equal(res2.body.warningLevel, 2);
+  assert.equal(res2.body.warning, true);
+  assert.match(res2.body.message, /aakhri attempt/i);
+  assert.ok(res2.body.message.includes("Namaste ji, sabse pehle aap apna naam bataiye."));
+  assert.equal(res2.body.repeatedQuestionText, "Namaste ji, sabse pehle aap apna naam bataiye.");
+
+  // Attempt 3: graceful termination
+  const res3 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "aaaa",
+  });
+  assert.equal(res3.status, 200);
+  assert.equal(res3.body.completed, true);
+  assert.equal(res3.body.terminated, true);
+  assert.equal(res3.body.sessionStatus, "terminated");
+  assert.equal(res3.body.terminationReason, "repeated_invalid_answers");
+  assert.equal(res3.body.terminatedAtQuestionId, "A2_NAME");
+  assert.match(res3.body.message, /Teen baar koshish/i);
+
+  // Subsequent answer submission is rejected with HTTP 409
+  const res4 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Priya",
+  });
+  assert.equal(res4.status, 409);
+  assert.equal(res4.body.code, "INTERVIEW_TERMINATED");
+
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(report.status, "terminated");
+  assert.equal(report.terminationReason, "repeated_invalid_answers");
+  assert.equal(report.terminatedAtQuestionId, "A2_NAME");
+  assert.equal(report.manualReviewRequired, false);
+});
+
+test("2-Warning Policy: Location A1 gives 2 warnings and terminates on 3rd invalid attempt", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan agree karti hoon" });
+
+  // Attempt 1 on A1
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "biryani",
+  });
+  assert.equal(res1.body.clarificationRequired, true);
+  assert.equal(res1.body.warningLevel, 1);
+  assert.equal(res1.body.question.id, "A1");
+  assert.ok(res1.body.message.includes("Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?"));
+  assert.equal(res1.body.repeatedQuestionText, "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?");
+
+  // Attempt 2 on A1
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "pizza",
+  });
+  assert.equal(res2.body.clarificationRequired, true);
+  assert.equal(res2.body.warningLevel, 2);
+  assert.equal(res2.body.warning, true);
+  assert.match(res2.body.message, /aakhri attempt/i);
+  assert.ok(res2.body.message.includes("Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?"));
+  assert.equal(res2.body.repeatedQuestionText, "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?");
+
+  // Attempt 3 on A1
+  const res3 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "chair",
+  });
+  assert.equal(res3.body.completed, true);
+  assert.equal(res3.body.terminated, true);
+  assert.equal(res3.body.sessionStatus, "terminated");
+  assert.equal(res3.body.terminationReason, "repeated_invalid_answers");
+  assert.equal(res3.body.terminatedAtQuestionId, "A1");
+
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(report.status, "terminated");
+  assert.equal(report.terminatedAtQuestionId, "A1");
+});
+
+test("2-Warning Policy: Age A2 gives 2 warnings and terminates on 3rd invalid attempt", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahine mein" });
+
+  // Attempt 1 on A2
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "chair",
+  });
+  assert.equal(res1.body.clarificationRequired, true);
+  assert.equal(res1.body.warningLevel, 1);
+  assert.equal(res1.body.question.id, "A2");
+  assert.ok(res1.body.message.includes("Aadhaar card pe aapki date of birth kya likhi hai?"));
+  assert.equal(res1.body.repeatedQuestionText, "Aadhaar card pe aapki date of birth kya likhi hai?");
+
+  // Attempt 2 on A2
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "kal",
+  });
+  assert.equal(res2.body.clarificationRequired, true);
+  assert.equal(res2.body.warningLevel, 2);
+  assert.equal(res2.body.warning, true);
+  assert.equal(res2.body.question.id, "A2");
+  assert.ok(res2.body.message.includes("Aadhaar card pe aapki date of birth kya likhi hai?"));
+  assert.equal(res2.body.repeatedQuestionText, "Aadhaar card pe aapki date of birth kya likhi hai?");
+
+  // Attempt 3 on A2
+  const res3 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "asdf",
+  });
+  assert.equal(res3.body.completed, true);
+  assert.equal(res3.body.terminated, true);
+  assert.equal(res3.body.sessionStatus, "terminated");
+  assert.equal(res3.body.terminationReason, "repeated_invalid_answers");
+  assert.equal(res3.body.terminatedAtQuestionId, "A2");
+});
+
+test("2-Warning Policy: Open-ended question gives 2 warnings and terminates on 3rd invalid attempt", async () => {
+  const started = startInterview();
+  const mockSufficient = async () => ({
+    understanding: "Clear answer",
+    answerStatus: "sufficient",
+    needsClarification: false,
+    clarificationQuestion: "",
+  });
+  const mockIrrelevant = async () => ({
+    understanding: "Irrelevant response",
+    answerStatus: "irrelevant",
+    needsClarification: true,
+    clarificationQuestion: "Could you please explain your work experience directly?",
+  });
+
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Ritu" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Noida, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "immediate" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "27" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Shaadi ho gayi hai, bacche nahi hain" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Local salon mein" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Facial and waxing" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A9", answer: "Scooty se travel kar lungi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A10", answer: "9 baje" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A11", answer: "Haan koi dikkat nahi hai" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A12", answer: "Haan theek hai" }, { interpretAnswerImpl: mockSufficient });
+
+  // Now on B1 (open-ended experience): candidate gives bare "haan" or irrelevant answer
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "B1",
+    answer: "haan",
+  }, { interpretAnswerImpl: mockIrrelevant });
+  assert.equal(res1.body.clarificationRequired, true);
+  assert.equal(res1.body.warningLevel, 1);
+
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "B1",
+    answer: "biryani",
+  }, { interpretAnswerImpl: mockIrrelevant });
+  assert.equal(res2.body.clarificationRequired, true);
+  assert.equal(res2.body.warningLevel, 2);
+  assert.equal(res2.body.warning, true);
+
+  const res3 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "B1",
+    answer: "asdf qwerty",
+  }, { interpretAnswerImpl: mockIrrelevant });
+  assert.equal(res3.body.completed, true);
+  assert.equal(res3.body.terminated, true);
+  assert.equal(res3.body.sessionStatus, "terminated");
+  assert.equal(res3.body.terminatedAtQuestionId, "B1");
+});
+
+test("2-Warning Policy: Valid answer on attempt 2 or 3 resets counter and advances", async () => {
+  const started = startInterview();
+
+  // Attempt 1: invalid
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "habba jabba",
+  });
+  assert.equal(res1.body.warningLevel, 1);
+
+  // Attempt 2: valid name -> succeeds and advances to A0
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Anjali",
+  });
+  assert.equal(res2.status, 200);
+  assert.equal(Boolean(res2.body.clarificationRequired), false);
+  assert.equal(res2.body.question.id, "A0");
+
+  // On A0: attempt 1 invalid
+  const res3 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "biryani",
+  });
+  // Counter on A0 started fresh at 1!
+  assert.equal(res3.body.warningLevel, 1);
+  assert.ok(res3.body.message.includes("Namaste! Main UC ki screening assistant hoon."));
+  assert.equal(
+    res3.body.repeatedQuestionText,
+    "Namaste! Main UC ki screening assistant hoon. Ye baat-cheet sirf screening ke liye record hogi. Shuru karein? Aap Hindi mein baat karengi ya English mein?",
+  );
+
+  // Attempt 2 on A0: invalid
+  const res4 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "pizza",
+  });
+  assert.equal(res4.body.warningLevel, 2);
+  assert.ok(res4.body.message.includes("Namaste! Main UC ki screening assistant hoon."));
+  assert.equal(
+    res4.body.repeatedQuestionText,
+    "Namaste! Main UC ki screening assistant hoon. Ye baat-cheet sirf screening ke liye record hogi. Shuru karein? Aap Hindi mein baat karengi ya English mein?",
+  );
+
+  // Attempt 3 on A0: valid consent -> succeeds and advances to A1
+  const res5 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Haan, main Hindi mein baat karungi",
+  });
+  assert.equal(res5.status, 200);
+  assert.equal(res5.body.question.id, "A1");
+});
+
+test("2-Warning Policy: Technical AI rate limit failure does not penalize candidate or increment invalid attempts", async () => {
+  const started = startInterview();
+  const mockSufficient = async () => ({
+    understanding: "Clear answer",
+    answerStatus: "sufficient",
+    needsClarification: false,
+    clarificationQuestion: "",
+  });
+
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Anita" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "15 din" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "29" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Shaadi nahi hui, koi bachche nahi hain" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "No" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Salon" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Threading" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A9", answer: "Yes, scooty" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A10", answer: "9 AM" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A11", answer: "Yes" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A12", answer: "Yes" }, { interpretAnswerImpl: mockSufficient });
+
+  // Rate limit failure on B1
+  const mockRateLimit = async () => {
+    const err = new Error("Rate limit exceeded");
+    err.code = "AI_RATE_LIMIT";
+    throw err;
+  };
+
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "B1",
+    answer: "5 saal ka parlor experience hai",
+  }, { interpretAnswerImpl: mockRateLimit });
+
+  assert.equal(res1.body.interpretationUnavailable, true);
+  assert.equal(res1.body.code, "AI_RATE_LIMIT");
+
+  // Subsequent answer retry succeeds with normal interpretation
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "B1",
+    answer: "Maine 5 saal parlor mein facial aur waxing ka kaam kiya hai",
+  }, { interpretAnswerImpl: mockSufficient });
+  assert.equal(res2.status, 200);
+  assert.equal(Boolean(res2.body.interpretationUnavailable), false);
+});
+
+test("2-Warning Policy: A9 invalid answer repeats the complete authorized question text", async () => {
+  const started = startInterview();
+  const mockSufficient = async () => ({
+    understanding: "Clear answer",
+    answerStatus: "sufficient",
+    needsClarification: false,
+    clarificationQuestion: "",
+  });
+
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Rekha" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "15 din" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "30" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Shaadi nahi hui, koi bachche nahi hain" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "No" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Salon" }, { interpretAnswerImpl: mockSufficient });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Threading" }, { interpretAnswerImpl: mockSufficient });
+
+  // Now at A9: test attempt 1 invalid
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "biryani",
+  });
+  assert.equal(res1.body.clarificationRequired, true);
+  assert.equal(res1.body.warningLevel, 1);
+  assert.equal(res1.body.question.id, "A9");
+  assert.ok(res1.body.message.includes("Abhi aap kaam pe ya market kaise jaati hain?"));
+  assert.equal(res1.body.repeatedQuestionText, "Abhi aap kaam pe ya market kaise jaati hain?");
+
+  // Attempt 2 invalid on A9
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "pizza",
+  });
+  assert.equal(res2.body.clarificationRequired, true);
+  assert.equal(res2.body.warningLevel, 2);
+  assert.equal(res2.body.warning, true);
+  assert.equal(res2.body.question.id, "A9");
+  assert.ok(res2.body.message.includes("Abhi aap kaam pe ya market kaise jaati hain?"));
+  assert.equal(res2.body.repeatedQuestionText, "Abhi aap kaam pe ya market kaise jaati hain?");
+});
+
+test("Regression: 'Hindi' is accepted for language selection A0 and interview continues", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Kavita" });
+
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Hindi",
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.completed, false);
+  assert.equal(Boolean(res.body.terminated), false);
+  assert.equal(Boolean(res.body.clarificationRequired), false);
+  assert.equal(res.body.consentOutcome, "accepted");
+  assert.equal(res.body.language, "Hindi");
+  assert.equal(res.body.question.id, "A1");
+
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(report.language, "Hindi");
+  assert.equal(report.consentOutcome, "accepted");
+  assert.equal(report.status, "in_progress");
+});
+
+test("Regression: 'English' is accepted for language selection A0 and interview continues", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Neha" });
+
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "English",
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.completed, false);
+  assert.equal(Boolean(res.body.terminated), false);
+  assert.equal(Boolean(res.body.clarificationRequired), false);
+  assert.equal(res.body.consentOutcome, "accepted");
+  assert.equal(res.body.language, "English");
+  assert.equal(res.body.question.id, "A1");
+
+  const report = getReport(started.sessionId).body.report;
+  assert.equal(report.language, "English");
+});
+
+test("Regression: Language variations ('Hindi mein baat karungi', 'English please', Devanagari, 'Both') are accepted", async () => {
+  const variations = [
+    { answer: "Hindi mein baat karungi", expectedLang: "Hindi" },
+    { answer: "Mujhe Hindi mein baat karni hai", expectedLang: "Hindi" },
+    { answer: "हिंदी में बात करेंगे", expectedLang: "Hindi" },
+    { answer: "English please", expectedLang: "English" },
+    { answer: "अंग्रेज़ी", expectedLang: "English" },
+    { answer: "Hinglish", expectedLang: "Hinglish" },
+    { answer: "Both are fine", expectedLang: "Hinglish" },
+    { answer: "Dono chalega", expectedLang: "Hinglish" },
+  ];
+
+  for (const { answer, expectedLang } of variations) {
+    const started = startInterview();
+    await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+
+    const res = await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: "A0",
+      answer,
+    });
+
+    assert.equal(res.status, 200, `Answer '${answer}' must return 200`);
+    assert.equal(res.body.completed, false, `Answer '${answer}' must not terminate`);
+    assert.equal(res.body.consentOutcome, "accepted", `Answer '${answer}' must accept consent`);
+    assert.equal(res.body.language, expectedLang, `Answer '${answer}' must detect language '${expectedLang}'`);
+    assert.equal(res.body.question.id, "A1");
+  }
+});
+
+test("Regression: Invalid attempt on A2_NAME does not leak or cause termination on A0", async () => {
+  const started = startInterview();
+
+  // Attempt 1 on A2_NAME: invalid
+  const resName1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "habba jabba",
+  });
+  assert.equal(resName1.body.warningLevel, 1);
+
+  // Attempt 2 on A2_NAME: valid name
+  const resName2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Aarti",
+  });
+  assert.equal(resName2.body.question.id, "A0");
+
+  // On A0: candidate says "Hindi" on first attempt
+  const resA0 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Hindi",
+  });
+
+  // Must succeed immediately with no warning and no termination
+  assert.equal(resA0.status, 200);
+  assert.equal(resA0.body.completed, false);
+  assert.equal(Boolean(resA0.body.warningLevel), false);
+  assert.equal(Boolean(resA0.body.terminated), false);
+  assert.equal(resA0.body.question.id, "A1");
+  assert.equal(resA0.body.language, "Hindi");
+});
+
+test("Regression: Invalid-attempt counter resets on question transition", async () => {
+  const started = startInterview();
+
+  // Attempt 1 on A2_NAME: invalid
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "asdf" });
+  // Attempt 2 on A2_NAME: valid
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Meena" });
+
+  // On A0: Attempt 1 invalid ("biryani")
+  const res1 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "biryani" });
+  assert.equal(res1.body.warningLevel, 1, "Counter on A0 must start fresh at 1, not 2");
+
+  // On A0: Attempt 2 invalid ("pizza")
+  const res2 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "pizza" });
+  assert.equal(res2.body.warningLevel, 2);
+
+  // On A0: Attempt 3 valid ("Hindi") -> prevents termination and advances
+  const res3 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Hindi" });
+  assert.equal(res3.body.completed, false);
+  assert.equal(Boolean(res3.body.terminated), false);
+  assert.equal(res3.body.question.id, "A1");
+  assert.equal(res3.body.language, "Hindi");
+
+  // On A1: Attempt 1 invalid ("chair") -> starts fresh at warningLevel 1
+  const resA1 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "chair" });
+  assert.equal(resA1.body.warningLevel, 1, "Counter on A1 must start fresh at 1");
+});
+
+test("Regression: Three genuinely invalid answers to A0 produce two warnings then termination", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Rani" });
+
+  // Attempt 1: invalid
+  const res1 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "biryani" });
+  assert.equal(res1.body.warningLevel, 1);
+  assert.equal(res1.body.question.id, "A0");
+
+  // Attempt 2: invalid
+  const res2 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "pizza" });
+  assert.equal(res2.body.warningLevel, 2);
+  assert.equal(res2.body.warning, true);
+  assert.equal(res2.body.question.id, "A0");
+
+  // Attempt 3: invalid -> graceful termination
+  const res3 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "chair" });
+  assert.equal(res3.body.completed, true);
+  assert.equal(res3.body.terminated, true);
+  assert.equal(res3.body.sessionStatus, "terminated");
+  assert.equal(res3.body.terminationReason, "repeated_invalid_answers");
+  assert.equal(res3.body.terminatedAtQuestionId, "A0");
+
+  // Subsequent answer is rejected with HTTP 409
+  const res4 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Hindi" });
+  assert.equal(res4.status, 409);
+  assert.equal(res4.body.code, "INTERVIEW_TERMINATED");
+});
+
+test("Reliable Name Capture: handles varied natural Hindi and English introductions, initials, and regional names", async () => {
+  const validIntroductions = [
+    { input: "Mera naam Priya Sharma hai", expectedName: "Priya Sharma" },
+    { input: "Main Sunita bol rahi hoon", expectedName: "Sunita" },
+    { input: "Aap mujhe Aarti bula sakti hain", expectedName: "Aarti" },
+    { input: "Namaste ji, mera naam Rekha Verma hai", expectedName: "Rekha Verma" },
+    { input: "This is Deepanjali", expectedName: "Deepanjali" },
+    { input: "My name is Mary D'Souza", expectedName: "Mary D'Souza" },
+    { input: "K. Lakshmi", expectedName: "K. Lakshmi" },
+    { input: "Priya S", expectedName: "Priya S" },
+    { input: "Tsering Dolma", expectedName: "Tsering Dolma" },
+    { input: "मेरा नाम पूजा है", expectedName: "पूजा" },
+  ];
+
+  for (const { input, expectedName } of validIntroductions) {
+    const started = startInterview();
+    const res = await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: "A2_NAME",
+      answer: input,
+    });
+
+    assert.equal(res.status, 200, `Answer '${input}' should be accepted with status 200`);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.question.id, "A0");
+    assert.equal(res.body.candidateName, expectedName, `Expected candidate name '${expectedName}' for input '${input}', got '${res.body.candidateName}'`);
+    assert.ok(res.body.acknowledgement, "Response must include an acknowledgement");
+    assert.match(res.body.acknowledgement, new RegExp(expectedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("Reliable Name Capture: strictly rejects nonsensical, gibberish, empty, or uncertain name answers", async () => {
+  const invalidNameInputs = [
+    "habba jabba",
+    "asdf qwerty",
+    "biryani",
+    "pizza",
+    "12345",
+    "x",
+    "pata nahi",
+    "nahi pata",
+    "   ",
+  ];
+
+  for (const input of invalidNameInputs) {
+    const started = startInterview();
+    const res = await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: "A2_NAME",
+      answer: input,
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.clarificationRequired, true, `Input '${input}' must trigger clarification, not be accepted`);
+    assert.equal(res.body.warningLevel, 1);
+    assert.equal(res.body.acknowledgement, undefined, "Invalid answer must not have an acknowledgement of acceptance");
+  }
+});
+
+test("Natural Acknowledgements: each valid answer receives appropriate brief natural acknowledgement matching session language", async () => {
+  const started = startInterview();
+
+  // A2_NAME
+  const resName = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Mera naam Priya hai",
+  });
+  assert.equal(resName.body.acknowledgement, "Thank you, Priya ji!");
+
+  // A0 (select English)
+  const resA0 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "I would prefer English please",
+  });
+  assert.equal(resA0.body.acknowledgement, "Thank you, understood.");
+
+  // A1 (Location) in English session
+  const resA1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "I live in Whitefield, Bangalore and can travel across the city.",
+  });
+  assert.equal(resA1.body.acknowledgement, "Understood, thank you.");
+  assert.equal(resA1.body.question.id, "A1_MOVE_TIMELINE");
+
+  // A1 Follow-up (Move timeline)
+  const resTimeline = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_MOVE_TIMELINE",
+    answer: "I can relocate within 15 days if required.",
+  });
+  assert.equal(resTimeline.body.acknowledgement, "Understood, thank you.");
+  assert.equal(resTimeline.body.question.id, "A2");
+
+  // A2 (Age) in English session
+  const resA2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "I am 28 years old.",
+  });
+  assert.equal(resA2.body.acknowledgement, "Thank you, noted.");
+  assert.equal(resA2.body.question.id, "A3");
+});
+
+test("deleteReport removes the report from sessions and subsequent getReport returns 404", async () => {
+  const started = startInterview();
+  const sessionId = started.sessionId;
+
+  // Confirm report is present in listReports and getReport
+  assert.equal(getReport(sessionId).status, 200);
+  const beforeList = listReports().body.sessions;
+  assert.ok(beforeList.some((s) => s.sessionId === sessionId));
+
+  // Delete the report
+  const deleteResult = deleteReport(sessionId);
+  assert.equal(deleteResult.status, 200);
+  assert.equal(deleteResult.body.success, true);
+
+  // Confirm report is no longer present
+  assert.equal(getReport(sessionId).status, 404);
+  const afterList = listReports().body.sessions;
+  assert.ok(!afterList.some((s) => s.sessionId === sessionId));
+
+  // Deleting again returns 404
+  const deleteAgain = deleteReport(sessionId);
+  assert.equal(deleteAgain.status, 404);
+  assert.equal(deleteAgain.body.success, false);
+});
+
+test("deleteReport isolates deletion and preserves other reports and sessions", async () => {
+  const session1 = startInterview();
+  const session2 = startInterview();
+
+  await submitAnswer({ sessionId: session1.sessionId, expectedQuestionId: "A2_NAME", answer: "Candidate One" });
+  await submitAnswer({ sessionId: session2.sessionId, expectedQuestionId: "A2_NAME", answer: "Candidate Two" });
+
+  // Delete session 1
+  const result = deleteReport(session1.sessionId);
+  assert.equal(result.status, 200);
+
+  // Session 1 is deleted
+  assert.equal(getReport(session1.sessionId).status, 404);
+
+  // Session 2 is completely intact
+  const report2 = getReport(session2.sessionId);
+  assert.equal(report2.status, 200);
+  assert.equal(report2.body.report.candidateName, "Candidate Two");
+
+  // Clean up session 2
+  deleteReport(session2.sessionId);
+});
+
+test("interviewController.deleteReport deletes report with HTTP 200 and handles nonexistent report with HTTP 404", async () => {
+  const original = {
+    isConnected: persistence.isConnected,
+    findSessionById: persistence.findSessionById,
+    deleteSession: persistence.deleteSession,
+  };
+
+  const started = startInterview();
+  const sessionId = started.sessionId;
+  let persistenceDeleted = false;
+
+  persistence.isConnected = () => true;
+  persistence.findSessionById = async (id) => (id === sessionId ? getSessionForPersistence(id) : null);
+  persistence.deleteSession = async (id) => {
+    if (id === sessionId) {
+      persistenceDeleted = true;
+      return true;
+    }
+    return false;
+  };
+
+  try {
+    const makeRes = () => ({
+      statusCode: 200,
+      body: null,
+      status(code) { this.statusCode = code; return this; },
+      json(data) { this.body = data; return this; },
+    });
+
+    const res1 = makeRes();
+    await interviewController.deleteReport({ params: { sessionId } }, res1);
+    assert.equal(res1.statusCode, 200);
+    assert.equal(res1.body.success, true);
+    assert.equal(res1.body.sessionId, sessionId);
+    assert.equal(persistenceDeleted, true);
+
+    // Second delete returns 404
+    const res2 = makeRes();
+    await interviewController.deleteReport({ params: { sessionId } }, res2);
+    assert.equal(res2.statusCode, 404);
+    assert.equal(res2.body.success, false);
+
+    // Invalid session ID returns 400
+    const res3 = makeRes();
+    await interviewController.deleteReport({ params: { sessionId: "" } }, res3);
+    assert.equal(res3.statusCode, 400);
+  } finally {
+    persistence.isConnected = original.isConnected;
+    persistence.findSessionById = original.findSessionById;
+    persistence.deleteSession = original.deleteSession;
+  }
+});
+

@@ -56,7 +56,14 @@ export default function InterviewReport({ report, loading, error, onRetry, onDow
             )}
             {view.locationOutcome && <span>Location outcome: {view.locationOutcome}</span>}
             {view.manualReviewRequired && <ResultBadge>Manual review required</ResultBadge>}
+            {view.status === "terminated" && <ResultBadge>Interview terminated</ResultBadge>}
           </div>
+
+          {view.terminationReason && (
+            <p className="uc-report-review-reason">
+              Termination reason: {view.terminationReason}{view.terminatedAtQuestionId ? ` (at question ${view.terminatedAtQuestionId})` : ""}
+            </p>
+          )}
 
           {view.manualReviewReason && (
             <p className="uc-report-review-reason">

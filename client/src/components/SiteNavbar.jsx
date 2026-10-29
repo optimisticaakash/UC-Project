@@ -87,6 +87,9 @@ export default function SiteNavbar() {
             <>
               <span className="rounded-full bg-neutral-100 px-3 py-2 text-xs font-semibold text-neutral-700">{navModel.roleLabel}</span>
               <a className="text-sm font-medium text-neutral-700 underline-offset-4 hover:underline" href={navModel.dashboard.href}>{navModel.dashboard.label}</a>
+              {navModel.roleLabel === "Admin" && (
+                <a className="text-sm font-medium text-neutral-700 underline-offset-4 hover:underline" href="/admin/responses">Responses</a>
+              )}
               <button className="rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 disabled:opacity-60" disabled={signingOut} onClick={signOut} type="button">
                 {signingOut ? "Signing out…" : "Sign Out"}
               </button>

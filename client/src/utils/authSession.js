@@ -1,5 +1,8 @@
+import { buildApiUrl } from "./apiUrl.js";
+
 export async function loadAdminSession(apiUrl, fetchImpl = fetch) {
-  const response = await fetchImpl(`${apiUrl}/api/admin/me`, {
+  const url = buildApiUrl(apiUrl, "/api/admin/me");
+  const response = await fetchImpl(url, {
     credentials: "include",
   });
 
@@ -14,7 +17,8 @@ export async function loadAdminSession(apiUrl, fetchImpl = fetch) {
 }
 
 export async function logoutAdmin(apiUrl, fetchImpl = fetch) {
-  const response = await fetchImpl(`${apiUrl}/api/admin/logout`, {
+  const url = buildApiUrl(apiUrl, "/api/admin/logout");
+  const response = await fetchImpl(url, {
     method: "POST",
     credentials: "include",
   });
@@ -26,7 +30,8 @@ export async function logoutAdmin(apiUrl, fetchImpl = fetch) {
 }
 
 export async function loadCandidateSession(apiUrl, fetchImpl = fetch) {
-  const response = await fetchImpl(`${apiUrl}/api/candidate/me`, {
+  const url = buildApiUrl(apiUrl, "/api/candidate/me");
+  const response = await fetchImpl(url, {
     credentials: "include",
   });
   if (response.status === 401) return { status: "signed_out" };
@@ -45,7 +50,8 @@ export async function loadCandidateSession(apiUrl, fetchImpl = fetch) {
 }
 
 export async function loadAuthSession(apiUrl, fetchImpl = fetch) {
-  const adminResponse = await fetchImpl(`${apiUrl}/api/admin/me`, { credentials: "include" });
+  const adminUrl = buildApiUrl(apiUrl, "/api/admin/me");
+  const adminResponse = await fetchImpl(adminUrl, { credentials: "include" });
   if (adminResponse.ok) {
     const data = await adminResponse.json();
     if (data?.success && data.user?.role === "admin") {
@@ -58,7 +64,8 @@ export async function loadAuthSession(apiUrl, fetchImpl = fetch) {
 }
 
 export async function loginCandidate(apiUrl, loginIdentifier, password, fetchImpl = fetch) {
-  const response = await fetchImpl(`${apiUrl}/api/candidate/login`, {
+  const url = buildApiUrl(apiUrl, "/api/candidate/login");
+  const response = await fetchImpl(url, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -72,7 +79,8 @@ export async function loginCandidate(apiUrl, loginIdentifier, password, fetchImp
 }
 
 export async function logoutCandidate(apiUrl, fetchImpl = fetch) {
-  const response = await fetchImpl(`${apiUrl}/api/candidate/logout`, {
+  const url = buildApiUrl(apiUrl, "/api/candidate/logout");
+  const response = await fetchImpl(url, {
     method: "POST",
     credentials: "include",
   });

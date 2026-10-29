@@ -1,7 +1,9 @@
 import { getCandidateVisibleQuestion } from "../utils/interviewUiState.js";
 
-export default function AIOrb({ isAiSpeaking, audioLevel, currentQuestion }) {
-  const visibleQuestion = getCandidateVisibleQuestion(currentQuestion);
+export default function AIOrb({ isAiSpeaking, audioLevel, currentQuestion, captionText }) {
+  const visibleQuestion = isAiSpeaking
+    ? (captionText || "")
+    : (captionText || getCandidateVisibleQuestion(currentQuestion));
 
   return (
     <section aria-label="AI interviewer" aria-live="polite">

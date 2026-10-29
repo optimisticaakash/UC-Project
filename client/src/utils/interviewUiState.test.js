@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  canResumeSession,
   getCandidateVisibleQuestion,
   getCandidateSafeError,
   getInterviewUiModel,
   isTerminalInterviewState,
   resolveTerminalInterviewState,
+  shouldDisplayInterviewView,
 } from "./interviewUiState.js";
 
 test("interview status follows ready, active voice, and terminal lifecycle states", () => {
@@ -25,8 +27,11 @@ test("terminal interview outcomes require backend completion, status, or review 
   assert.equal(resolveTerminalInterviewState({ completed: true, manualReviewRequired: true }), "manual_review");
   assert.equal(resolveTerminalInterviewState({ sessionStatus: "incomplete" }), "ended");
   assert.equal(resolveTerminalInterviewState({ eligibilityOutcome: "reject" }), "rejected");
+  assert.equal(resolveTerminalInterviewState({ sessionStatus: "terminated" }), "terminated");
+  assert.equal(resolveTerminalInterviewState({ terminated: true }), "terminated");
   assert.equal(resolveTerminalInterviewState({}), "end_unconfirmed");
   assert.equal(isTerminalInterviewState("manual_review"), true);
+  assert.equal(isTerminalInterviewState("terminated"), true);
   assert.equal(isTerminalInterviewState("in_progress"), false);
   // Audio stopping alone has no role in the lifecycle decision.
   assert.equal(getInterviewUiModel({ lifecycle: "in_progress", isAiSpeaking: false }).statusLabel, "Interview in progress");
@@ -72,3 +77,32 @@ test("pre-interview state displays introductory placeholder rather than initial 
     "Namaste ji, sabse pehle aap apna naam bataiye.",
   );
 });
+
+test("interview paused state is non-terminal and has friendly status and recovery messaging", () => {
+  assert.equal(getInterviewUiModel({ lifecycle: "paused" }).statusLabel, "Interview paused");
+  assert.equal(isTerminalInterviewState("paused"), false);
+  assert.equal(getInterviewUiModel({ lifecycle: "paused" }).voiceLabel, null);
+  assert.equal(
+    getCandidateSafeError("The connection was interrupted. Your progress is saved. Click Resume Interview to continue."),
+    "The connection was interrupted. Your progress is saved. Click Resume Interview to continue.",
+  );
+});
+
+test("canResumeSession accepts only active in_progress or paused sessions", () => {
+  assert.equal(canResumeSession({ sessionId: "sess-1", status: "in_progress" }), true);
+  assert.equal(canResumeSession({ sessionId: "sess-1", status: "paused" }), true);
+  assert.equal(canResumeSession({ sessionId: "sess-1", status: "completed" }), false);
+  assert.equal(canResumeSession({ sessionId: "sess-1", status: "terminated" }), false);
+  assert.equal(canResumeSession({ sessionId: "sess-1", status: "ended" }), false);
+  assert.equal(canResumeSession({ sessionId: "sess-1", status: "manual_review" }), false);
+  assert.equal(canResumeSession({ status: "in_progress" }), false);
+  assert.equal(canResumeSession(null), false);
+  assert.equal(canResumeSession(undefined), false);
+});
+
+test("shouldDisplayInterviewView prevents premature interview view on home screen before explicit start/resume", () => {
+  assert.equal(shouldDisplayInterviewView({ isInterviewOpen: false }), false);
+  assert.equal(shouldDisplayInterviewView({ isInterviewOpen: true }), true);
+  assert.equal(shouldDisplayInterviewView(), false);
+});
+

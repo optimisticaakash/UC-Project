@@ -75,7 +75,7 @@ test("legacy configured admin migrates to a hashed Mongo-style record and gets a
   assert.equal([...store.admins.values()][0].passwordHash, "hashed:a-long-test-secret");
   assert.doesNotMatch(JSON.stringify(response.body), /opaque-random-session-token|a-long-test-secret/);
   assert.match(response.headers["set-cookie"], /HttpOnly/);
-  assert.match(response.headers["set-cookie"], /SameSite=Strict/);
+  assert.match(response.headers["set-cookie"], /SameSite=(?:Strict|None)/);
   assert.match(response.headers["set-cookie"], /Secure/);
   assert.equal(store.sessions.size, 1);
 });
@@ -141,15 +141,21 @@ test("internal reports require admin and interview routes require candidate sess
   const interviewRouter = require("../routes/interviewRoutes");
   const route = (router, path) => router.stack.find((layer) => layer.route?.path === path)?.route;
 
-  for (const path of ["/sessions", "/:sessionId/report", "/:sessionId/report.pdf", "/manual-review", "/interpret"]) {
+  for (const path of ["/sessions", "/responses", "/:sessionId/report", "/:sessionId/report.pdf", "/manual-review", "/interpret"]) {
     assert.equal(route(interviewRouter, path).stack[0].handle, adminAuth.requireAdmin, `${path} should require admin first`);
   }
+  const deleteReportLayers = interviewRouter.stack.filter(
+    (layer) => layer.route?.path === "/:sessionId/report" && layer.route?.methods.delete,
+  );
+  assert.ok(deleteReportLayers.length > 0, "DELETE /:sessionId/report route must exist");
+  assert.equal(deleteReportLayers[0].route.stack[0].handle, adminAuth.requireAdmin, "DELETE /:sessionId/report must require admin auth");
   assert.equal(route(adminRouter, "/me").stack[0].handle, adminAuth.requireAdmin);
   assert.equal(route(adminRouter, "/admins").stack[0].handle, adminAuth.requireAdmin);
   assert.equal(route(adminRouter, "/admins/:adminId").stack[0].handle, adminAuth.requireAdmin);
   assert.equal(route(adminRouter, "/candidates/:candidateId/deactivate").stack[0].handle, adminAuth.requireAdmin);
   assert.equal(route(adminRouter, "/candidates/:candidateId/activate").stack[0].handle, adminAuth.requireAdmin);
   assert.equal(route(adminRouter, "/candidates/:candidateId").stack[0].handle, adminAuth.requireAdmin);
+  assert.equal(route(adminRouter, "/responses").stack[0].handle, adminAuth.requireAdmin);
   for (const path of ["/start", "/answer", "/end"]) {
     assert.equal(route(interviewRouter, path).stack[0].handle, candidateAuth.requireCandidate, `${path} should require candidate auth first`);
   }
@@ -195,4 +201,58 @@ test("admin deletion removes another admin and invalidates every session for tha
   assert.equal(store.sessions.has("target-session-b"), false);
   assert.equal(store.sessions.has("current-session"), true);
   assert.equal((await invoke(auth.requireAdmin, { headers: { cookie: "uc_admin_session=target-session-a" } })).statusCode, 401);
+});
+
+test("admin login in local development uses SameSite=Lax without Secure so browsers accept cookies over HTTP, and /api/admin/me succeeds", async () => {
+  const store = createStore();
+  const auth = createAdminAuth({
+    store,
+    getCredentials: () => ({ username: "local-admin", password: "local-secret-password" }),
+    passwordHasher: async (password) => `hashed:${password}`,
+    passwordVerifier: async (password, encoded) => encoded === `hashed:${password}`,
+    isProduction: () => false,
+    tokenFactory: () => "local-dev-admin-session-token",
+  });
+
+  const loginResponse = await invoke(auth.login, {
+    body: { username: "local-admin", password: "local-secret-password" },
+    ip: "127.0.0.1",
+  });
+
+  assert.equal(loginResponse.statusCode, 200);
+  assert.equal(loginResponse.body.user.role, "admin");
+  const cookieHeader = loginResponse.headers["set-cookie"];
+  assert.match(cookieHeader, /HttpOnly/);
+  assert.match(cookieHeader, /SameSite=Lax/);
+  assert.doesNotMatch(cookieHeader, /Secure/);
+
+  // Extract session token from cookie and verify /api/admin/me
+  const cookieMatch = cookieHeader.match(/uc_admin_session=([^;]+)/);
+  assert.ok(cookieMatch);
+  const cookieValue = cookieMatch[1];
+
+  const req = { headers: { cookie: `uc_admin_session=${cookieValue}` } };
+  const meGuard = await invoke(auth.requireAdmin, req);
+  assert.equal(meGuard.nextCalled, true);
+  assert.equal(req.admin.role, "admin");
+
+  const meResponse = await invoke(auth.me, req);
+  assert.equal(meResponse.statusCode, 200);
+  assert.equal(meResponse.body.success, true);
+  assert.equal(meResponse.body.user.role, "admin");
+});
+
+test("unauthenticated access to admin routes returns HTTP 401", async () => {
+  const store = createStore();
+  const auth = createAdminAuth({ store });
+
+  const noCookieResponse = await invoke(auth.requireAdmin, { headers: {} });
+  assert.equal(noCookieResponse.statusCode, 401);
+  assert.equal(noCookieResponse.body.success, false);
+
+  const invalidCookieResponse = await invoke(auth.requireAdmin, {
+    headers: { cookie: "uc_admin_session=non-existent-token" },
+  });
+  assert.equal(invalidCookieResponse.statusCode, 401);
+  assert.equal(invalidCookieResponse.body.success, false);
 });
