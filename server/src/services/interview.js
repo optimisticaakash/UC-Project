@@ -5,6 +5,7 @@ const { classifyConsent, classifyLanguage } = require("./rules/consentRules");
 const { evaluateAge } = require("./rules/ageRules");
 const { classifyLocation } = require("./rules/locationRules");
 const { interpretAnswer } = require("./geminiService");
+const { detectCounterQuestion } = require("./counterQuestions");
 
 const bankPath = path.join(__dirname, "../data/questionBank.json");
 const bank = require(bankPath);
@@ -91,17 +92,32 @@ function advanceToNextApplicableQuestion(session) {
   }
 }
 
-function startInterview({ candidateId } = {}) {
+function startInterview({ candidateId, profileName } = {}) {
+  if (candidateId) {
+    for (const priorSession of sessions.values()) {
+      if (
+        priorSession.candidateId === candidateId &&
+        (priorSession.status === "in_progress" || priorSession.status === "paused")
+      ) {
+        priorSession.status = "incomplete";
+        priorSession.endedAt = new Date().toISOString();
+      }
+    }
+  }
+
   const sessionId = crypto.randomUUID();
 
   const session = {
     sessionId,
     ...(candidateId ? { candidateId } : {}),
+    ...(profileName ? { profileName: formatCandidateName(profileName) } : {}),
     currentQuestionIndex: 0,
     answers: [],
     status: "in_progress",
     manualReviewRequired: false,
     manualReviewPaused: false,
+    identityMismatchAttempts: 0,
+    nameRejectionCount: 0,
     consentOutcome: "pending",
     language: null,
     invalidAttempts: {},
@@ -149,6 +165,8 @@ const KNOWN_NONSENSE_TOKENS = new Set([
   "habba", "jabba", "bla", "blah", "asdf", "qwerty", "zxcv", "test", "testing",
   "foo", "bar", "baz", "qux", "xyz", "abc", "na", "none", "unknown", "random",
   "kuch", "bhi", "koi", "biryani", "pizza", "burger", "samosa", "chair", "table",
+  "nahi", "nahin", "nhi", "no", "nope", "not", "yes", "haan", "han", "ha",
+  "haanji", "hanji", "yahi", "wahi", "sahi", "theek", "thik", "bilkul", "correct", "right", "galat", "wrong", "naam",
 ]);
 
 function formatCandidateName(name) {
@@ -185,7 +203,157 @@ function isSaneName(name) {
   return true;
 }
 
+// Transliterate common Devanagari characters to Latin phonetic characters
+const DEVANAGARI_CONSONANTS = {
+  "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "ङ": "ng",
+  "च": "ch", "छ": "chh", "ज": "j", "झ": "jh", "ञ": "ny",
+  "ट": "t", "ठ": "th", "ड": "d", "ढ": "dh", "ण": "n",
+  "त": "t", "थ": "th", "द": "d", "ध": "dh", "न": "n",
+  "प": "p", "फ": "f", "ब": "b", "भ": "bh", "म": "m",
+  "य": "y", "र": "r", "ल": "l", "व": "v",
+  "श": "sh", "ष": "sh", "स": "s", "ह": "h",
+  "क्ष": "ksh", "त्र": "tr", "ज्ञ": "gy",
+};
+const DEVANAGARI_MATRAS = {
+  "ा": "a", "ि": "i", "ी": "i", "ु": "u", "ू": "u",
+  "ृ": "ri", "े": "e", "ै": "ai", "ो": "o", "ौ": "au",
+  "ं": "n", "ँ": "n", "ः": "h",
+};
+const DEVANAGARI_INDEPENDENT_VOWELS = {
+  "अ": "a", "आ": "a", "इ": "i", "ई": "i", "उ": "u", "ऊ": "u",
+  "ऋ": "ri", "ए": "e", "ऐ": "ai", "ओ": "o", "औ": "au",
+};
+
+function transliterateDevanagariToLatin(text) {
+  if (!text || !/[\u0900-\u097f]/u.test(text)) return text;
+  let res = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const nextCh = text[i + 1];
+    if (DEVANAGARI_CONSONANTS[ch]) {
+      res += DEVANAGARI_CONSONANTS[ch];
+      const isWordFinal = !nextCh || /\s|[\p{P}\p{Z}]/u.test(nextCh);
+      if (nextCh === "्") {
+        // virama suppresses inherent vowel
+      } else if (!isWordFinal && !DEVANAGARI_MATRAS[nextCh]) {
+        // inherent vowel inside a word, not at word end in modern Hindi
+        res += "a";
+      }
+    } else if (DEVANAGARI_MATRAS[ch]) {
+      res += DEVANAGARI_MATRAS[ch];
+    } else if (DEVANAGARI_INDEPENDENT_VOWELS[ch]) {
+      res += DEVANAGARI_INDEPENDENT_VOWELS[ch];
+    } else if (ch !== "्" && ch !== "़") {
+      res += ch;
+    }
+  }
+  return res;
+}
+
+function normalizeNameTokenPhonetic(token) {
+  if (!token) return "";
+  let t = token.toLowerCase();
+  t = transliterateDevanagariToLatin(t);
+  t = t.replace(/[^a-z]/g, "");
+  if (!t) return "";
+
+  // Common Hindi/English spelling variations
+  t = t.replace(/ee+/g, "i");
+  t = t.replace(/oo+/g, "u");
+  t = t.replace(/ou/g, "au");
+  t = t.replace(/chou/g, "chau");
+  t = t.replace(/ph/g, "f");
+  t = t.replace(/w/g, "v");
+  t = t.replace(/ay\b/g, "ai");
+  t = t.replace(/ey\b/g, "ai");
+  t = t.replace(/aa+/g, "a");
+  // Normalize Agrawal / Agarwal
+  t = t.replace(/agarval/g, "agraval");
+  // Normalize Maurya / Morya
+  t = t.replace(/mory/g, "maury");
+  t = t.replace(/([a-z])\1+/g, "$1");
+  t = t.replace(/gh$/g, "g");
+  // Drop trailing schwa 'a' on tokens longer than 3 letters for Hindi/English parity
+  if (t.length > 3) {
+    t = t.replace(/a+$/g, "");
+  }
+  return t;
+}
+
+const HONORIFICS_REGEX = /\b(?:ji|shri|sri|smt|shrimati|mrs|mr|ms|miss|dr)\b/gi;
+const DEVANAGARI_HONORIFICS_REGEX = /(?:श्री|श्रीमती|कुमारी|देवी|जी)/gu;
+
+function extractCleanTokens(name) {
+  if (!name || typeof name !== "string") return [];
+  const s = name
+    .replace(DEVANAGARI_HONORIFICS_REGEX, " ")
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()'’"“”]/g, " ")
+    .replace(HONORIFICS_REGEX, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const rawTokens = s.split(" ").filter(Boolean);
+  return rawTokens.map(normalizeNameTokenPhonetic).filter(Boolean);
+}
+
+function normalizeNameForComparison(name) {
+  return extractCleanTokens(name).join(" ");
+}
+
+function isNameMatch(spoken, profile) {
+  const spokenTokens = extractCleanTokens(spoken);
+  const profileTokens = extractCleanTokens(profile);
+  if (spokenTokens.length === 0 || profileTokens.length === 0) return false;
+
+  // Exact full match
+  if (spokenTokens.join(" ") === profileTokens.join(" ")) return true;
+
+  // Single token on both sides
+  if (spokenTokens.length === 1 && profileTokens.length === 1) {
+    return spokenTokens[0] === profileTokens[0];
+  }
+
+  // Spoken has 1 token, profile has multiple: candidate spoke first name only
+  if (spokenTokens.length === 1 && profileTokens.length > 1) {
+    return spokenTokens[0] === profileTokens[0];
+  }
+
+  // Spoken has multiple tokens, profile has 1: candidate gave full name, profile had first name
+  if (spokenTokens.length > 1 && profileTokens.length === 1) {
+    return spokenTokens[0] === profileTokens[0];
+  }
+
+  // Both have multiple tokens:
+  // First name must match
+  if (spokenTokens[0] !== profileTokens[0]) return false;
+
+  // Surnames must not conflict!
+  const spokenLast = spokenTokens[spokenTokens.length - 1];
+  const profileLast = profileTokens[profileTokens.length - 1];
+  return spokenLast === profileLast;
+}
+
 function getCurrentQuestionForSession(session) {
+  if (session.pendingNameConfirmation) {
+    const isEnglish = session.language === "English";
+    const name = session.pendingNameConfirmation.name;
+    const isFromProfile = session.pendingNameConfirmation.fromProfile;
+    let confirmPrompt;
+    if (isFromProfile) {
+      confirmPrompt = isEnglish
+        ? `Your profile name is ${name}. Is this correct?`
+        : `Aapke profile mein naam ${name} hai. Kya ye sahi hai?`;
+    } else {
+      confirmPrompt = isEnglish
+        ? `Your name is ${name}, right?`
+        : `Aapka naam ${name} hai, sahi hai na?`;
+    }
+    return {
+      id: "A2_NAME_CONFIRM",
+      Step: "A2_NAME_CONFIRM",
+      text: confirmPrompt,
+      category: "Introduction",
+    };
+  }
   if (session.pendingFollowUp) {
     const isProbe = session.pendingFollowUp.type === "contextual_probe";
     const suffix = isProbe ? "FOLLOW_UP" : session.pendingFollowUp.type.toUpperCase();
@@ -211,10 +379,10 @@ function classifyNameAnswer(answer) {
 
   if (!normalized) return { clear: false, format: "empty" };
 
-  // Strip leading polite conversational greetings/fillers:
-  // "Namaste", "Namaskar", "Hello", "Hi", "Ji", "Haan", "Haanji", "Yes", "Ha", etc.
+  // Strip leading polite conversational greetings/fillers and negation prefixes in English and Hindi:
+  // "Namaste", "Namaskar", "Hello", "Hi", "Ji", "Haan", "Haanji", "Yes", "Ha", "Nahi", "No", "नमस्ते", "नमस्कार", "हाँ", "हां", "हाँजी", "हांजी", "जी", etc.
   const strippedGreeting = normalized
-    .replace(/^(?:(?:namaste|namaskar|hello|hi|hey|ji|haan|han|haanji|hanji|yes|ha|acha|achha)\s*[,.:;!-]*\s*)+/iu, "")
+    .replace(/^(?:(?:namaste|namaskar|hello|hi|hey|ji|haan|han|haanji|hanji|yes|ha|acha|achha|nahi|nahin|nhi|no|nope|not|नमस्ते|नमस्कार|हाँ|हां|हाँजी|हांजी|जी|नहीं|नही)\s*[,.:;!-]*\s*)+/iu, "")
     .trim();
 
   const working = strippedGreeting || normalized;
@@ -225,9 +393,16 @@ function classifyNameAnswer(answer) {
     return { clear: false, format: "uncertainty" };
   }
 
-  const bareAffirmation = /^(?:haan|han|yes|ji|theek hai|thik hai|ok|okay|sahi hai|ha)$/iu;
+  const bareAffirmation =
+    /^(?:haan|han|haanji|hanji|yes|yeah|yep|yup|ji|ji\s+haan|ji\s+han|theek\s+hai|thik\s+hai|ok|okay|sahi\s+hai|sahi|ha|bilkul|bilkul\s+sahi(?:\s+hai)?|yahi\s+naam\s+hai|yahi\s+hai|wahi\s+hai|wahi\s+naam\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|mera\s+(?:yahi|wahi)\s+naam\s+hai|that's\s+correct|correct|that's\s+right|right|that's\s+my\s+name|yes\s+that's\s+my\s+name)$/iu;
   if (bareAffirmation.test(working) || bareAffirmation.test(normalized)) {
     return { clear: false, format: "bare_affirmation" };
+  }
+
+  const bareNegation =
+    /^(?:no|nope|nahi|nahin|nhi|not|galat|wrong|galat\s+hai|wrong\s+name|not\s+my\s+name|ye\s+mera\s+naam\s+nahi\s+hai|mera\s+naam\s+galat\s+hai|galat\s+naam\s+hai|गलत|नहीं|नही)$/iu;
+  if (bareNegation.test(working) || bareNegation.test(normalized)) {
+    return { clear: false, format: "bare_negation" };
   }
 
   const nameToken = String.raw`[\p{L}][\p{L}\p{M}'’.-]*`;
@@ -235,7 +410,7 @@ function classifyNameAnswer(answer) {
   const plainNameRegex = new RegExp(`^${nameSequence}$`, "u");
 
   const phraseMeraNaam = new RegExp(
-    String.raw`^(?:mera naam|मेरा नाम|my name is)\s+(.+?)(?:\s+(?:hai|है|hoon|हूँ|hai ji|jee))?$`,
+    String.raw`^(?:mera\s+(?:sahi\s+|correct\s+|actual\s+)?naam|मेरा\s+(?:सही\s+)?नाम|my\s+(?:correct\s+|real\s+|actual\s+)?name\s+is|sahi\s+naam|correct\s+name)\s+(.+?)(?:\s+(?:hai|है|hoon|हूँ|hai ji|jee))?$`,
     "iu",
   );
   const phraseMainHoon = new RegExp(
@@ -258,22 +433,31 @@ function classifyNameAnswer(answer) {
   let candidate = null;
   let format = "unsupported_phrase";
 
-  let match = phraseMeraNaam.exec(working);
+  const clauseSplit = working.split(/[,;]|(?:\s+(?:aur|and|from|se|rehti\s+hoon)\s+)/i)[0].trim();
+  const nameTarget = clauseSplit || working;
+
+  let match = phraseMeraNaam.exec(nameTarget) || phraseMeraNaam.exec(working);
   if (match) {
     candidate = match[1];
     format = "introduced_name";
-  } else if ((match = phraseMainHoon.exec(working))) {
+  } else if ((match = phraseMainHoon.exec(nameTarget) || phraseMainHoon.exec(working))) {
     candidate = match[1];
     format = "introduced_name";
-  } else if ((match = phraseThisIs.exec(working))) {
+  } else if ((match = phraseThisIs.exec(nameTarget) || phraseThisIs.exec(working))) {
     candidate = match[1];
     format = "introduced_name";
-  } else if ((match = phraseCallMe.exec(working))) {
+  } else if ((match = phraseCallMe.exec(nameTarget) || phraseCallMe.exec(working))) {
     candidate = match[1];
     format = "introduced_name";
-  } else if ((match = phraseSuffix.exec(working))) {
+  } else if ((match = phraseSuffix.exec(nameTarget) || phraseSuffix.exec(working))) {
     candidate = match[1];
     format = "introduced_name";
+  } else if (plainNameRegex.test(nameTarget)) {
+    const sentenceStarter = /^(?:i|we|my|mera|meri|mujhe|main|मैं|मेरा|मेरी|this|aap)\s/iu;
+    if (!sentenceStarter.test(nameTarget)) {
+      candidate = nameTarget;
+      format = "plain_name";
+    }
   } else if (plainNameRegex.test(working)) {
     const sentenceStarter = /^(?:i|we|my|mera|meri|mujhe|main|मैं|मेरा|मेरी|this|aap)\s/iu;
     if (!sentenceStarter.test(working)) {
@@ -284,7 +468,7 @@ function classifyNameAnswer(answer) {
 
   if (candidate) {
     const cleanedCandidate = candidate
-      .replace(/\s+(?:hai|है|hoon|हूँ|hai ji|jee|ji|bol rahi hoon|bol raha hoon|baat kar rahi hoon|here)$/iu, "")
+      .replace(/\s+(?:hai|है|hoon|हूँ|hai ji|jee|ji|जी|hi hai|ही है|hi|ही|bol rahi hoon|bol raha hoon|बोल रही हूँ|बोल रहा हूँ|baat kar rahi hoon|baat kar raha hoon|here)$/iu, "")
       .replace(/^[,\s.-]+|[,\s.-]+$/g, "")
       .trim();
 
@@ -388,10 +572,11 @@ function handleInvalidAttempt(session, question, {
   };
 }
 
-function getNaturalAcknowledgement(question, session) {
+function getNaturalAcknowledgement(question, session, candidateAnswer = "") {
   if (!question || !session) return null;
   const isEnglish = session.language === "English";
   const candidateName = session.candidateName ? session.candidateName.trim() : "";
+  const ans = typeof candidateAnswer === "string" ? candidateAnswer.trim().toLowerCase() : "";
 
   // 1. A2_NAME: Name captured
   if (question.id === "A2_NAME") {
@@ -416,22 +601,36 @@ function getNaturalAcknowledgement(question, session) {
     return isEnglish ? "Thank you, noted." : "Theek hai, noted.";
   }
 
-  // 5. A3 to A8: Family background, salon experience, salon setup
+  // 5. Dynamic candidate-grounded acknowledgement
+  if (ans) {
+    if (/\b(?:waxing|facial|threading|cleanup|bleach|manicure|pedicure|hair)\b/i.test(ans)) {
+      return isEnglish
+        ? "Understood, thank you for sharing your experience with these services."
+        : "Achha, in services ke baare mein samajh gayi.";
+    }
+    if (/\b(?:\d+|ek|do|teen|chaar|panch|paanch|chheh|saat|aath|das)\s*(?:saal|year|years|mahine|months)\b/i.test(ans)) {
+      return isEnglish
+        ? "Thank you, noted your experience."
+        : "Achha, aapka experience note kar liya.";
+    }
+  }
+
+  // 6. A3 to A8: Family background, salon experience, salon setup
   if (["A3", "A4", "A5", "A6", "A7", "A8"].includes(question.id)) {
     return isEnglish ? "Thank you for sharing that." : "Achha, samajh gayi.";
   }
 
-  // 6. A9 to A11: Travel readiness, conveyance, language fluency
+  // 7. A9 to A11: Travel readiness, conveyance, language fluency
   if (["A9", "A10", "A11"].includes(question.id)) {
     return isEnglish ? "Understood, thank you." : "Theek hai, samajh gayi.";
   }
 
-  // 7. Stage B: Technical skill evaluation (waxing, facial, threading, manicure, etc.)
+  // 8. Stage B: Technical skill evaluation (waxing, facial, threading, manicure, etc.)
   if (question.id.startsWith("B")) {
     return isEnglish ? "Thank you for sharing that." : "Achha, theek hai.";
   }
 
-  // 8. Stage C: Customer handling scenarios & salon ethics
+  // 9. Stage C: Customer handling scenarios & salon ethics
   if (question.id.startsWith("C")) {
     return isEnglish ? "Understood, thank you for explaining." : "Achha, samajh gayi.";
   }
@@ -481,6 +680,19 @@ async function submitAnswer({
         code: "INTERVIEW_TERMINATED",
         message: "This interview session has been terminated.",
         sessionStatus: "terminated",
+      },
+    };
+  }
+
+  if (session.status === "manual_review") {
+    return {
+      status: 409,
+      body: {
+        success: false,
+        code: "INTERVIEW_IN_REVIEW",
+        message: "This interview session is under manual review and cannot accept further answers.",
+        sessionStatus: "manual_review",
+        identityVerificationFailed: Boolean(session.identityVerificationFailed),
       },
     };
   }
@@ -563,17 +775,37 @@ async function submitAnswer({
   }
 
   if (requestQuestionId && requestQuestionId !== currentQuestionId) {
-    console.info("[UC Interview Diagnostics] stale_answer_ignored", {
-      requestId: safeRequestId,
-      sessionKey,
-      expectedQuestionId: requestQuestionId,
-      currentQuestionId,
-    });
-    return staleQuestionResponse();
+    if (session.pendingNameConfirmation && requestQuestionId === "A0") {
+      session.invalidAttempts = {};
+      session.candidateName = formatCandidateName(session.pendingNameConfirmation.name);
+      const nameRecord = {
+        questionId: "A2_NAME",
+        questionText: questions[0].text,
+        category: "Introduction",
+        answer: session.candidateName,
+        answeredAt: new Date().toISOString(),
+      };
+      const existingNameIdx = session.answers.findIndex((a) => a.questionId === "A2_NAME");
+      if (existingNameIdx >= 0) {
+        session.answers[existingNameIdx] = nameRecord;
+      } else {
+        session.answers.push(nameRecord);
+      }
+      session.pendingNameConfirmation = null;
+      session.currentQuestionIndex += 1;
+    } else {
+      console.info("[UC Interview Diagnostics] stale_answer_ignored", {
+        requestId: safeRequestId,
+        sessionKey,
+        expectedQuestionId: requestQuestionId,
+        currentQuestionId,
+      });
+      return staleQuestionResponse();
+    }
   }
 
   const question = questions[session.currentQuestionIndex];
-  const isNameQuestion = question?.id === "A2_NAME";
+  const isNameQuestion = question?.id === "A2_NAME" || Boolean(session.pendingNameConfirmation);
   if (
     typeof answer !== "string" ||
     (!answer.trim() && !isNameQuestion)
@@ -583,6 +815,463 @@ async function submitAnswer({
       body: {
         success: false,
         message: "Please provide a non-empty answer.",
+      },
+    };
+  }
+
+  const cleanAnswer = typeof answer === "string" ? answer.trim() : "";
+
+  async function checkCandidateInquiry(qText = question?.text, qId = question?.id) {
+    if (!cleanAnswer || /^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(cleanAnswer)) {
+      return null;
+    }
+
+    let inquiry = null;
+    try {
+      const interp = await interpretAnswerImpl({
+        question: qText,
+        answer: cleanAnswer,
+        questionId: qId,
+        language: session.language,
+        diagnosticRequestId: safeRequestId,
+        diagnosticPromptTurn: safePromptTurn,
+        diagnosticSessionGeneration: safeSessionGeneration,
+      });
+
+      if (
+        interp &&
+        (interp.intent === "RELEVANT_COUNTER_QUESTION" ||
+          interp.intent === "CLARIFICATION_REQUEST" ||
+          interp.answerStatus === "counter_question")
+      ) {
+        inquiry = interp;
+      }
+    } catch {
+      // Gemini offline, rate limited, or errored
+    }
+
+    if (!inquiry) {
+      const cq = detectCounterQuestion(
+        cleanAnswer,
+        { text: qText },
+        { language: session.language },
+      );
+      if (cq.isCounterQuestion) {
+        inquiry = {
+          responseText: cq.reply,
+          counterQuestionAnswer: cq.reply,
+          intent: "RELEVANT_COUNTER_QUESTION",
+          answerStatus: "counter_question",
+        };
+      }
+    }
+
+    return inquiry;
+  }
+
+  if (session.pendingNameConfirmation) {
+    const pendingName = session.pendingNameConfirmation.name;
+    const isEnglish = session.language === "English";
+    const isFromProfile = session.pendingNameConfirmation.fromProfile;
+    let confirmPrompt;
+    if (isFromProfile) {
+      confirmPrompt = isEnglish
+        ? `Your profile name is ${pendingName}. Is this correct?`
+        : `Aapke profile mein naam ${pendingName} hai. Kya ye sahi hai?`;
+    } else {
+      confirmPrompt = isEnglish
+        ? `Your name is ${pendingName}, right?`
+        : `Aapka naam ${pendingName} hai, sahi hai na?`;
+    }
+
+    if (/^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(cleanAnswer)) {
+      session.invalidAttempts = {};
+      const reprompt = isEnglish
+        ? `I couldn't hear you clearly. Could you please confirm if your name is ${pendingName}?`
+        : `Maaf kijiye, mujhe aapki aawaz theek se nahi aayi. Kripya confirm karein ki kya aapka naam ${pendingName} hai?`;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          nameConfirmationRequired: true,
+          candidateName: pendingName,
+          message: `${reprompt} ${confirmPrompt}`,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: {
+            id: "A2_NAME_CONFIRM",
+            Step: "A2_NAME_CONFIRM",
+            text: confirmPrompt,
+            category: "Introduction",
+          },
+        },
+      };
+    }
+
+    const normalizedConfirmation = cleanAnswer
+      .toLowerCase()
+      .replace(/[,;]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const isExplicitQuestion =
+      /[?]|(?:^|\b)(?:kyun|kyu|why|kaise|kya\s+hoga|kya\s+aap|kya\s+mujhe|batao|explain|zaroori\s+kyun|kyun\s+chahiye|kyun\s+pooch|kyun\s+puch)\b/i.test(
+        cleanAnswer,
+      );
+    const cq = detectCounterQuestion(
+      cleanAnswer,
+      { text: confirmPrompt },
+      { language: session.language },
+    );
+    if (isExplicitQuestion || cq.isCounterQuestion) {
+      const inquiry = await checkCandidateInquiry(confirmPrompt, "A2_NAME_CONFIRM");
+      if (inquiry) {
+        session.invalidAttempts = {};
+        const replyText = (
+          inquiry.counterQuestionAnswer ||
+          inquiry.responseText ||
+          inquiry.clarificationQuestion ||
+          cq.reply ||
+          ""
+        ).trim();
+        const combinedMessage = replyText.toLowerCase().includes(confirmPrompt.toLowerCase().trim())
+          ? replyText
+          : `${replyText} ${confirmPrompt}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            nameConfirmationRequired: true,
+            counterQuestionHandled: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: {
+              id: "A2_NAME_CONFIRM",
+              Step: "A2_NAME_CONFIRM",
+              text: confirmPrompt,
+              category: "Introduction",
+            },
+          },
+        };
+      }
+    }
+
+    let isAffirmative =
+      /^(?:(?:ji\s+)?(?:haan|han|haanji|hanji|yes|yeah|yep|ha)(?:\s+ji)?(?:\s+(?:sahi(?:\s+hai)?|theek\s+hai|thik\s+hai|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|(?:mera\s+)?(?:yahi|wahi)\s+naam\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|bilkul(?:\s+sahi(?:\s+hai)?)?|bilkul(?:\s+theek(?:\s+hai)?)?|correct|right|that's\s+correct|that's\s+right|that's\s+my\s+name))?|ji|sahi|sahi\s+hai|correct|right|that's\s+correct|that's\s+right|that's\s+my\s+name|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|mera\s+(?:yahi|wahi)\s+naam\s+hai|mera\s+naam\s+(?:yahi|wahi)\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|theek\s+hai|thik\s+hai|bilkul|bilkul\s+sahi(?:\s+hai)?|bilkul\s+theek(?:\s+hai)?|bilkul\s+thik(?:\s+hai)?|ji\s+bilkul|ji\s+haan\s+bilkul|हाँ|हां|जी|जी\s+हाँ|जी\s+हां|बिल्कुल|बिल्कुल\s+सही|सही\s+है|वही\s+है|यही\s+है|यही\s+नाम\s+है|मेरा\s+यही\s+नाम\s+है)[.!?।\s]*$/iu.test(
+        normalizedConfirmation,
+      );
+
+    let isNegative =
+      /^(?:no|nope|nahi|nahin|nhi|galat|wrong(?:\s+name)?|incorrect|not\s+(?:correct|right|my\s+name)|(?:that|it|this|ye|that's)\s+(?:is\s+)?not\s+my\s+name|ye\s+mera\s+naam\s+nahi\s+hai|mera\s+naam\s+galat\s+hai|galat\s+naam\s+hai|galat\s+hai|naam\s+galat\s+hai|गलत|गलत\s+है|नहीं|नही|गलत\s+नाम\s+है|मेरा\s+नाम\s+गलत\s+है)(?:\s+(?:hai|ji|sir|madam))?[.!?।\s]*$/iu.test(
+        normalizedConfirmation,
+      ) ||
+      (/^(?:no|nope|nahi|nahin|nhi)\b/i.test(normalizedConfirmation) &&
+        /\b(?:galat|wrong|incorrect|not\s+my\s+name|galat\s+hai)\b/i.test(normalizedConfirmation));
+
+    const nameClassification = classifyNameAnswer(cleanAnswer);
+    let isExplicitCorrectionPhrase =
+      nameClassification.clear &&
+      isSaneName(nameClassification.name) &&
+      (nameClassification.format === "introduced_name" ||
+        /^(?:no|nope|nahi|nahin|nhi)\s*[,.:;!-]/iu.test(cleanAnswer));
+
+    if (!isAffirmative && !isNegative && !isExplicitCorrectionPhrase) {
+      try {
+        const interp = await interpretAnswerImpl({
+          question: confirmPrompt,
+          answer: cleanAnswer,
+          questionId: "A2_NAME_CONFIRM",
+          language: session.language,
+          diagnosticRequestId: safeRequestId,
+          diagnosticPromptTurn: safePromptTurn,
+          diagnosticSessionGeneration: safeSessionGeneration,
+        });
+
+        if (interp) {
+          if (
+            interp.intent === "RELEVANT_COUNTER_QUESTION" ||
+            interp.intent === "CLARIFICATION_REQUEST" ||
+            interp.answerStatus === "counter_question"
+          ) {
+            session.invalidAttempts = {};
+            const replyText = (
+              interp.counterQuestionAnswer ||
+              interp.responseText ||
+              interp.clarificationQuestion ||
+              ""
+            ).trim();
+            const combinedMessage = replyText
+              .toLowerCase()
+              .includes(confirmPrompt.toLowerCase().trim())
+              ? replyText
+              : `${replyText} ${confirmPrompt}`;
+            return {
+              status: 200,
+              body: {
+                success: true,
+                completed: false,
+                nameConfirmationRequired: true,
+                counterQuestionHandled: true,
+                message: combinedMessage,
+                questionNumber: session.currentQuestionIndex + 1,
+                totalQuestions: questions.length,
+                question: {
+                  id: "A2_NAME_CONFIRM",
+                  Step: "A2_NAME_CONFIRM",
+                  text: confirmPrompt,
+                  category: "Introduction",
+                },
+              },
+            };
+          }
+
+          if (interp.intent === "INTERVIEW_ANSWER") {
+            const understood = (interp.understoodAnswer || "").toLowerCase();
+            if (/\b(?:yes|haan|han|agree|confirmed|correct|right|sahi)\b/i.test(understood)) {
+              isAffirmative = true;
+            } else if (/\b(?:no|nahi|nahin|reject|wrong|galat|incorrect)\b/i.test(understood)) {
+              isNegative = true;
+            } else {
+              const parsedFromUnderstood = classifyNameAnswer(interp.understoodAnswer);
+              if (parsedFromUnderstood.clear && isSaneName(parsedFromUnderstood.name)) {
+                nameClassification.clear = true;
+                nameClassification.name = parsedFromUnderstood.name;
+                isExplicitCorrectionPhrase = true;
+              }
+            }
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
+    if (isAffirmative) {
+      session.invalidAttempts = {};
+      session.candidateName = formatCandidateName(pendingName);
+      const nameRecord = {
+        questionId: "A2_NAME",
+        questionText: questions[0].text,
+        category: "Introduction",
+        answer: session.candidateName,
+        answeredAt: new Date().toISOString(),
+      };
+      const existingNameIdx = session.answers.findIndex((a) => a.questionId === "A2_NAME");
+      if (existingNameIdx >= 0) {
+        session.answers[existingNameIdx] = nameRecord;
+      } else {
+        session.answers.push(nameRecord);
+      }
+      session.pendingNameConfirmation = null;
+      session.currentQuestionIndex += 1;
+
+      // Issue 3 Requirement 8: If no registered profile identity exists, flag
+      // for manual review so self-reported name is not silently treated as verified.
+      if (!session.profileName) {
+        session.manualReviewRequired = true;
+        session.manualReviewReason =
+          "Identity verification unconfirmed: no registered profile found for session.";
+      }
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          nameConfirmed: true,
+          candidateName: session.candidateName,
+          acknowledgement: isEnglish ? "Thank you." : "Bahut badhiya.",
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: questions[session.currentQuestionIndex],
+        },
+      };
+    }
+
+    if (isNegative) {
+      session.invalidAttempts = {};
+
+      // Issue 3: Track rejection count with registered profile identity.
+      // Repeated rejections of the registered name indicate identity mismatch.
+      if (session.profileName) {
+        session.nameRejectionCount = (session.nameRejectionCount || 0) + 1;
+        if (session.nameRejectionCount >= 2) {
+          session.status = "manual_review";
+          session.identityVerificationFailed = true;
+          session.manualReviewRequired = true;
+          session.manualReviewReason =
+            "Identity verification failed: candidate repeatedly rejected the registered profile name.";
+          session.candidateName = session.profileName;
+          const mismatchMessage = isEnglish
+            ? `This interview is associated with ${session.profileName}'s registered profile. Since the name could not be verified, this session has been flagged for manual review.`
+            : `Ye interview ${session.profileName} ke registered profile se juda hai. Naam verify nahi ho paya, isliye is session ko manual review ke liye flag kar diya gaya hai.`;
+          return {
+            status: 200,
+            body: {
+              success: true,
+              completed: false,
+              identityVerificationFailed: true,
+              manualReviewRequired: true,
+              sessionStatus: "manual_review",
+              candidateName: session.profileName,
+              message: mismatchMessage,
+              questionNumber: session.currentQuestionIndex + 1,
+              totalQuestions: questions.length,
+              question: {
+                id: "A2_NAME_MISMATCH",
+                Step: "A2_NAME_MISMATCH",
+                text: mismatchMessage,
+                category: "Introduction",
+              },
+            },
+          };
+        }
+      }
+
+      session.pendingNameConfirmation = null;
+      session.candidateName = null;
+      const existingNameIdx = session.answers.findIndex((a) => a.questionId === "A2_NAME");
+      if (existingNameIdx >= 0) {
+        session.answers.splice(existingNameIdx, 1);
+      }
+      const reprompt = isEnglish
+        ? "I apologize. Please state your correct name."
+        : "Theek hai, kripya apna sahi naam batayein.";
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          nameConfirmationRequired: false,
+          nameCorrectionRequired: true,
+          message: reprompt,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: {
+            id: "A2_NAME",
+            Step: "A2_NAME",
+            text: reprompt,
+            category: "Introduction",
+          },
+        },
+      };
+    }
+
+    if (isExplicitCorrectionPhrase) {
+      session.invalidAttempts = {};
+      const newName = formatCandidateName(nameClassification.name);
+
+      // Two-stage identity check on correction if registered profile name exists:
+      if (session.profileName && !isNameMatch(newName, session.profileName)) {
+        session.identityMismatchAttempts = (session.identityMismatchAttempts || 0) + 1;
+        session.candidateName = session.profileName; // Preserve authoritative profile identity
+
+        if (session.identityMismatchAttempts === 1) {
+          session.warningLevel = 1;
+          const warningMsg = isEnglish
+            ? `This interview is registered for ${session.profileName}. The name provided did not match. Please state your registered name clearly.`
+            : `Ye interview ${session.profileName} ke naam par registered hai. Kripya apna registered naam dobara spasht batayein.`;
+          delete session.pendingNameConfirmation;
+          return {
+            status: 200,
+            body: {
+              success: true,
+              completed: false,
+              identityMismatchWarning: true,
+              warningLevel: 1,
+              candidateName: session.profileName,
+              message: warningMsg,
+              questionNumber: session.currentQuestionIndex + 1,
+              totalQuestions: questions.length,
+              question: {
+                id: "A2_NAME",
+                Step: "A2_NAME",
+                text: warningMsg,
+                category: "Introduction",
+              },
+            },
+          };
+        }
+
+        session.status = "manual_review";
+        session.identityVerificationFailed = true;
+        session.manualReviewRequired = true;
+        session.manualReviewReason =
+          "Identity mismatch: candidate corrected name to a value that does not match the registered profile after warning.";
+        const mismatchMessage = isEnglish
+          ? `This interview is associated with ${session.profileName}'s registered profile. The corrected name does not match. This session has been flagged for manual review.`
+          : `Ye interview ${session.profileName} ke registered profile se juda hai. Aapne jo naam bataya woh match nahi karta. Is session ko manual review ke liye flag kar diya gaya hai.`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            identityVerificationFailed: true,
+            manualReviewRequired: true,
+            sessionStatus: "manual_review",
+            candidateName: session.profileName,
+            message: mismatchMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: {
+              id: "A2_NAME_MISMATCH",
+              Step: "A2_NAME_MISMATCH",
+              text: mismatchMessage,
+              category: "Introduction",
+            },
+          },
+        };
+      }
+
+      session.identityMismatchAttempts = 0;
+
+      session.candidateName = newName;
+      session.pendingNameConfirmation = { name: newName, fromProfile: false };
+      const nextConfirmPrompt = isEnglish
+        ? `Your name is ${newName}, right?`
+        : `Aapka naam ${newName} hai, sahi hai na?`;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          nameConfirmationRequired: true,
+          candidateName: newName,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: {
+            id: "A2_NAME_CONFIRM",
+            Step: "A2_NAME_CONFIRM",
+            text: nextConfirmPrompt,
+            category: "Introduction",
+          },
+          message: nextConfirmPrompt,
+        },
+      };
+    }
+
+    const confirmPromptFallback = isEnglish
+      ? `Please confirm: your name is ${pendingName}, right? You can say Yes or No.`
+      : `Kripya confirm karein: kya aapka naam ${pendingName} hai? Aap Haan ya Nahi bol sakti hain.`;
+    return {
+      status: 200,
+      body: {
+        success: true,
+        completed: false,
+        nameConfirmationRequired: true,
+        candidateName: pendingName,
+        message: confirmPromptFallback,
+        questionNumber: session.currentQuestionIndex + 1,
+        totalQuestions: questions.length,
+        question: {
+          id: "A2_NAME_CONFIRM",
+          Step: "A2_NAME_CONFIRM",
+          text: confirmPromptFallback,
+          category: "Introduction",
+        },
       },
     };
   }
@@ -687,19 +1376,28 @@ async function submitAnswer({
           questionNumber: session.currentQuestionIndex + 1,
           totalQuestions: questions.length,
           question: {
-            id: `A1_${pending.type.toUpperCase()}`,
-            Step: `A1_${pending.type.toUpperCase()}`,
+            id: `${pending.questionId}_${pending.type.toUpperCase()}`,
+            Step: `${pending.questionId}_${pending.type.toUpperCase()}`,
             text: pending.prompt,
-            category: "Location & movement",
+            category: pending.category || "Location & movement",
           },
         },
       };
     }
 
+
     if (pending.type === "travel_clarification") {
       const locationClassification = classifyLocation(followUpAnswer);
 
+      const isWhereToTravel =
+        /\b(?:where\s+(?:would\s+i|do\s+i|to|should\s+i)\s+(?:need\s+to\s+travel|have\s+to\s+go|travel|go)|kahan\s+(?:travel\s+karna|jana)\s+(?:hoga|padega|hai)|kidhar\s+(?:travel\s+karna|jana)\s+(?:hoga|padega|hai)|kitna\s+door\s+(?:jana|travel)|which\s+area.*(?:visit|go|travel)|kahan\s+hoga\s+kaam)\b/i.test(
+          normalized,
+        ) ||
+        (/\b(?:where|kahan|kidhar)\b/i.test(normalized) &&
+          /\b(?:travel|jana|visit|go|location|distance|ghar)\b/i.test(normalized));
+
       const isCrossQuestion =
+        isWhereToTravel ||
         /\b(?:kyun|kyu|why|reason|zaruri\s+kyun|kyun\s+jana|door\s+kyun|kyun\s+zaruri)\b/i.test(
           normalized,
         );
@@ -749,8 +1447,13 @@ async function submitAnswer({
       }
 
       if (isCrossQuestion) {
-        pending.prompt =
-          "Urban Company salon-at-home service hai, isliye professionals ko apne area ke 3-4 km cluster mein clients ke ghar jaana hota hai. Kya aap public transport, auto ya kisi aur tareeqe se manage kar sakti hain?";
+        pending.prompt = isWhereToTravel
+          ? (session.language === "English"
+              ? "In Urban Company, service appointments are at customer homes within a 3-4 km cluster of your local area. Are you comfortable travelling to customer locations?"
+              : "Urban Company salon-at-home service hai, isliye professionals ko apne area ke 3-4 km cluster mein clients ke ghar jaana hota hai. Kya aap customer locations par travel karne ke liye comfortable hain?")
+          : (session.language === "English"
+              ? "Urban Company is a salon-at-home service, so professionals travel to client homes in their local 3-4 km cluster. Can you manage travel using public transport, auto, or other means?"
+              : "Urban Company salon-at-home service hai, isliye professionals ko apne area ke 3-4 km cluster mein clients ke ghar jaana hota hai. Kya aap public transport, auto ya kisi aur tareeqe se manage kar sakti hain?");
         return askAgain(pending.prompt);
       }
 
@@ -955,6 +1658,63 @@ async function submitAnswer({
     }
 
     if (pending.type === "contextual_probe") {
+      let inquiry = null;
+      try {
+        const interp = await interpretAnswerImpl({
+          question: pending.prompt,
+          answer: followUpAnswer,
+          questionId: `${pending.questionId}_FOLLOW_UP`,
+          language: session.language,
+          diagnosticRequestId: safeRequestId,
+          diagnosticPromptTurn: safePromptTurn,
+          diagnosticSessionGeneration: safeSessionGeneration,
+        });
+        if (
+          interp &&
+          (interp.intent === "RELEVANT_COUNTER_QUESTION" ||
+            interp.intent === "CLARIFICATION_REQUEST" ||
+            interp.answerStatus === "counter_question")
+        ) {
+          inquiry = interp;
+        }
+      } catch {
+        // Fallback
+      }
+      if (!inquiry) {
+        const cq = detectCounterQuestion(followUpAnswer, { text: pending.prompt }, { language: session.language });
+        if (cq.isCounterQuestion) {
+          inquiry = { responseText: cq.reply, counterQuestionAnswer: cq.reply };
+        }
+      }
+
+      if (inquiry && !pending.explainedCounterQuestion) {
+        pending.explainedCounterQuestion = true;
+        session.invalidAttempts = {};
+        const replyText = (inquiry.counterQuestionAnswer || inquiry.responseText || inquiry.clarificationQuestion || "").trim();
+        const reply = replyText.toLowerCase().includes(pending.prompt.toLowerCase().trim())
+          ? replyText
+          : `${replyText} ${pending.prompt}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            followUpRequired: true,
+            followUp: pending,
+            message: reply,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: {
+              id: `${pending.questionId}_FOLLOW_UP`,
+              Step: `${pending.questionId}_FOLLOW_UP`,
+              text: pending.prompt,
+              category: pending.category || "General",
+            },
+          },
+        };
+      }
       const isCrossQuestion =
         /\b(?:kyun|kyu|why|reason|zaruri\s+kyun|kyun\s+jana|door\s+kyun|kyun\s+zaruri)\b/i.test(
           normalized,
@@ -1068,6 +1828,7 @@ async function submitAnswer({
         body: {
           success: true,
           completed: false,
+          acknowledgement: getNaturalAcknowledgement(question, session, followUpAnswer),
           manualReviewRequired: Boolean(session.manualReviewRequired),
           followUpCaptured: true,
           questionNumber: session.currentQuestionIndex + 1,
@@ -1079,8 +1840,6 @@ async function submitAnswer({
 
     return askAgain("Please clarify your answer.");
   }
-
-  const cleanAnswer = answer.trim();
 
   console.info("[UC Interview Diagnostics] answer_processing", {
     requestId: safeRequestId,
@@ -1112,17 +1871,70 @@ async function submitAnswer({
 
   // A0: consent handling lives in consentRules.js.
   if (question.id === "A0") {
-    const outcome = classifyConsent(cleanAnswer);
-
-    if (outcome === "unclear") {
-      return handleInvalidAttempt(session, question, {
-        clarificationPrefix:
-          "Maaf kijiye, mujhe samajh nahi aaya. Kripya batayein ki kya aap screening conversation ke liye agree karti hain",
-        warningPrefix:
-          "Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya spasht batayein",
-        repeatQuestionText: question.text,
-      });
+    if (/^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(cleanAnswer)) {
+      session.invalidAttempts = {};
+      const isEnglish = session.language === "English";
+      const reprompt = isEnglish
+        ? "I couldn't hear you clearly. Could you please repeat or type your answer?"
+        : "Maaf kijiye, mujhe aapki aawaz theek se nahi aayi. Kripya dobara batayein ya neeche type karein.";
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          message: `${reprompt} ${question.text}`,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question,
+        },
+      };
     }
+
+    const cq = detectCounterQuestion(cleanAnswer, question, { language: session.language });
+    const consentOutcome = classifyConsent(cleanAnswer);
+
+    if (cq.isCounterQuestion || consentOutcome === "unclear") {
+      const inquiry = await checkCandidateInquiry(question.text, question.id);
+      if (inquiry) {
+        session.invalidAttempts = {};
+        const replyText = (
+          inquiry.counterQuestionAnswer ||
+          inquiry.responseText ||
+          inquiry.clarificationQuestion ||
+          cq.reply ||
+          ""
+        ).trim();
+        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
+          ? replyText
+          : `${replyText} ${question.text}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question,
+          },
+        };
+      }
+
+      if (consentOutcome === "unclear") {
+        return handleInvalidAttempt(session, question, {
+          clarificationPrefix:
+            "Maaf kijiye, mujhe samajh nahi aaya. Kripya batayein ki kya aap screening conversation ke liye agree karti hain",
+          warningPrefix:
+            "Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya spasht batayein",
+          repeatQuestionText: question.text,
+        });
+      }
+    }
+
+    const outcome = consentOutcome;
 
     session.invalidAttempts = {};
 
@@ -1172,16 +1984,52 @@ async function submitAnswer({
 
   // A1: Location and movement handling.
   if (question.id === "A1") {
+    const cq = detectCounterQuestion(cleanAnswer, question, { language: session.language });
+    const isCandidateQuestion =
+      cq.isCounterQuestion ||
+      /[?]|(?:kyun|kyu|why|kaise|kya\s+karun|kya\s+hoga|kya\s+aap|kya\s+mujhe|batao|explain|agar\s+mujhe|unsafe|safety|dikkat|problem)/i.test(
+        cleanAnswer,
+      );
     const result = classifyLocation(cleanAnswer);
 
-    if (result.outcome === "clarification" && !result.area) {
-      return handleInvalidAttempt(session, question, {
-        clarificationPrefix:
-          "Maaf kijiye, ye ilaqe ya area ka naam nahi lag raha. Kripya apne sheher ya area ka naam batayein",
-        warningPrefix:
-          "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apne sheher ya area ka naam seedhe batayein",
-        repeatQuestionText: question.text,
-      });
+    if (isCandidateQuestion || (result.outcome === "clarification" && !result.area)) {
+      const inquiry = await checkCandidateInquiry(question.text, question.id);
+      if (inquiry) {
+        session.invalidAttempts = {};
+        const replyText = (
+          inquiry.counterQuestionAnswer ||
+          inquiry.responseText ||
+          inquiry.clarificationQuestion ||
+          cq.reply ||
+          ""
+        ).trim();
+        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
+          ? replyText
+          : `${replyText} ${question.text}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question,
+          },
+        };
+      }
+
+      if (result.outcome === "clarification" && !result.area) {
+        return handleInvalidAttempt(session, question, {
+          clarificationPrefix:
+            "Maaf kijiye, ye ilaqe ya area ka naam nahi lag raha. Kripya apne sheher ya area ka naam batayein",
+          warningPrefix:
+            "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apne sheher ya area ka naam seedhe batayein",
+          repeatQuestionText: question.text,
+        });
+      }
     }
 
     if (result.outcome === "clarification" && result.area) {
@@ -1276,23 +2124,51 @@ async function submitAnswer({
 
   // A2: Age validation handled by ageRules.js.
   if (question.id === "A2") {
+    if (/^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(cleanAnswer)) {
+      session.invalidAttempts = {};
+      const isEnglish = session.language === "English";
+      const reprompt = isEnglish
+        ? "I couldn't hear you clearly. Could you please repeat or type your answer?"
+        : "Maaf kijiye, mujhe aapki aawaz theek se nahi aayi. Kripya dobara batayein ya neeche type karein.";
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: true,
+          clarificationRequired: true,
+          message: `${reprompt} ${question.text}`,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question,
+        },
+      };
+    }
+
+    const cq = detectCounterQuestion(cleanAnswer, question, { language: session.language });
     const result = evaluateAge(cleanAnswer);
 
-    if (result.outcome === "clarification") {
-      const isAmbiguousAge =
-        /\b(?:\d{1,2}\s+(?:ya|or)\s+\d{1,2}|twenty|thirty|forty|shayad\s+\d{1,2})\b/i.test(cleanAnswer) ||
-        /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(cleanAnswer);
-
-      session.ageClarifications = session.ageClarifications || 0;
-      if (isAmbiguousAge && session.ageClarifications === 0) {
-        session.ageClarifications += 1;
+    if (cq.isCounterQuestion || result.outcome === "clarification") {
+      const inquiry = await checkCandidateInquiry(question.text, question.id);
+      if (inquiry) {
+        session.invalidAttempts = {};
+        const replyText = (
+          inquiry.counterQuestionAnswer ||
+          inquiry.responseText ||
+          inquiry.clarificationQuestion ||
+          cq.reply ||
+          ""
+        ).trim();
+        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
+          ? replyText
+          : `${replyText} ${question.text}`;
         return {
           status: 200,
           body: {
             success: true,
             completed: false,
             clarificationRequired: true,
-            message: "Kripya apni ek exact umar saal mein batayein (jaise 25 saal).",
+            counterQuestionHandled: true,
+            message: combinedMessage,
             questionNumber: session.currentQuestionIndex + 1,
             totalQuestions: questions.length,
             question,
@@ -1300,13 +2176,36 @@ async function submitAnswer({
         };
       }
 
-      return handleInvalidAttempt(session, question, {
-        clarificationPrefix:
-          "Maaf kijiye, ye sahi umar nahi lag rahi. Kripya apni sahi umar saal mein batayein",
-        warningPrefix:
-          "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apni sahi umar saal mein spasht batayein",
-        repeatQuestionText: question.text,
-      });
+      if (result.outcome === "clarification") {
+        const isAmbiguousAge =
+          /\b(?:\d{1,2}\s+(?:ya|or)\s+\d{1,2}|twenty|thirty|forty|shayad\s+\d{1,2})\b/i.test(cleanAnswer) ||
+          /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(cleanAnswer);
+
+        session.ageClarifications = session.ageClarifications || 0;
+        if (isAmbiguousAge && session.ageClarifications === 0) {
+          session.ageClarifications += 1;
+          return {
+            status: 200,
+            body: {
+              success: true,
+              completed: false,
+              clarificationRequired: true,
+              message: "Kripya apni ek exact umar saal mein batayein (jaise 25 saal).",
+              questionNumber: session.currentQuestionIndex + 1,
+              totalQuestions: questions.length,
+              question,
+            },
+          };
+        }
+
+        return handleInvalidAttempt(session, question, {
+          clarificationPrefix:
+            "Maaf kijiye, ye sahi umar nahi lag rahi. Kripya apni sahi umar saal mein batayein",
+          warningPrefix:
+            "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apni sahi umar saal mein spasht batayein",
+          repeatQuestionText: question.text,
+        });
+      }
     }
 
     session.invalidAttempts = {};
@@ -1366,8 +2265,76 @@ async function submitAnswer({
       promptTurn: safePromptTurn,
       sessionGeneration: safeSessionGeneration,
     });
+    console.info("[UC Interview Diagnostics] name_extraction", {
+      requestId: safeRequestId,
+      sessionKey,
+      extractedName: nameClassification.name || null,
+      nameIsClear,
+      format: nameClassification.format,
+      hasProfile: Boolean(session.profileName),
+      matchesProfile: session.profileName ? isNameMatch(formatCandidateName(nameClassification.name || cleanAnswer), session.profileName) : null,
+    });
 
     if (!nameIsClear) {
+      const inquiry = await checkCandidateInquiry(question.text, question.id);
+      if (inquiry) {
+        session.invalidAttempts = {};
+        const replyText = (
+          inquiry.counterQuestionAnswer ||
+          inquiry.responseText ||
+          inquiry.clarificationQuestion ||
+          ""
+        ).trim();
+        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
+          ? replyText
+          : `${replyText} ${question.text}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question,
+          },
+        };
+      }
+
+      if (session.profileName) {
+        const isEnglish = session.language === "English";
+        session.invalidAttempts = {};
+        session.candidateName = session.profileName;
+        session.pendingNameConfirmation = {
+          name: session.profileName,
+          fromProfile: true,
+          rawAnswer: cleanAnswer,
+        };
+        const confirmPrompt = isEnglish
+          ? `Your profile name is ${session.profileName}. Is this correct?`
+          : `Aapke profile mein naam ${session.profileName} hai. Kya ye sahi hai?`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            nameConfirmationRequired: true,
+            candidateName: session.profileName,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: {
+              id: "A2_NAME_CONFIRM",
+              Step: "A2_NAME_CONFIRM",
+              text: confirmPrompt,
+              category: "Introduction",
+            },
+            message: confirmPrompt,
+          },
+        };
+      }
+
       return handleInvalidAttempt(session, question, {
         clarificationPrefix:
           "Maaf kijiye, mujhe aapka naam samajh nahi aaya. Kripya apna naam seedhe batayein",
@@ -1379,30 +2346,203 @@ async function submitAnswer({
 
     session.invalidAttempts = {};
 
-    session.candidateName = formatCandidateName(nameClassification.name || cleanAnswer);
-    session.answers.push(answerRecord);
-    session.currentQuestionIndex += 1;
+    const formattedName = formatCandidateName(nameClassification.name || cleanAnswer);
+    const profileName = session.profileName;
+    const matchesProfile = Boolean(profileName && isNameMatch(formattedName, profileName));
+    const normSpoken = normalizeNameForComparison(formattedName);
+    const normProfile = normalizeNameForComparison(profileName);
+    const spokenTokens = extractCleanTokens(formattedName);
+    const profileTokens = extractCleanTokens(profileName);
+    const mismatchAttemptsBefore = session.identityMismatchAttempts || 0;
+
+    console.info("[UC Interview Diagnostics] identity_verification_trace", {
+      candidateId: session.candidateId || null,
+      sessionProfileName: profileName || null,
+      nameReceivedFromGeminiLive: cleanAnswer,
+      nameExtractedByClassify: nameClassification.name || null,
+      normalizedRegisteredName: normProfile,
+      normalizedSpokenName: normSpoken,
+      spokenTokens,
+      profileTokens,
+      isNameMatchResult: matchesProfile,
+      identityMismatchAttemptsBefore: mismatchAttemptsBefore,
+      identityMismatchAttemptsAfter: (profileName && !matchesProfile) ? mismatchAttemptsBefore + 1 : 0,
+      branch: !profileName
+        ? "no_profile_proceed"
+        : matchesProfile
+          ? "name_match_proceed"
+          : mismatchAttemptsBefore + 1 === 1
+            ? "identity_mismatch_warning_1"
+            : "identity_mismatch_manual_review_2",
+    });
+
+    // Two-stage identity verification when a registered profile name exists:
+    // Attempt 1 mismatch: exactly ONE polite warning asking candidate to state their registered name.
+    // Attempt 2+ mismatch: route to manual review and block progression.
+    if (profileName && !matchesProfile) {
+      session.identityMismatchAttempts = (session.identityMismatchAttempts || 0) + 1;
+      session.candidateName = profileName; // Preserve the authoritative identity
+
+      if (session.identityMismatchAttempts === 1) {
+        const isEnglish = session.language === "English";
+        session.warningLevel = 1;
+        const warningMsg = isEnglish
+          ? `This interview is registered for ${profileName}. The name provided did not match. Please state your registered name clearly.`
+          : `Ye interview ${profileName} ke naam par registered hai. Kripya apna registered naam dobara spasht batayein.`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            identityMismatchWarning: true,
+            warningLevel: 1,
+            candidateName: profileName,
+            message: warningMsg,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: {
+              id: "A2_NAME",
+              Step: "A2_NAME",
+              text: warningMsg,
+              category: "Introduction",
+            },
+          },
+        };
+      }
+
+      const isEnglish = session.language === "English";
+      session.status = "manual_review";
+      session.identityVerificationFailed = true;
+      session.manualReviewRequired = true;
+      session.manualReviewReason =
+        "Identity mismatch: candidate spoke a name that does not match the registered profile after warning.";
+      session.candidateName = profileName; // Preserve the authoritative identity
+      const mismatchMessage = isEnglish
+        ? `This interview is associated with ${profileName}'s registered profile. The name you provided does not match. This session has been flagged for manual review.`
+        : `Ye interview ${profileName} ke registered profile se juda hai. Aapne jo naam bataya woh match nahi karta. Is session ko manual review ke liye flag kar diya gaya hai.`;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: true,
+          identityVerificationFailed: true,
+          manualReviewRequired: true,
+          sessionStatus: "manual_review",
+          candidateName: profileName,
+          message: mismatchMessage,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: {
+            id: "A2_NAME_MISMATCH",
+            Step: "A2_NAME_MISMATCH",
+            text: mismatchMessage,
+            category: "Introduction",
+          },
+        },
+      };
+    }
+
+    session.identityMismatchAttempts = 0;
+    const confirmedCandidateName = matchesProfile ? profileName : formattedName;
+
+    session.candidateName = confirmedCandidateName;
+    session.pendingNameConfirmation = {
+      name: confirmedCandidateName,
+      rawAnswer: cleanAnswer,
+      matchedProfile: Boolean(matchesProfile),
+      fromProfile: false,
+    };
+
+    const isEnglish = session.language === "English";
+    const confirmPrompt = isEnglish
+      ? `Your name is ${confirmedCandidateName}, right?`
+      : `Aapka naam ${confirmedCandidateName} hai, sahi hai na?`;
 
     return {
       status: 200,
       body: {
         success: true,
         completed: false,
-        candidateName: session.candidateName,
+        nameConfirmationRequired: true,
+        candidateName: confirmedCandidateName,
         acknowledgement: getNaturalAcknowledgement(question, session),
         questionNumber: session.currentQuestionIndex + 1,
         totalQuestions: questions.length,
-        question: questions[session.currentQuestionIndex],
+        question: {
+          id: "A2_NAME_CONFIRM",
+          Step: "A2_NAME_CONFIRM",
+          text: confirmPrompt,
+          category: "Introduction",
+        },
+        message: confirmPrompt,
       },
     };
   }
 
   // A9: Travel block - handle travel mode, reluctance, cross-questions, and husband dependence
   if (question.id === "A9") {
-    const isCrossQuestion =
-      /\b(?:kyun|kyu|why|reason|zaruri\s+kyun|kyun\s+jana|door\s+kyun|kyun\s+zaruri)\b/i.test(
+    if (/^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(cleanAnswer)) {
+      session.invalidAttempts = {};
+      const isEnglish = session.language === "English";
+      const reprompt = isEnglish
+        ? "I couldn't hear you clearly. Could you please repeat or type your answer?"
+        : "Maaf kijiye, mujhe aapki aawaz theek se nahi aayi. Kripya dobara batayein ya neeche type karein.";
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          message: `${reprompt} ${question.text}`,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question,
+        },
+      };
+    }
+
+    const cq = detectCounterQuestion(cleanAnswer, question, { language: session.language });
+    const isQuestionUtterance =
+      cq.isCounterQuestion ||
+      /[?]|(?:kyun|kyu|why|kitna|kitni|kaise|kya\s+hoga|kya\s+aap|kya\s+mujhe|batao|explain|agar\s+mujhe)/i.test(
         cleanAnswer,
       );
+
+    if (isQuestionUtterance) {
+      const inquiry = await checkCandidateInquiry(question.text, question.id);
+      if (inquiry) {
+        session.invalidAttempts = {};
+        const replyText = (
+          inquiry.counterQuestionAnswer ||
+          inquiry.responseText ||
+          inquiry.clarificationQuestion ||
+          cq.reply ||
+          ""
+        ).trim();
+        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
+          ? replyText
+          : `${replyText} ${question.text}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question,
+          },
+        };
+      }
+    }
+
+    const isCrossQuestion =
+      /\b(?:kyun\s+jana|door\s+kyun|kyun\s+travel|zaruri\s+kyun|kyun\s+zaruri|travel\s+kyun)\b/i.test(
+        cleanAnswer,
+      );
+
     const isReluctantOrUnsure =
       /\b(?:difficult|mushkil|hard|problem|dikkat|issue|not\s+sure|unsure|pata\s+nahi|pata\s+nahin|doubt|shayad)\b/i.test(
         cleanAnswer,
@@ -1603,10 +2743,11 @@ async function submitAnswer({
     question.id,
   );
 
+  let interpretation = null;
   if (!isSpecialQuestion) {
     const interpretationQuestionIndex = session.currentQuestionIndex;
     try {
-      const interpretation = await interpretAnswerImpl({
+      interpretation = await interpretAnswerImpl({
         question: question.text,
         answer: cleanAnswer,
         questionId: question.id,
@@ -1639,12 +2780,81 @@ async function submitAnswer({
 
       answerRecord.interpretation = interpretation;
 
-      if (interpretation.needsClarification) {
+      if (
+        interpretation.intent === "RELEVANT_COUNTER_QUESTION" ||
+        interpretation.intent === "CLARIFICATION_REQUEST" ||
+        interpretation.answerStatus === "counter_question"
+      ) {
+        session.invalidAttempts = {};
+        const isEnglish = session.language === "English";
+        const reply =
+          interpretation.counterQuestionAnswer ||
+          interpretation.responseText ||
+          interpretation.clarificationQuestion ||
+          (isEnglish
+            ? "Urban Company is a salon-at-home service where bookings are at customer homes within a 3-4 km cluster of your area."
+            : "Urban Company salon-at-home service hai jahan kaam aapke area ke 3-4 km cluster mein customer ke ghar par hota hai.");
+        const replyText = reply.trim();
+        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
+          ? replyText
+          : `${replyText} ${question.text}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question,
+          },
+        };
+      }
+
+      if (interpretation.intent === "UNINTELLIGIBLE_OR_NO_INPUT") {
+        session.invalidAttempts = {};
+        const isEnglish = session.language === "English";
+        const reprompt =
+          interpretation.responseText ||
+          (isEnglish
+            ? "I couldn't hear you clearly. Could you please repeat your answer or type it below?"
+            : "Maaf kijiye, mujhe aapki aawaz theek se nahi aayi. Kripya dobara batayein ya neeche type karein.");
+        const combinedMessage = `${reprompt} ${question.text}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question,
+          },
+        };
+      }
+
+      if (
+        interpretation.intent === "PARTIAL_OR_AMBIGUOUS_ANSWER" ||
+        interpretation.needsClarification
+      ) {
         const isUncertainOrSkipped =
           /^(?:not\s+sure|unsure|pata\s+nahi|pata\s+nahin|don't\s+know|dont\s+know|maybe|shayad|no\s+idea|samajh\s+nahi\s+aaya|skip|aage\s+badho|pass)[.!?।\s]*$/i.test(
             cleanAnswer,
           ) ||
           /uncertain|hesitan|unsure|skip/i.test(interpretation.understanding);
+
+        const isPartial =
+          interpretation.intent === "PARTIAL_OR_AMBIGUOUS_ANSWER" ||
+          interpretation.answerStatus === "partial" ||
+          interpretation.answerStatus === "unclear";
+        const isGenuinelyIrrelevant =
+          interpretation.intent === "IRRELEVANT_OR_NONRESPONSIVE" ||
+          interpretation.answerStatus === "irrelevant";
+        const alreadyProbed = Boolean(session.followUpsGiven?.[question.id]);
+        const isEnglish = session.language === "English";
 
         const bankQ = questions[session.currentQuestionIndex];
         const probe =
@@ -1653,12 +2863,16 @@ async function submitAnswer({
             : null;
 
         session.followUpsGiven = session.followUpsGiven || {};
-        if (isUncertainOrSkipped && !session.followUpsGiven[question.id]) {
+        if ((isPartial || isUncertainOrSkipped) && !alreadyProbed && !isGenuinelyIrrelevant) {
           session.followUpsGiven[question.id] = true;
+          session.invalidAttempts = {};
           const probeText =
-            probe ||
             interpretation.clarificationQuestion ||
-            "Aap is baare mein thoda aur spasht batayein.";
+            interpretation.responseText ||
+            probe ||
+            (isEnglish
+              ? "Could you please elaborate on that in a little more detail?"
+              : "Aap is baare mein thoda aur spasht batayein.");
           session.pendingFollowUp = {
             questionId: question.id,
             type: "contextual_probe",
@@ -1671,6 +2885,7 @@ async function submitAnswer({
             body: {
               success: true,
               completed: false,
+              acknowledgement: interpretation.naturalAcknowledgement || (isEnglish ? "That makes sense." : "Theek hai."),
               clarificationRequired: true,
               followUpRequired: true,
               followUp: session.pendingFollowUp,
@@ -1683,6 +2898,24 @@ async function submitAnswer({
                 text: probeText,
                 category: question.category,
               },
+            },
+          };
+        }
+
+        if (alreadyProbed && !isGenuinelyIrrelevant) {
+          session.invalidAttempts = {};
+          session.pendingFollowUp = null;
+          advanceToNextApplicableQuestion(session);
+
+          return {
+            status: 200,
+            body: {
+              success: true,
+              completed: session.status === "completed",
+              acknowledgement: getNaturalAcknowledgement(question, session, cleanAnswer),
+              questionNumber: session.currentQuestionIndex + 1,
+              totalQuestions: questions.length,
+              question: questions[session.currentQuestionIndex] || null,
             },
           };
         }
@@ -1803,11 +3036,17 @@ async function submitAnswer({
     };
   }
 
+  const naturalAck =
+    interpretation?.naturalAcknowledgement ||
+    answerRecord?.interpretation?.naturalAcknowledgement ||
+    getNaturalAcknowledgement(question, session, cleanAnswer);
+
   return {
     status: 200,
     body: {
       success: true,
       completed: false,
+      acknowledgement: naturalAck,
       questionNumber: session.currentQuestionIndex + 1,
       totalQuestions: questions.length,
       question: questions[session.currentQuestionIndex],
@@ -1943,20 +3182,22 @@ function resumeInterview(sessionId) {
 
 function getActiveSessionForCandidate(candidateId) {
   if (!candidateId) return null;
+  let active = null;
   for (const session of sessions.values()) {
     if (session.candidateId === candidateId && (session.status === "in_progress" || session.status === "paused")) {
-      return {
-        sessionId: session.sessionId,
-        status: session.status,
-        questionNumber: session.currentQuestionIndex + 1,
-        totalQuestions: questions.length,
-        question: getCurrentQuestionForSession(session),
-        candidateName: session.candidateName || null,
-        answersCount: session.answers?.length || 0,
-      };
+      active = session;
     }
   }
-  return null;
+  if (!active) return null;
+  return {
+    sessionId: active.sessionId,
+    status: active.status,
+    questionNumber: active.currentQuestionIndex + 1,
+    totalQuestions: questions.length,
+    question: getCurrentQuestionForSession(active),
+    candidateName: active.candidateName || null,
+    answersCount: active.answers?.length || 0,
+  };
 }
 
 function getReport(sessionId) {
@@ -2087,6 +3328,25 @@ function deleteReport(sessionId) {
   };
 }
 
+function updateCandidateName(sessionId, candidateName) {
+  const session = sessions.get(sessionId);
+  if (!session) return { success: false, message: "Interview session not found." };
+  const classification = classifyNameAnswer(candidateName);
+  if (!classification.clear) {
+    return { success: false, message: "Please provide a valid name." };
+  }
+  const formatted = formatCandidateName(classification.name || candidateName);
+  session.candidateName = formatted;
+  if (session.pendingNameConfirmation) {
+    session.pendingNameConfirmation.name = formatted;
+  }
+  const nameRecord = (session.answers || []).find((a) => a.questionId === "A2_NAME");
+  if (nameRecord) {
+    nameRecord.answer = formatted;
+  }
+  return { success: true, candidateName: formatted };
+}
+
 module.exports = {
   startInterview,
   submitAnswer,
@@ -2107,4 +3367,5 @@ module.exports = {
   getCurrentQuestionForSession,
   classifyNameAnswer,
   isSaneName,
+  updateCandidateName,
 };

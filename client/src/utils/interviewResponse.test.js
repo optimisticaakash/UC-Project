@@ -304,3 +304,24 @@ test("resolvePromptHandoff preserves natural acknowledgement when provided by se
   assert.equal(handoff.acknowledgement, "Thank you, Priya ji!");
   assert.equal(handoff.questionId, "A0");
 });
+
+test("resolvePromptHandoff preserves identityMismatchWarning flag when provided by server", () => {
+  const handoff = resolvePromptHandoff(200, {
+    success: true,
+    completed: false,
+    identityMismatchWarning: true,
+    warningLevel: 1,
+    question: {
+      id: "A2_NAME",
+      text: "Ye interview Aakash ke naam par registered hai. Kripya apna registered naam dobara spasht batayein.",
+    },
+  });
+
+  assert.equal(handoff.identityMismatchWarning, true);
+  assert.equal(handoff.warningLevel, 1);
+  assert.equal(handoff.questionId, "A2_NAME");
+  assert.equal(
+    handoff.prompt,
+    "Ye interview Aakash ke naam par registered hai. Kripya apna registered naam dobara spasht batayein.",
+  );
+});

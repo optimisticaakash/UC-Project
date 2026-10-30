@@ -42,6 +42,9 @@ export function resolvePromptHandoff(status, data) {
   if (data.acknowledgement) {
     handoff.acknowledgement = data.acknowledgement;
   }
+  if (data.identityMismatchWarning !== undefined) {
+    handoff.identityMismatchWarning = Boolean(data.identityMismatchWarning);
+  }
 
   return handoff;
 }

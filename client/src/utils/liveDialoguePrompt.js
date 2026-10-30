@@ -47,6 +47,32 @@ export function buildQuestionHandoffPrompt(
   );
 }
 
+export function buildNameConfirmationPrompt(question, language = null) {
+  const languageDirective =
+    language === "English"
+      ? "Conduct this question in English as requested by the candidate. "
+      : "";
+  return (
+    candidateDialogueRules +
+    languageDirective +
+    "To verify the candidate's identity, ask the following authorized name confirmation question aloud exactly as written, then listen:\n\n" +
+    question
+  );
+}
+
+export function buildIdentityWarningPrompt(warningText, language = null) {
+  const languageDirective =
+    language === "English"
+      ? "Conduct this in English as requested by the candidate. "
+      : "";
+  return (
+    candidateDialogueRules +
+    languageDirective +
+    "For this registered identity check, speak the following official message aloud to the candidate exactly as written, even if it mentions the name they just spoke. Do not omit or alter any words, then listen:\n\n" +
+    warningText
+  );
+}
+
 export function buildClarificationPrompt(clarification) {
   return (
     candidateDialogueRules +

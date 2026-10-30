@@ -14,13 +14,16 @@ import {
 } from "../utils/repeatQuestionIntent";
 import {
   buildClarificationPrompt,
+  buildIdentityWarningPrompt,
   buildInitialQuestionPrompt,
   buildInvalidWarningPrompt,
+  buildNameConfirmationPrompt,
   buildQuestionHandoffPrompt,
   buildRepeatPrompt,
   buildTerminationPrompt,
   buildWaitingAnnouncementPrompt,
 } from "../utils/liveDialoguePrompt";
+import { speakTextFallback } from "../utils/speechFallback";
 import {
   isCurrentLiveGeneration,
   isCurrentLiveSession,
@@ -35,7 +38,7 @@ import { createRequestWaitAnnouncement, WAIT_ANNOUNCEMENT_TEXT } from "../utils/
 import { createAbortableRequest } from "../utils/requestAbort.js";
 import { createProgressiveCaptionsController } from "../utils/progressiveCaptions.js";
 
-const ANSWER_SETTLE_MS = 1200;
+const ANSWER_SETTLE_MS = 1000;
 const NO_SPEECH_TIMEOUT_MS = 15000;
 const WAIT_SPEECH_TIMEOUT_MS = 10000;
 const ANSWER_REQUEST_TIMEOUT_MS = 45000;
@@ -52,6 +55,8 @@ export function useGeminiLiveInterview() {
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [isInterviewActive, setIsInterviewActive] = useState(false);
   const [isInterviewOpen, setIsInterviewOpen] = useState(false);
+  const [candidateName, setCandidateName] = useState("");
+  const [currentQuestionId, setCurrentQuestionId] = useState(null);
   const [savedActiveSession, setSavedActiveSession] = useState(null);
   const [isCheckingActiveSession, setIsCheckingActiveSession] = useState(true);
 
@@ -87,6 +92,7 @@ export function useGeminiLiveInterview() {
   const inputTurnRef = useRef(createLiveInputTurn());
   const liveGenerationRef = useRef(0);
   const answerSettleTimerRef = useRef(null);
+  const pendingAnswerRunnerRef = useRef(null);
   const noSpeechTimerRef = useRef(null);
   const preparingResponseTimerRef = useRef(null);
   const isPreparingResponseRef = useRef(false);
@@ -95,7 +101,26 @@ export function useGeminiLiveInterview() {
   const candidateSpeechSinceSubmitRef = useRef(false);
   const suppressWaitingSpeechRef = useRef(false);
   const authorizedModelTurnRef = useRef(false);
+  const audioChunksReceivedForTurnRef = useRef(0);
   const candidateLanguageRef = useRef("Hindi");
+  const missingAudioRetryCountRef = useRef(0);
+  const ttsCancelRef = useRef(null);
+  const currentRequestIdRef = useRef(null);
+  const turnMetricsRef = useRef({
+    speechEndedAt: null,
+    settleStartedAt: null,
+    settleEndedAt: null,
+    backendRequestStartedAt: null,
+    backendResponseReceivedAt: null,
+    backendServiceElapsedMs: null,
+    llmInterpretationMs: null,
+    modelCallElapsedMs: null,
+    promptHandoffSentAt: null,
+    firstAudioChunkReceivedAt: null,
+    firstPlaybackStartedAt: null,
+    playbackFinishedAt: null,
+    candidateListeningEnabledAt: null,
+  });
   const mountedRef = useRef(true);
 
   function cancelPendingWaitAnnouncement(reason = "cancelled", stopAudio = false) {
@@ -122,30 +147,7 @@ export function useGeminiLiveInterview() {
 
   useEffect(() => {
     mountedRef.current = true;
-    (async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/interview/active`, {
-          credentials: "include",
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (data?.success && data.activeSession && mountedRef.current) {
-            const active = data.activeSession;
-            interviewSessionIdRef.current = active.sessionId;
-            currentQuestionIdRef.current = active.question?.id || null;
-            // Never set currentQuestion or interviewLifecycle="paused" on mount.
-            // Opening/active questions must only appear inside an explicitly started or resumed interview.
-            setSavedActiveSession(active);
-          }
-        }
-      } catch {
-        // Silently continue if unauthenticated or network unavailable
-      } finally {
-        if (mountedRef.current) {
-          setIsCheckingActiveSession(false);
-        }
-      }
-    })();
+    setIsCheckingActiveSession(false);
     return () => {
       mountedRef.current = false;
       liveGenerationRef.current += 1;
@@ -157,6 +159,10 @@ export function useGeminiLiveInterview() {
       answerSettleTimerRef.current = null;
       noSpeechTimerRef.current = null;
       preparingResponseTimerRef.current = null;
+      if (ttsCancelRef.current) {
+        ttsCancelRef.current();
+        ttsCancelRef.current = null;
+      }
       const pending = pendingWaitAnnouncementRef.current;
       if (pending) pending.coordinator.cancel("component_unmounted", { notify: false });
       pendingWaitAnnouncementRef.current = null;
@@ -177,6 +183,7 @@ export function useGeminiLiveInterview() {
   function clearAnswerSettleTimer() {
     if (answerSettleTimerRef.current) clearTimeout(answerSettleTimerRef.current);
     answerSettleTimerRef.current = null;
+    pendingAnswerRunnerRef.current = null;
   }
 
   function clearNoSpeechTimer() {
@@ -223,6 +230,10 @@ export function useGeminiLiveInterview() {
     const previousState = speakingStateRef.current;
     speakingStateRef.current = nextState;
     setIsAiSpeaking(nextState);
+
+    if (previousState && !nextState) {
+      turnMetricsRef.current.candidateListeningEnabledAt = performance.now();
+    }
 
     if (previousState !== nextState) {
       diagnostic("speaking_state", {
@@ -282,6 +293,13 @@ export function useGeminiLiveInterview() {
       promptTurnRef.current += 1;
       audioChunkSequenceRef.current = 0;
       const promptSentAt = performance.now();
+      turnMetricsRef.current.promptHandoffSentAt = promptSentAt;
+      turnMetricsRef.current.firstAudioChunkReceivedAt = null;
+      turnMetricsRef.current.firstPlaybackStartedAt = null;
+      turnMetricsRef.current.playbackFinishedAt = null;
+      if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+        audioContextRef.current.resume().catch(() => { });
+      }
       promptTimingRef.current = {
         generation,
         promptTurn: promptTurnRef.current,
@@ -300,13 +318,28 @@ export function useGeminiLiveInterview() {
 
       inputTurnRef.current.beginModelTurn();
       authorizedModelTurnRef.current = true;
+      audioChunksReceivedForTurnRef.current = 0;
+      const isIdentity = Boolean(
+        repeatRequest.identityMismatchWarning ||
+        (repeatRequest.questionId === "A2_NAME" && repeatRequest.warningLevel)
+      );
+      const promptText = isIdentity
+        ? buildIdentityWarningPrompt(repeatRequest.prompt, candidateLanguageRef.current)
+        : repeatRequest.isMissingAudioRetry
+          ? (repeatRequest.warningLevel
+            ? buildInvalidWarningPrompt(repeatRequest.prompt, repeatRequest.warningLevel)
+            : repeatRequest.clarificationRequired
+              ? buildClarificationPrompt(repeatRequest.prompt)
+              : buildQuestionHandoffPrompt(repeatRequest.prompt, null, candidateLanguageRef.current))
+          : buildRepeatPrompt(repeatRequest.prompt);
+
       liveSession.sendClientContent({
         turns: [
           {
             role: "user",
             parts: [
               {
-                text: buildRepeatPrompt(repeatRequest.prompt),
+                text: promptText,
               },
             ],
           },
@@ -324,7 +357,7 @@ export function useGeminiLiveInterview() {
         errorName: err?.name || "Error",
       });
       if (mountedRef.current && isCurrentLiveGeneration(generation, liveGenerationRef.current)) {
-      setError("Sorry, I couldn't repeat the question. Please try again or continue with your answer.");
+        setError("Sorry, I couldn't repeat the question. Please try again or continue with your answer.");
       }
     } finally {
       repeatHandoffGuardRef.current.release(generation);
@@ -349,6 +382,8 @@ export function useGeminiLiveInterview() {
     }
 
     const requestStartedAt = performance.now();
+    currentRequestIdRef.current = requestId;
+    turnMetricsRef.current.backendRequestStartedAt = requestStartedAt;
     const answerRequest = createAbortableRequest(ANSWER_REQUEST_TIMEOUT_MS);
     answerRequestRef.current = answerRequest;
     answerSubmittingRef.current = true;
@@ -368,6 +403,7 @@ export function useGeminiLiveInterview() {
         ) return false;
         suppressWaitingSpeechRef.current = false;
         authorizedModelTurnRef.current = true;
+        audioChunksReceivedForTurnRef.current = 0;
         liveSession.sendClientContent({
           turns: [{
             role: "user",
@@ -421,6 +457,10 @@ export function useGeminiLiveInterview() {
 
       requestStage = "answer_response_parse";
       const data = await response.json();
+      turnMetricsRef.current.backendResponseReceivedAt = performance.now();
+      turnMetricsRef.current.backendServiceElapsedMs = data.timing?.serviceElapsedMs || null;
+      turnMetricsRef.current.llmInterpretationMs = data.timing?.interpretationElapsedMs || null;
+      turnMetricsRef.current.modelCallElapsedMs = data.timing?.modelCallElapsedMs || null;
 
       if (
         !isCurrentLiveSession(
@@ -482,24 +522,24 @@ export function useGeminiLiveInterview() {
       const responseType = staleQuestionRecovery
         ? "stale_question_recovery"
         : !response.ok || !data.success
-        ? "error"
-        : data.completed && data.manualReviewRequired
-          ? "manual_review_terminal"
-          : data.completed
-            ? data.eligibilityOutcome === "reject"
-              ? "rejected_terminal"
-              : "completed_terminal"
-            : data.clarificationRequired && data.followUpRequired
-              ? "clarification_follow_up"
-              : data.clarificationRequired
-                ? "clarification"
-                : data.followUpRequired
-                  ? "follow_up"
-                  : data.manualReviewRequired
-                    ? "manual_review_continuing"
-                    : data.question
-                      ? "question_progression"
-                      : "response_without_question";
+          ? "error"
+          : data.completed && data.manualReviewRequired
+            ? "manual_review_terminal"
+            : data.completed
+              ? data.eligibilityOutcome === "reject"
+                ? "rejected_terminal"
+                : "completed_terminal"
+              : data.clarificationRequired && data.followUpRequired
+                ? "clarification_follow_up"
+                : data.clarificationRequired
+                  ? "clarification"
+                  : data.followUpRequired
+                    ? "follow_up"
+                    : data.manualReviewRequired
+                      ? "manual_review_continuing"
+                      : data.question
+                        ? "question_progression"
+                        : "response_without_question";
 
       diagnostic("answer_response", {
         requestId,
@@ -552,6 +592,7 @@ export function useGeminiLiveInterview() {
             inputTurnRef.current.beginModelTurn();
             suppressWaitingSpeechRef.current = false;
             authorizedModelTurnRef.current = true;
+            audioChunksReceivedForTurnRef.current = 0;
             sessionRef.current.sendClientContent({
               turns: [
                 {
@@ -585,6 +626,7 @@ export function useGeminiLiveInterview() {
         setSavedActiveSession(null);
         interviewSessionIdRef.current = null;
         currentQuestionIdRef.current = null;
+        setCurrentQuestionId(null);
         setInterviewLifecycle(terminalState);
         setIsProcessingAnswer(false);
         setPreparingResponse(false);
@@ -695,7 +737,7 @@ export function useGeminiLiveInterview() {
           pendingWaitAnnouncementRef.current?.sources.clear();
           nextPlayTimeRef.current = context?.currentTime || 0;
           setSpeakingState(false, "playback_stalled");
-          setError("Audio playback paused. The next question is shown on screen; you can answer or restart if needed.");
+          setError("I couldn't play the question. Please ask me to repeat it before answering.");
           diagnostic("playback_drain_recovered", { requestId, responseType });
         },
         isCurrent: () =>
@@ -713,6 +755,19 @@ export function useGeminiLiveInterview() {
       });
       if (!playbackWait.ready) {
         setPreparingResponse(false);
+        return;
+      }
+
+      if (playbackWait.playbackOutcome === "playback_stalled") {
+        diagnostic("prompt_handoff_blocked", {
+          requestId,
+          responseType,
+          reason: "previous_audio_playback_stalled",
+        });
+
+        setPreparingResponse(false);
+        setIsProcessingAnswer(false);
+        setError("I couldn't play the question. Please click Repeat Question to hear it again.");
         return;
       }
 
@@ -734,23 +789,44 @@ export function useGeminiLiveInterview() {
 
       if (promptHandoff.questionId) {
         currentQuestionIdRef.current = promptHandoff.questionId;
+        setCurrentQuestionId(promptHandoff.questionId);
       }
+      if (data.candidateName) {
+        setCandidateName(data.candidateName);
+      }
+      const isIdentityWarning = Boolean(
+        promptHandoff.identityMismatchWarning ||
+        (promptHandoff.questionId === "A2_NAME" && promptHandoff.warningLevel)
+      );
       activePromptRef.current = {
         questionId: promptHandoff.questionId || currentQuestionIdRef.current,
         text: nextPrompt,
         clarificationRequired: promptHandoff.clarificationRequired,
+        identityMismatchWarning: isIdentityWarning,
+        warningLevel: promptHandoff.warningLevel || null,
       };
       promptTurnRef.current += 1;
       audioChunkSequenceRef.current = 0;
       requestStage = "live_prompt_send";
       const promptSentAt = performance.now();
+      turnMetricsRef.current.promptHandoffSentAt = promptSentAt;
+      turnMetricsRef.current.firstAudioChunkReceivedAt = null;
+      turnMetricsRef.current.firstPlaybackStartedAt = null;
+      turnMetricsRef.current.playbackFinishedAt = null;
+      if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+        audioContextRef.current.resume().catch(() => { });
+      }
       promptTimingRef.current = {
         generation,
         promptTurn: promptTurnRef.current,
         sentAt: promptSentAt,
       };
       diagnostic("prompt_handoff_started", {
-        promptType: promptHandoff.clarificationRequired ? "clarification" : "question",
+        promptType: isIdentityWarning
+          ? "identity_warning"
+          : promptHandoff.clarificationRequired
+            ? "clarification"
+            : "question",
         responseType,
         promptChars: nextPrompt.length,
       });
@@ -759,11 +835,18 @@ export function useGeminiLiveInterview() {
         candidateLanguageRef.current = data.language;
       }
 
-      const candidateNameForHandoff =
-        expectedQuestionId === "A2_NAME" ? (data.candidateName || normalizedAnswer) : null;
+      const isNameConfirmationTurn =
+        !isIdentityWarning &&
+        (promptHandoff.questionId === "A2_NAME_CONFIRM" || expectedQuestionId === "A2_NAME");
+      const candidateNameForHandoff = isNameConfirmationTurn || isIdentityWarning
+        ? null
+        : expectedQuestionId === "A2_NAME" ? (data.candidateName || normalizedAnswer) : null;
+      const acknowledgementForHandoff = isNameConfirmationTurn || isIdentityWarning
+        ? null
+        : promptHandoff.acknowledgement;
 
-      const spokenTargetText = promptHandoff.acknowledgement
-        ? `${promptHandoff.acknowledgement} ${nextPrompt}`
+      const spokenTargetText = acknowledgementForHandoff
+        ? `${acknowledgementForHandoff} ${nextPrompt}`
         : nextPrompt;
 
       setCurrentQuestion(nextPrompt);
@@ -772,16 +855,21 @@ export function useGeminiLiveInterview() {
       inputTurnRef.current.beginModelTurn();
       suppressWaitingSpeechRef.current = false;
       authorizedModelTurnRef.current = true;
-      const promptText = promptHandoff.warningLevel
-        ? buildInvalidWarningPrompt(nextPrompt, promptHandoff.warningLevel)
-        : promptHandoff.clarificationRequired
-        ? buildClarificationPrompt(nextPrompt)
-        : buildQuestionHandoffPrompt(
-            nextPrompt,
-            candidateNameForHandoff,
-            candidateLanguageRef.current,
-            promptHandoff.acknowledgement,
-          );
+      audioChunksReceivedForTurnRef.current = 0;
+      const promptText = isIdentityWarning
+        ? buildIdentityWarningPrompt(nextPrompt, candidateLanguageRef.current)
+        : promptHandoff.warningLevel
+          ? buildInvalidWarningPrompt(nextPrompt, promptHandoff.warningLevel)
+          : promptHandoff.clarificationRequired
+            ? buildClarificationPrompt(nextPrompt)
+            : isNameConfirmationTurn
+              ? buildNameConfirmationPrompt(nextPrompt, candidateLanguageRef.current)
+              : buildQuestionHandoffPrompt(
+                nextPrompt,
+                candidateNameForHandoff,
+                candidateLanguageRef.current,
+                acknowledgementForHandoff,
+              );
 
       sessionRef.current.sendClientContent({
         turns: [
@@ -797,11 +885,13 @@ export function useGeminiLiveInterview() {
         turnComplete: true,
       });
       diagnostic("prompt_handoff_sent", {
-        promptType: promptHandoff.warningLevel
-          ? `warning_${promptHandoff.warningLevel}`
-          : promptHandoff.clarificationRequired
-          ? "clarification"
-          : "question",
+        promptType: isIdentityWarning
+          ? "identity_warning"
+          : promptHandoff.warningLevel
+            ? `warning_${promptHandoff.warningLevel}`
+            : promptHandoff.clarificationRequired
+              ? "clarification"
+              : "question",
         sendCallElapsedMs: Number((performance.now() - promptSentAt).toFixed(1)),
       });
     } catch (err) {
@@ -882,9 +972,19 @@ export function useGeminiLiveInterview() {
     setIsInterviewOpen(true);
     setInterviewLifecycle("starting");
     if (!isResume) {
+      interviewSessionIdRef.current = null;
+      currentQuestionIdRef.current = null;
+      setCurrentQuestionId(null);
       setCurrentQuestion("");
       setCaptionText("");
+      setCandidateName("");
+      setSavedActiveSession(null);
       captionsControllerRef.current.reset();
+      inputTurnRef.current.reset();
+      promptTurnRef.current = 0;
+      audioChunkSequenceRef.current = 0;
+      activePromptRef.current = null;
+      answerRequestRef.current = null;
     }
     setIsInterviewActive(false);
     setIsProcessingAnswer(false);
@@ -949,6 +1049,10 @@ export function useGeminiLiveInterview() {
 
       interviewSessionIdRef.current = interviewData.sessionId;
       currentQuestionIdRef.current = interviewData.question?.id || null;
+      setCurrentQuestionId(interviewData.question?.id || null);
+      if (interviewData.candidateName) {
+        setCandidateName(interviewData.candidateName);
+      }
       setCurrentQuestion(interviewData.question?.text || "");
       setCaptionText("");
       captionsControllerRef.current.beginTurn({
@@ -957,10 +1061,10 @@ export function useGeminiLiveInterview() {
       setSavedActiveSession(null);
       activePromptRef.current = interviewData.question?.text
         ? {
-            questionId: interviewData.question.id || null,
-            text: interviewData.question.text,
-            clarificationRequired: false,
-          }
+          questionId: interviewData.question.id || null,
+          text: interviewData.question.text,
+          clarificationRequired: false,
+        }
         : null;
       promptTurnRef.current = 0;
       audioChunkSequenceRef.current = 0;
@@ -1044,22 +1148,54 @@ export function useGeminiLiveInterview() {
             }
           }
 
-          const isPlaybackActive = playbackSourcesRef.current.size > 0 || speakingStateRef.current;
+          const isPlaybackActive =
+            playbackSourcesRef.current.size > 0 ||
+            speakingStateRef.current ||
+            authorizedModelTurnRef.current;
           const inputTurn = inputTurnRef.current.handleServerContent(content, { isPlaybackActive });
 
           const scheduleAnswerSubmission = (answerText) => {
             clearNoSpeechTimer();
-            clearAnswerSettleTimer();
-            answerSettleTimerRef.current = setTimeout(() => {
+            if (answerSettleTimerRef.current) {
+              clearTimeout(answerSettleTimerRef.current);
+            }
+            turnMetricsRef.current.settleStartedAt = performance.now();
+            diagnostic("answer_settle_scheduled", {
+              answerTextSnippet: typeof answerText === "string" ? answerText.slice(0, 30) : null,
+              delayMs: ANSWER_SETTLE_MS,
+            });
+
+            const runner = () => {
               answerSettleTimerRef.current = null;
+              pendingAnswerRunnerRef.current = null;
+              turnMetricsRef.current.settleEndedAt = performance.now();
+
+              if (
+                answerSubmittingRef.current ||
+                stoppingRef.current ||
+                !connectedRef.current
+              ) {
+                return;
+              }
+
+              // Always read the complete merged transcript from inputTurnRef at settle time
+              const fullAnswer = (inputTurnRef.current.getTranscript?.() || answerText || "").trim();
+              diagnostic("answer_settle_fired", {
+                transcriptChars: fullAnswer.length,
+                hasTranscript: Boolean(fullAnswer),
+              });
+              if (!fullAnswer || isInternalSpeechMarker(fullAnswer)) {
+                return;
+              }
+
               inputTurnRef.current.commitAnswer();
-              const finalizedInput = classifyFinalizedInput(answerText, activePromptRef.current);
+              const finalizedInput = classifyFinalizedInput(fullAnswer, activePromptRef.current);
               if (finalizedInput.type === "repeat_question") {
                 const repeatRequest = finalizedInput.repeatRequest;
                 const requestId = `p${promptTurnRef.current}-r${++repeatRequestSequenceRef.current}`;
                 diagnostic("repeat_question_request_finalized", {
                   requestId,
-                  transcriptChars: answerText.length,
+                  transcriptChars: fullAnswer.length,
                   activeQuestionId: repeatRequest.questionId,
                   activePromptAvailable: Boolean(repeatRequest.prompt),
                   answerSubmissionSkipped: true,
@@ -1079,11 +1215,17 @@ export function useGeminiLiveInterview() {
                 expectedQuestionId: currentQuestionIdRef.current,
               });
               void submitCandidateAnswer(answer, requestId, transcriptFinalizedAt);
-            }, ANSWER_SETTLE_MS);
+            };
+
+            pendingAnswerRunnerRef.current = runner;
+            answerSettleTimerRef.current = setTimeout(runner, ANSWER_SETTLE_MS);
           };
 
           const liveCandidateText =
             content.interimInputTranscription?.text || content.inputTranscription?.text || "";
+          if (content.inputTranscription?.text && content.inputTranscription?.finished !== false) {
+            turnMetricsRef.current.speechEndedAt = performance.now();
+          }
           if (
             answerSubmittingRef.current &&
             liveCandidateText.trim() &&
@@ -1105,6 +1247,19 @@ export function useGeminiLiveInterview() {
           const context = audioContextRef.current;
 
           if (content.interrupted) {
+            diagnostic("model_interrupted_event_received", {
+              wasAuthorized: authorizedModelTurnRef.current,
+              inputPhase: inputTurnRef.current.phase(),
+              hasInputTranscription: Boolean(content.inputTranscription?.text),
+              inputTranscription: content.inputTranscription?.text || null,
+              hasInterimTranscription: Boolean(content.interimInputTranscription?.text),
+              modelAudioParts: (content.modelTurn?.parts || []).filter(
+                (part) => Boolean(part.inlineData)
+              ).length,
+              activeQuestionId: currentQuestionIdRef.current,
+              promptTurn: promptTurnRef.current,
+            });
+
             authorizedModelTurnRef.current = false;
             captionsControllerRef.current.handleInterruption();
             if (mountedRef.current) {
@@ -1150,6 +1305,13 @@ export function useGeminiLiveInterview() {
             const chunkSequence = audio ? ++audioChunkSequenceRef.current : null;
 
             if (audio) {
+
+              if (!turnMetricsRef.current.firstAudioChunkReceivedAt) {
+                turnMetricsRef.current.firstAudioChunkReceivedAt = performance.now();
+              }
+              if (context && context.state === "suspended") {
+                context.resume().catch(() => { });
+              }
               const padding = audio.data?.endsWith("==") ? 2 : audio.data?.endsWith("=") ? 1 : 0;
               diagnostic("audio_chunk_received", {
                 chunkSequence,
@@ -1224,6 +1386,10 @@ export function useGeminiLiveInterview() {
               audioContextSampleRate: context.sampleRate,
             });
 
+            if (context.state === "suspended") {
+              context.resume().catch(() => { });
+            }
+
             let buffer;
             try {
               buffer = context.createBuffer(1, pcm.length, 24000);
@@ -1265,6 +1431,14 @@ export function useGeminiLiveInterview() {
             setPreparingResponse(false);
             try {
               source.start(startAt);
+
+              missingAudioRetryCountRef.current = 0;
+
+              if (!turnMetricsRef.current.firstPlaybackStartedAt) {
+                turnMetricsRef.current.firstPlaybackStartedAt = performance.now();
+              }
+
+              audioChunksReceivedForTurnRef.current += 1;
               playbackQueueRef.current.sourceStarted(source);
             } catch (err) {
               playbackSourcesRef.current.delete(source);
@@ -1273,6 +1447,9 @@ export function useGeminiLiveInterview() {
                 scheduledSources: playbackSourcesRef.current.size,
                 audioContextState: context.state,
               });
+              if (playbackSourcesRef.current.size === 0) {
+                setSpeakingState(false, "audio_schedule_error");
+              }
               throw err;
             }
             nextPlayTimeRef.current = startAt + buffer.duration;
@@ -1318,7 +1495,47 @@ export function useGeminiLiveInterview() {
                 audioContextRef.current === context &&
                 playbackSourcesRef.current.size === 0
               ) {
+                turnMetricsRef.current.playbackFinishedAt = performance.now();
                 setSpeakingState(false, "audio_queue_ended");
+                const m = turnMetricsRef.current;
+                diagnostic("turn_latency_metrics", {
+                  requestId: currentRequestIdRef.current,
+                  activeQuestionId: currentQuestionIdRef.current,
+                  questionGeneratedAt: m.backendResponseReceivedAt ? Number(m.backendResponseReceivedAt.toFixed(1)) : null,
+                  promptSentAt: m.promptHandoffSentAt ? Number(m.promptHandoffSentAt.toFixed(1)) : null,
+                  firstAudioChunkReceivedAt: m.firstAudioChunkReceivedAt ? Number(m.firstAudioChunkReceivedAt.toFixed(1)) : null,
+                  firstPlaybackStartedAt: m.firstPlaybackStartedAt ? Number(m.firstPlaybackStartedAt.toFixed(1)) : null,
+                  playbackCompletedAt: m.playbackFinishedAt ? Number(m.playbackFinishedAt.toFixed(1)) : null,
+                  candidateListeningEnabledAt: m.candidateListeningEnabledAt ? Number(m.candidateListeningEnabledAt.toFixed(1)) : null,
+                  candidateSpeechEndedAt: m.speechEndedAt ? Number(m.speechEndedAt.toFixed(1)) : null,
+                  settleWindowElapsedMs:
+                    m.settleStartedAt && m.settleEndedAt
+                      ? Number((m.settleEndedAt - m.settleStartedAt).toFixed(1))
+                      : null,
+                  backendAnswerSubmitDurationMs:
+                    m.backendRequestStartedAt && m.backendResponseReceivedAt
+                      ? Number((m.backendResponseReceivedAt - m.backendRequestStartedAt).toFixed(1))
+                      : null,
+                  backendServiceElapsedMs: m.backendServiceElapsedMs,
+                  llmInterpretationDurationMs: m.llmInterpretationMs,
+                  modelCallElapsedMs: m.modelCallElapsedMs,
+                  timeToFirstAudioChunkMs:
+                    m.promptHandoffSentAt && m.firstAudioChunkReceivedAt
+                      ? Number((m.firstAudioChunkReceivedAt - m.promptHandoffSentAt).toFixed(1))
+                      : null,
+                  timeToFirstPlaybackMs:
+                    m.promptHandoffSentAt && m.firstPlaybackStartedAt
+                      ? Number((m.firstPlaybackStartedAt - m.promptHandoffSentAt).toFixed(1))
+                      : null,
+                  totalAudioPlaybackDurationMs:
+                    m.firstPlaybackStartedAt && m.playbackFinishedAt
+                      ? Number((m.playbackFinishedAt - m.firstPlaybackStartedAt).toFixed(1))
+                      : null,
+                  playbackToListeningMs:
+                    m.playbackFinishedAt && m.candidateListeningEnabledAt
+                      ? Number((m.candidateListeningEnabledAt - m.playbackFinishedAt).toFixed(1))
+                      : null,
+                });
                 const playbackEndTurn = inputTurnRef.current.finishModelPlayback?.();
                 const completedCaption = captionsControllerRef.current.markPlaybackComplete();
                 if (mountedRef.current && completedCaption) {
@@ -1335,7 +1552,78 @@ export function useGeminiLiveInterview() {
             const wasAuthorizedTurn = authorizedModelTurnRef.current;
             authorizedModelTurnRef.current = false;
             pendingWaitAnnouncementRef.current?.coordinator.markSpeechFinished();
-            setPreparingResponse(false);
+
+            if (
+              wasAuthorizedTurn &&
+              audioChunksReceivedForTurnRef.current === 0 &&
+              playbackSourcesRef.current.size === 0
+            ) {
+              diagnostic("turn_complete_without_audio", {
+                activeQuestionId: currentQuestionIdRef.current,
+                msSincePromptSent: promptElapsedMs(generation),
+                retryCount: missingAudioRetryCountRef.current,
+              });
+              if (
+                missingAudioRetryCountRef.current < 1 &&
+                activePromptRef.current &&
+                !answerSubmittingRef.current &&
+                !stoppingRef.current
+              ) {
+                missingAudioRetryCountRef.current += 1;
+                if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+                  audioContextRef.current.resume().catch(() => { });
+                }
+                const repeatReq = {
+                  questionId: activePromptRef.current.questionId,
+                  prompt: activePromptRef.current.text,
+                  clarificationRequired: activePromptRef.current.clarificationRequired,
+                  identityMismatchWarning: activePromptRef.current.identityMismatchWarning,
+                  warningLevel: activePromptRef.current.warningLevel,
+                  isMissingAudioRetry: true,
+                };
+                const reqId = `p${promptTurnRef.current}-missing-audio-repeat`;
+                void repeatActivePrompt(generation, reqId, repeatReq);
+                return;
+              } else {
+                diagnostic("missing_audio_retries_exhausted", {
+                  activeQuestionId: currentQuestionIdRef.current,
+                });
+                missingAudioRetryCountRef.current = 0;
+                setPreparingResponse(false);
+
+                const fallbackText = activePromptRef.current?.text || currentQuestion;
+                if (fallbackText && mountedRef.current && !stoppingRef.current) {
+                  diagnostic("missing_audio_tts_fallback_started", {
+                    activeQuestionId: currentQuestionIdRef.current,
+                    textLength: fallbackText.length,
+                  });
+                  ttsCancelRef.current = speakTextFallback({
+                    text: fallbackText,
+                    language: candidateLanguageRef.current,
+                    onStart: () => {
+                      setSpeakingState(true, "tts_fallback_started");
+                    },
+                    onEnd: () => {
+                      ttsCancelRef.current = null;
+                      setSpeakingState(false, "tts_fallback_ended");
+                      const completedCaption = captionsControllerRef.current.markPlaybackComplete();
+                      if (mountedRef.current && completedCaption) {
+                        setCaptionText(completedCaption);
+                      }
+                    },
+                    onError: (err) => {
+                      diagnostic("tts_fallback_error", { error: err?.message || String(err) });
+                      ttsCancelRef.current = null;
+                      setSpeakingState(false, "tts_fallback_error");
+                    },
+                  });
+                  return;
+                }
+                setSpeakingState(false, "missing_audio_fallback");
+              }
+            } else {
+              setPreparingResponse(false);
+            }
             diagnostic("live_turn_complete", {
               wasAuthorizedTurn,
               hasOutputTranscription: Boolean(content.outputTranscription?.text),
@@ -1373,8 +1661,18 @@ export function useGeminiLiveInterview() {
             }
           }
 
-          if (inputTurn.answer && !isPlaybackActive) {
-            scheduleAnswerSubmission(inputTurn.answer);
+          if (!isPlaybackActive && !answerSubmittingRef.current) {
+            if (inputTurn.answer) {
+              diagnostic("candidate_turn_answer_ready", { textLength: inputTurn.answer.length });
+              scheduleAnswerSubmission(inputTurn.answer);
+            } else if (
+              inputTurnRef.current.hasCandidateSpoken?.() &&
+              !answerSettleTimerRef.current
+            ) {
+              const currentTranscript = inputTurnRef.current.getTranscript();
+              diagnostic("candidate_turn_transcript_settle_started", { textLength: currentTranscript.length });
+              scheduleAnswerSubmission(currentTranscript);
+            }
           }
         },
 
@@ -1451,22 +1749,32 @@ export function useGeminiLiveInterview() {
           return;
         }
 
-        // Do not stream microphone audio to Gemini Live while waiting for the model to prepare its question response or while submitting answer
-        if (isPreparingResponseRef.current || answerSubmittingRef.current) {
+        // Do not stream microphone audio to Gemini Live while waiting for the model to prepare its response or while submitting answer
+        // Suppress streaming while AI is speaking or audio playback is active to completely prevent speaker-to-mic echo loop and false model interruption
+        // Issue 1 Fix: Also suppress during authorizedModelTurn (transit gap between prompt send and first audio chunk)
+        if (
+          isPreparingResponseRef.current ||
+          answerSubmittingRef.current ||
+          authorizedModelTurnRef.current ||
+          speakingStateRef.current ||
+          playbackSourcesRef.current.size > 0
+        ) {
           return;
         }
 
         const input = event.inputBuffer.getChannelData(0);
 
-        // While AI is speaking, suppress low-level ambient room noise / speaker echo to prevent false interruption
-        if (speakingStateRef.current) {
+        // Debounce settle timer if candidate resumes speaking into microphone during the settle period
+        if (answerSettleTimerRef.current && pendingAnswerRunnerRef.current) {
           let sum = 0;
           for (let i = 0; i < input.length; i++) {
             sum += input[i] * input[i];
           }
           const rms = Math.sqrt(sum / input.length);
-          if (rms < 0.02) {
-            return;
+          if (rms > 0.04) {
+            diagnostic("mic_speech_extended_settle", { rms: Number(rms.toFixed(3)) });
+            clearTimeout(answerSettleTimerRef.current);
+            answerSettleTimerRef.current = setTimeout(pendingAnswerRunnerRef.current, ANSWER_SETTLE_MS);
           }
         }
 
@@ -1498,6 +1806,7 @@ export function useGeminiLiveInterview() {
       inputTurnRef.current.beginModelTurn();
       suppressWaitingSpeechRef.current = false;
       authorizedModelTurnRef.current = true;
+      audioChunksReceivedForTurnRef.current = 0;
       setPreparingResponse(true);
       promptTurnRef.current += 1;
       audioChunkSequenceRef.current = 0;
@@ -1518,10 +1827,10 @@ export function useGeminiLiveInterview() {
         }
         const promptText = isResume
           ? buildQuestionHandoffPrompt(
-              interviewData.question.text,
-              interviewData.candidateName,
-              candidateLanguageRef.current,
-            )
+            interviewData.question.text,
+            interviewData.candidateName,
+            candidateLanguageRef.current,
+          )
           : buildInitialQuestionPrompt(interviewData.question.text);
         session.sendClientContent({
           turns: [
@@ -1574,6 +1883,16 @@ export function useGeminiLiveInterview() {
     setSavedActiveSession(null);
     interviewSessionIdRef.current = null;
     currentQuestionIdRef.current = null;
+    setCurrentQuestionId(null);
+    setCurrentQuestion("");
+    setCaptionText("");
+    setCandidateName("");
+    captionsControllerRef.current.reset();
+    inputTurnRef.current.reset();
+    promptTurnRef.current = 0;
+    audioChunkSequenceRef.current = 0;
+    activePromptRef.current = null;
+    answerRequestRef.current = null;
     return startOrResume(false);
   }
 
@@ -1619,16 +1938,20 @@ export function useGeminiLiveInterview() {
     for (const source of playbackSourcesRef.current) {
       try {
         source.stop();
-      } catch {}
+      } catch { }
     }
     playbackQueueRef.current.cancelAll("session_paused");
     playbackSourcesRef.current.clear();
+    if (ttsCancelRef.current) {
+      ttsCancelRef.current();
+      ttsCancelRef.current = null;
+    }
 
     if (processorRef.current) {
       processorRef.current.onaudioprocess = null;
       try {
         processorRef.current.disconnect();
-      } catch {}
+      } catch { }
     }
 
     try {
@@ -1641,7 +1964,7 @@ export function useGeminiLiveInterview() {
       if (audioContextRef.current && audioContextRef.current.state !== "closed") {
         await audioContextRef.current.close();
       }
-    } catch {}
+    } catch { }
 
     sessionRef.current = null;
     audioContextRef.current = null;
@@ -1665,6 +1988,10 @@ export function useGeminiLiveInterview() {
     if (stoppingRef.current) return;
     answerRequestRef.current?.cancel("interview_stopped");
     cancelPendingWaitAnnouncement("interview_stopped");
+    if (ttsCancelRef.current) {
+      ttsCancelRef.current();
+      ttsCancelRef.current = null;
+    }
     captionsControllerRef.current.reset();
     setCaptionText("");
     clearAnswerSettleTimer();
@@ -1705,7 +2032,7 @@ export function useGeminiLiveInterview() {
       processorRef.current.onaudioprocess = null;
       try {
         processorRef.current.disconnect();
-      } catch {}
+      } catch { }
     }
 
     try {
@@ -1771,6 +2098,9 @@ export function useGeminiLiveInterview() {
           errorName: endError?.name || "Error",
         });
         if (mountedRef.current) {
+          setSavedActiveSession(null);
+          interviewSessionIdRef.current = null;
+          currentQuestionIdRef.current = null;
           setInterviewLifecycle("end_unconfirmed");
           setError("I couldn't confirm that the interview ended. Please contact support.");
         }
@@ -1779,10 +2109,80 @@ export function useGeminiLiveInterview() {
     stoppingRef.current = false;
   }
 
+  async function submitTextAnswer(text) {
+    if (!text || typeof text !== "string") return;
+    const clean = text.trim();
+    if (!clean) return;
+    if (
+      isAiSpeaking ||
+      isProcessingAnswer ||
+      isPreparingResponse ||
+      isWaitingForBackend ||
+      !interviewSessionIdRef.current ||
+      !currentQuestionIdRef.current
+    ) {
+      return;
+    }
+    clearNoSpeechTimer();
+    clearAnswerSettleTimer();
+    setError("");
+    inputTurnRef.current = createLiveInputTurn();
+    const requestId = `req_txt_${Date.now()}`;
+    await submitCandidateAnswer(clean, requestId, performance.now());
+  }
+
+  async function confirmName(isConfirmed) {
+    if (
+      isAiSpeaking ||
+      isProcessingAnswer ||
+      isPreparingResponse ||
+      isWaitingForBackend ||
+      answerSubmittingRef.current ||
+      !interviewSessionIdRef.current ||
+      !currentQuestionIdRef.current ||
+      stoppingRef.current
+    ) {
+      return;
+    }
+    clearNoSpeechTimer();
+    clearAnswerSettleTimer();
+    setError("");
+    inputTurnRef.current = createLiveInputTurn();
+    const answer = isConfirmed ? "yes" : "no";
+    const requestId = `req_confirm_${Date.now()}`;
+    await submitCandidateAnswer(answer, requestId, performance.now());
+  }
+
+  async function updateName(newName) {
+    if (!newName || typeof newName !== "string" || !interviewSessionIdRef.current) return false;
+    try {
+      const res = await fetch(`${API_URL}/api/interview/update-name`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: interviewSessionIdRef.current,
+          name: newName.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.candidateName) {
+        setCandidateName(data.candidateName);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn("[Interview] Name update failed:", e);
+      return false;
+    }
+  }
+
   return {
     error,
     interviewLifecycle,
     currentQuestion,
+    currentQuestionId,
+    candidateName,
     captionText,
     isProcessingAnswer,
     isPreparingResponse,
@@ -1799,5 +2199,8 @@ export function useGeminiLiveInterview() {
     isInterviewOpen,
     setIsInterviewOpen,
     isCheckingActiveSession,
+    submitTextAnswer,
+    confirmName,
+    updateName,
   };
 }

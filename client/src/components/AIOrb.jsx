@@ -2,7 +2,7 @@ import { getCandidateVisibleQuestion } from "../utils/interviewUiState.js";
 
 export default function AIOrb({ isAiSpeaking, audioLevel, currentQuestion, captionText }) {
   const visibleQuestion = isAiSpeaking
-    ? (captionText || "")
+    ? (captionText || currentQuestion || "")
     : (captionText || getCandidateVisibleQuestion(currentQuestion));
 
   return (

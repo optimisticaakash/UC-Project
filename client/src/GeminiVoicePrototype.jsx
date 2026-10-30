@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useGeminiLiveInterview } from "./hooks/useGeminiLiveInterview";
 import AIOrb from "./components/AIOrb";
 import InterviewControls from "./components/InterviewControls";
@@ -14,6 +15,8 @@ export default function GeminiVoicePrototype() {
     error,
     interviewLifecycle,
     currentQuestion,
+    currentQuestionId,
+    candidateName,
     captionText,
     isProcessingAnswer,
     isPreparingResponse,
@@ -26,10 +29,14 @@ export default function GeminiVoicePrototype() {
     pause,
     resume,
     stop,
-    savedActiveSession,
     isInterviewOpen,
     setIsInterviewOpen,
+    confirmName,
+    updateName,
   } = useGeminiLiveInterview();
+
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState("");
 
   const interviewTerminal = isTerminalInterviewState(interviewLifecycle);
   const lifecycleBusy = interviewLifecycle === "starting" || interviewLifecycle === "ending";
@@ -94,31 +101,6 @@ export default function GeminiVoicePrototype() {
           </div>
         </div>
 
-        {/* Saved Session banner (if active session exists) */}
-        {savedActiveSession && (
-          <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50/70 p-4 sm:p-5">
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-blue-600 text-white text-xs font-bold" aria-hidden="true">
-                ✓
-              </span>
-              <div>
-                <h3 className="text-sm font-semibold text-blue-950">
-                  Interview in progress
-                </h3>
-                <p className="mt-1 text-xs text-blue-800 leading-relaxed">
-                  {savedActiveSession.candidateName
-                    ? `Welcome back, ${savedActiveSession.candidateName}! `
-                    : ""}
-                  Aapka previous interview progress saved hai. You can resume your assessment from where you left off.
-                  {savedActiveSession.questionNumber && savedActiveSession.totalQuestions
-                    ? ` (Question ${savedActiveSession.questionNumber} of ${savedActiveSession.totalQuestions})`
-                    : ""}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Error message */}
         {error && (
           <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-800" role="alert">
@@ -128,48 +110,20 @@ export default function GeminiVoicePrototype() {
 
         {/* Action Button */}
         <div className="mt-8 flex flex-wrap items-center gap-4">
-          {savedActiveSession ? (
-            <>
-              <button
-                type="button"
-                className="inline-flex items-center gap-2.5 rounded-xl bg-neutral-950 px-6 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950 focus-visible:ring-offset-2 transition disabled:opacity-60"
-                onClick={async () => {
-                  await resume();
-                }}
-                disabled={startingRef.current}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <polygon points="6 4 20 12 6 20 6 4" />
-                </svg>
-                Resume Interview
-              </button>
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-5 py-3.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 transition disabled:opacity-60"
-                onClick={async () => {
-                  await start();
-                }}
-                disabled={startingRef.current}
-              >
-                Start New Interview
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="inline-flex items-center gap-2.5 rounded-xl bg-neutral-950 px-6 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950 focus-visible:ring-offset-2 transition disabled:opacity-60"
-              onClick={async () => {
-                await start();
-              }}
-              disabled={startingRef.current}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="9" y="2" width="6" height="13" rx="3" />
-                <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" />
-              </svg>
-              Start Interview
-            </button>
-          )}
+          <button
+            type="button"
+            className="inline-flex items-center gap-2.5 rounded-xl bg-neutral-950 px-6 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950 focus-visible:ring-offset-2 transition disabled:opacity-60"
+            onClick={async () => {
+              await start();
+            }}
+            disabled={startingRef.current}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="9" y="2" width="6" height="13" rx="3" />
+              <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" />
+            </svg>
+            Start Interview
+          </button>
         </div>
       </div>
     );
@@ -216,6 +170,63 @@ export default function GeminiVoicePrototype() {
             error={error}
           />}
 
+      {/* Name Confirmation badge */}
+      {!interviewTerminal && candidateName && (
+        <div style={{ maxWidth: 680, margin: "6px auto 10px" }}>
+          {!isEditingName ? (
+            <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-3.5 py-1 text-xs text-neutral-700 shadow-sm backdrop-blur-sm">
+              <span className="flex size-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-white font-bold">✓</span>
+              <span>Candidate: <strong className="font-semibold text-neutral-900">{candidateName}</strong></span>
+              <button
+                type="button"
+                className="ml-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 underline"
+                onClick={() => {
+                  setEditedName(candidateName);
+                  setIsEditingName(true);
+                }}
+              >
+                Correct Name
+              </button>
+            </div>
+          ) : (
+            <form
+              className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1 text-xs shadow-sm"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (editedName.trim()) {
+                  const ok = await updateName(editedName.trim());
+                  if (ok) setIsEditingName(false);
+                }
+              }}
+            >
+              <label htmlFor="edit-candidate-name" className="text-neutral-600 font-medium">Name:</label>
+              <input
+                id="edit-candidate-name"
+                type="text"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                className="rounded border border-neutral-300 px-2 py-0.5 text-xs text-neutral-900 focus:outline-none focus:ring-1 focus:ring-neutral-900"
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="rounded bg-neutral-900 px-2.5 py-0.5 text-[11px] font-semibold text-white hover:bg-neutral-800"
+                disabled={!editedName.trim()}
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                className="text-[11px] text-neutral-500 hover:text-neutral-700"
+                onClick={() => setIsEditingName(false)}
+              >
+                Cancel
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
       {/* One orb, centered */}
       {!interviewTerminal && <AIOrb
         isAiSpeaking={isAiSpeaking}
@@ -223,6 +234,46 @@ export default function GeminiVoicePrototype() {
         currentQuestion={currentQuestion}
         captionText={captionText}
       />}
+
+      {/* Name Confirmation Step: Clear Yes / No action buttons */}
+      {!interviewTerminal && isInterviewActive && interviewLifecycle !== "paused" && currentQuestionId === "A2_NAME_CONFIRM" && (
+        <div style={{ maxWidth: 640, margin: "16px auto" }} className="flex flex-col items-center">
+          <p className="text-xs font-medium text-neutral-600 mb-3 text-center">
+            Please confirm your name to proceed:
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-4">
+            <button
+              type="button"
+              disabled={isAiSpeaking || isProcessingAnswer || isPreparingResponse || isWaitingForBackend}
+              onClick={() => confirmName(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition cursor-pointer"
+              aria-label="Confirm name yes"
+            >
+              <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <span>Yes, that&apos;s my name</span>
+              <span className="text-emerald-200 text-xs font-normal">(Haan, sahi hai)</span>
+            </button>
+            <button
+              type="button"
+              disabled={isAiSpeaking || isProcessingAnswer || isPreparingResponse || isWaitingForBackend}
+              onClick={() => confirmName(false)}
+              className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-rose-700 active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition cursor-pointer"
+              aria-label="Confirm name no"
+            >
+              <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              <span>No, that&apos;s incorrect</span>
+              <span className="text-rose-200 text-xs font-normal">(Nahi, galat hai)</span>
+            </button>
+          </div>
+          <p className="mt-3 text-[11px] text-neutral-500 text-center">
+            🎙️ You can also speak &ldquo;Haan&rdquo; or &ldquo;Nahi&rdquo; into your microphone.
+          </p>
+        </div>
+      )}
 
       {/* Interview controls */}
       {!interviewTerminal && <InterviewControls

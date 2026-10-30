@@ -106,3 +106,33 @@ test("shouldDisplayInterviewView prevents premature interview view on home scree
   assert.equal(shouldDisplayInterviewView(), false);
 });
 
+test("Regression Voice Sync 1: Preparing next question state prevents premature Listening state", () => {
+  // While next question prompt is being sent or audio is decoding, UI must not state 'Listening'
+  const preparingModel = getInterviewUiModel({
+    lifecycle: "in_progress",
+    isPreparingResponse: true,
+    isAiSpeaking: false,
+  });
+  assert.equal(preparingModel.voiceLabel, "Preparing next question...");
+
+  // Listening state begins only after AI playback has ended and preparation is done
+  const listeningModel = getInterviewUiModel({
+    lifecycle: "in_progress",
+    isPreparingResponse: false,
+    isAiSpeaking: false,
+    isWaitingForBackend: false,
+    isProcessingAnswer: false,
+  });
+  assert.equal(listeningModel.voiceLabel, "Listening");
+});
+
+test("Regression Voice Sync 2: Missing audio recovery error is recognized as a safe candidate error", () => {
+  const safeErr = getCandidateSafeError(
+    "Sorry, I couldn't prepare the next question. Please ask me to repeat it or try your answer again.",
+  );
+  assert.equal(
+    safeErr,
+    "Sorry, I couldn't prepare the next question. Please ask me to repeat it or try your answer again.",
+  );
+});
+

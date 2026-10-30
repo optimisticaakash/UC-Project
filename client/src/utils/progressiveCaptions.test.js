@@ -106,6 +106,25 @@ test("prefers actual output transcription text over target question when provide
   assert.equal(full, "Namaste ji, sabse pehle aap apna naam bataiye.");
 });
 
+test("does not truncate caption to partial streaming output transcription when targetQuestionText is provided", () => {
+  const controller = createProgressiveCaptionsController();
+  const fullTargetQuestion = "Aapke aas-paas padosi rishtedaar saheliyan kitni ladies aapse eyebrows ya waxing karwati hain?";
+  controller.beginTurn({ targetQuestionText: fullTargetQuestion });
+
+  // Gemini Live emits an incomplete initial output transcription chunk
+  controller.appendTranscription("Aapke paas is");
+  controller.registerAudioChunk({ startAt: 0.0, duration: 3.0, chunkSequence: 1 });
+
+  // At 50% playback:
+  const mid = controller.updatePlaybackProgress(1.5);
+  assert.ok(mid.split(" ").length >= 4);
+
+  // At 100% completion:
+  const completed = controller.markPlaybackComplete();
+  assert.equal(completed, fullTargetQuestion);
+  assert.notEqual(completed, "Aapke paas is");
+});
+
 test("interruption freezes caption reveal at current point", () => {
   const controller = createProgressiveCaptionsController();
   controller.beginTurn({ targetQuestionText: "Namaste ji sabse pehle apna naam bataiye" });

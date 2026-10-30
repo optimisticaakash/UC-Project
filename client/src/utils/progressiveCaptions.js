@@ -38,11 +38,11 @@ export function createProgressiveCaptionsController() {
   let lastRevealedText = "";
 
   function getCleanSourceText() {
-    const cleanTranscription = sanitizeTranscriptionText(accumulatedTranscription);
-    if (cleanTranscription) {
-      return cleanTranscription;
+    const cleanTarget = sanitizeTranscriptionText(targetQuestionText);
+    if (cleanTarget) {
+      return cleanTarget;
     }
-    return sanitizeTranscriptionText(targetQuestionText);
+    return sanitizeTranscriptionText(accumulatedTranscription);
   }
 
   return {

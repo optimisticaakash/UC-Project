@@ -28,6 +28,7 @@ export function createLiveInputTurn() {
   let modelTurnInterrupted = false;
   let candidateResponseComplete = false;
   let transcript = "";
+  let latestInterimText = "";
   let transcriptFinalized = false;
   let answerIssued = false;
   let seenTranscripts = new Set();
@@ -41,6 +42,7 @@ export function createLiveInputTurn() {
     modelTurnInterrupted = false;
     candidateResponseComplete = false;
     transcript = "";
+    latestInterimText = "";
     transcriptFinalized = false;
     answerIssued = false;
     seenTranscripts = new Set();
@@ -64,17 +66,17 @@ export function createLiveInputTurn() {
 
     finishModelPlayback() {
       if (phase === "model") {
-        if (candidateActivity && candidateResponseComplete) {
-          phase = "candidate";
-        } else if (candidateActivity) {
+        if (modelTurnInterrupted && candidateActivity && candidateResponseComplete) {
           phase = "candidate";
         } else {
           phase = "listening";
+          resetCandidate();
         }
       }
 
       let answer = null;
       const canEmitAnswer =
+        modelTurnInterrupted &&
         candidateActivity &&
         candidateResponseComplete &&
         transcriptFinalized &&
@@ -87,12 +89,25 @@ export function createLiveInputTurn() {
         answer = transcript;
       }
 
-      return { transcript, answer, activity: false };
+      return { transcript: answer || "", answer, activity: false };
+    },
+
+    interruptModelPlayback() {
+      if (phase === "model") {
+        candidateActivity = true;
+        modelTurnInterrupted = true;
+      }
     },
 
     handleServerContent(content, { isPlaybackActive = false } = {}) {
       if (!content) return result();
       let activity = false;
+
+      // Requirement 1: While AI question playback is actively playing through speakers,
+      // do not treat microphone input as the candidate's answer unless model turn was explicitly interrupted.
+      if (isPlaybackActive && !modelTurnInterrupted) {
+        return { transcript: "", answer: null, activity: false };
+      }
 
       if (content.interrupted && phase === "model") {
         candidateActivity = true;
@@ -108,6 +123,7 @@ export function createLiveInputTurn() {
           candidateResponseComplete = false;
           transcriptFinalized = false;
           answerIssued = false;
+          latestInterimText = interim;
         }
       }
 
@@ -140,6 +156,7 @@ export function createLiveInputTurn() {
         // assistant-only turn cannot become a candidate answer.
         if (input.finished !== false) {
           candidateInterimActivity = false;
+          latestInterimText = "";
           if (phase === "listening") {
             phase = "candidate";
           }
@@ -189,12 +206,29 @@ export function createLiveInputTurn() {
     },
 
     commitAnswer() {
-      if (answerIssued) phase = "submitted";
+      if (answerIssued || transcript) phase = "submitted";
     },
 
     retry() {
       phase = "listening";
       resetCandidate();
+    },
+
+    getTranscript() {
+      return (transcript || latestInterimText).trim();
+    },
+
+    isCandidateSpeaking() {
+      return candidateInterimActivity || (candidateActivity && !candidateResponseComplete);
+    },
+
+    hasCandidateSpoken() {
+      const best = (transcript || latestInterimText).trim();
+      return candidateActivity && Boolean(best && !isInternalSpeechMarker(best));
+    },
+
+    phase() {
+      return phase;
     },
   };
 }

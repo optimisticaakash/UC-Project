@@ -464,7 +464,16 @@ test("interview start, answer, and end are written before successful responses",
       answerResponse,
     );
     assert.equal(answerResponse.statusCode, 200);
-    assert.equal(answerResponse.body.question.id, "A0");
+    assert.equal(answerResponse.body.question.id, "A2_NAME_CONFIRM");
+    assert.equal(answerResponse.body.nameConfirmationRequired, true);
+
+    const confirmResponse = responseRecorder();
+    await interviewController.submitAnswer(
+      { body: { sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "yes" } },
+      confirmResponse,
+    );
+    assert.equal(confirmResponse.statusCode, 200);
+    assert.equal(confirmResponse.body.question.id, "A0");
     assert.equal(writes.at(-1).answers[0].questionId, "A2_NAME");
 
     const reviewResponse = responseRecorder();
