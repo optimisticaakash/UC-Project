@@ -542,3 +542,29 @@ test("Single-word candidate name 'Rajesh' in interim transcript is captured and 
   assert.equal(finalResult.answer, "Rajesh");
   assert.equal(turn.getTranscript(), "Rajesh");
 });
+
+test("server interruption immediately confirms model playback interruption", () => {
+  const turn = createLiveInputTurn();
+  turn.beginModelTurn();
+
+  const result = turn.handleServerContent({ interrupted: true });
+
+  assert.equal(result.interruptionConfirmed, true);
+  assert.equal(turn.phase(), "model");
+});
+
+test("candidate transcript is preserved when playback ends before interruption transcript arrives", () => {
+  const turn = createLiveInputTurn();
+  turn.beginModelTurn();
+
+  const interruption = turn.handleServerContent({ interrupted: true });
+  assert.equal(interruption.interruptionConfirmed, true);
+
+  turn.finishModelPlayback();
+
+  const result = turn.handleServerContent(
+    finalTranscript("Mujhe ek baat poochni hai", "1s", "3s"),
+  );
+
+  assert.equal(result.answer, "Mujhe ek baat poochni hai");
+});

@@ -112,3 +112,58 @@ export function buildTerminationPrompt(terminationMessage) {
     terminationMessage
   );
 }
+
+export function buildCandidateQuestionInvitationPrompt(language = null) {
+  const languageDirective =
+    language === "English"
+      ? "Speak in natural, polite English. "
+      : "Speak in natural, respectful Hindi or Hinglish. ";
+
+  return (
+    candidateDialogueRules +
+    languageDirective +
+    "The candidate wants to ask a question about the interview. Politely invite them to ask their question. Keep it brief. Do not ask the next assessment question. Then listen."
+  );
+}
+
+export function buildCandidateQuestionAnswerPrompt(
+  candidateQuestion,
+  language = null,
+) {
+  const languageDirective =
+    language === "English"
+      ? "Answer in natural, polite English. "
+      : "Answer in natural, respectful Hindi or Hinglish. ";
+
+  return (
+    candidateDialogueRules +
+    languageDirective +
+    "The candidate has asked a question during the interview. Answer only that question clearly, briefly, and helpfully. Do not invent company policies, salary details, guarantees, or facts that are not available. If you do not know the answer, politely say that you do not have that information. Do not ask or advance any assessment question. After answering, ask whether the candidate's doubt is clear. Then listen.\n\nCandidate's question:\n" +
+    candidateQuestion
+  );
+}
+
+export function buildCandidateQuestionFollowUpPrompt(
+  candidateQuestion,
+  language = null,
+) {
+  const languageDirective =
+    language === "English"
+      ? "Speak in natural, polite English. "
+      : "Speak in natural, respectful Hindi or Hinglish. ";
+
+  return (
+    candidateDialogueRules +
+    languageDirective +
+    "The candidate has a follow-up question or has indicated that their doubt is not clear. Address their latest question or concern helpfully and briefly. Do not advance the assessment or ask the next assessment question. Ask whether the doubt is clear, then listen.\n\nCandidate's follow-up:\n" +
+    candidateQuestion
+  );
+}
+
+export function buildResumeAssessmentPrompt(activeQuestion) {
+  return (
+    candidateDialogueRules +
+    "The candidate's doubt has been resolved. Politely return to the interview and ask the following pending assessment question exactly as written. Do not change, skip, or add to the question. Then listen:\n\n" +
+    activeQuestion
+  );
+}

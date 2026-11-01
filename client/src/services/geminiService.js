@@ -9,11 +9,19 @@ export function connectGeminiLive(token, callbacks) {
 
   return ai.live.connect({
     model: MODEL,
+
     config: {
       responseModalities: ["AUDIO"],
       inputAudioTranscription: {},
       outputAudioTranscription: {},
+      realtimeInputConfig: {
+        automaticActivityDetection: {
+          disabled: false,
+        },
+        activityHandling: "START_OF_ACTIVITY_INTERRUPTS",
+      },
     },
+
     callbacks,
   });
 }

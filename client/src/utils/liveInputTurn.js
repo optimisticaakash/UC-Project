@@ -22,10 +22,13 @@ export function isInternalSpeechMarker(value) {
 }
 
 export function createLiveInputTurn() {
+
+  let interruptionAwaitingTranscript = false;
   let phase = "listening";
   let candidateActivity = false;
   let candidateInterimActivity = false;
   let modelTurnInterrupted = false;
+  let pendingModelInterruption = false;
   let candidateResponseComplete = false;
   let transcript = "";
   let latestInterimText = "";
@@ -41,15 +44,22 @@ export function createLiveInputTurn() {
     candidateInterimActivity = false;
     modelTurnInterrupted = false;
     candidateResponseComplete = false;
+    pendingModelInterruption = false;
     transcript = "";
     latestInterimText = "";
     transcriptFinalized = false;
     answerIssued = false;
+    interruptionAwaitingTranscript = false;
     seenTranscripts = new Set();
   }
 
   function result(answer = null) {
-    return { transcript, answer, activity: false };
+    return {
+      transcript,
+      answer,
+      activity: false,
+      interruptionConfirmed: false,
+    };
   }
 
   return {
@@ -66,15 +76,25 @@ export function createLiveInputTurn() {
 
     finishModelPlayback() {
       if (phase === "model") {
-        if (modelTurnInterrupted && candidateActivity && candidateResponseComplete) {
+        if (
+          modelTurnInterrupted &&
+          (interruptionAwaitingTranscript ||
+            (candidateActivity && candidateResponseComplete))
+        ) {
           phase = "candidate";
         } else {
+          // Allow the same transcript to be processed again after playback.
+          for (const key of seenTranscripts) {
+            seenSessionTranscripts.delete(key);
+          }
+
           phase = "listening";
           resetCandidate();
         }
       }
 
       let answer = null;
+
       const canEmitAnswer =
         modelTurnInterrupted &&
         candidateActivity &&
@@ -89,7 +109,12 @@ export function createLiveInputTurn() {
         answer = transcript;
       }
 
-      return { transcript: answer || "", answer, activity: false };
+      return {
+        transcript: answer || "",
+        answer,
+        activity: false,
+        interruptionConfirmed: false,
+      };
     },
 
     interruptModelPlayback() {
@@ -102,17 +127,39 @@ export function createLiveInputTurn() {
     handleServerContent(content, { isPlaybackActive = false } = {}) {
       if (!content) return result();
       let activity = false;
+      let interruptionConfirmed = false;
 
       // Requirement 1: While AI question playback is actively playing through speakers,
       // do not treat microphone input as the candidate's answer unless model turn was explicitly interrupted.
-      if (isPlaybackActive && !modelTurnInterrupted) {
-        return { transcript: "", answer: null, activity: false };
+      if (content.interrupted && phase === "model") {
+        pendingModelInterruption = false;
+        modelTurnInterrupted = true;
+        interruptionAwaitingTranscript = true;
+        interruptionConfirmed = true;
       }
 
-      if (content.interrupted && phase === "model") {
-        candidateActivity = true;
-        modelTurnInterrupted = true;
+      const hasCandidateTranscript = Boolean(
+        content.interimInputTranscription?.text?.trim() ||
+        content.inputTranscription?.text?.trim()
+      );
+      if (
+        isPlaybackActive &&
+        !modelTurnInterrupted &&
+        !pendingModelInterruption &&
+        !hasCandidateTranscript &&
+        !content.turnComplete
+      ) {
+        return {
+          transcript: "",
+          answer: null,
+          activity: false,
+          interruptionConfirmed: false,
+        };
       }
+
+
+
+
 
       if (content.interimInputTranscription?.text?.trim()) {
         const interim = content.interimInputTranscription.text.trim();
@@ -165,6 +212,15 @@ export function createLiveInputTurn() {
           }
         }
       }
+      if (
+        phase === "model" &&
+        candidateActivity &&
+        pendingModelInterruption
+      ) {
+        modelTurnInterrupted = true;
+        pendingModelInterruption = false;
+        interruptionConfirmed = true;
+      }
 
       if (content.turnComplete && phase !== "submitted") {
         if (phase === "model") {
@@ -202,7 +258,12 @@ export function createLiveInputTurn() {
         answerIssued = true;
       }
 
-      return { transcript, answer, activity };
+      return {
+        transcript,
+        answer,
+        activity,
+        interruptionConfirmed,
+      };
     },
 
     commitAnswer() {
