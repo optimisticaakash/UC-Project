@@ -624,23 +624,53 @@ function classifyNameAnswer(answer) {
   return { clear: false, format: "unsupported_phrase" };
 }
 
+function isOffTopicQuestionUtterance(answer) {
+  if (typeof answer !== "string" || !answer.trim()) return false;
+  const a = answer.trim().toLowerCase();
+  const hasQuestionForm =
+    /[?]$/.test(a) ||
+    /^(?:who\s+(?:is|was|won|plays)|what\s+(?:is|was|are|happened)|where\s+is|why\s+is|how\s+is|kaun|kisne|kisko|kya\s+hua|mausam\s+kaisa|score\s+kya|weather)\b/i.test(
+      a,
+    );
+  const hasOffTopicTopic =
+    /\b(?:cricket|match|ipl|football|sports|game|movie|movies|cinema|film|actor|actress|weather|mausam|barish|rain|score|winner|capital|france|modi|rahul|election|politics|president|minister|news|song|sing|dance|chai|coffee|biryani|burger|pizza)\b/i.test(
+      a,
+    );
+  return (
+    (hasQuestionForm && hasOffTopicTopic) ||
+    /^(?:who\s+won|score\s+kya|match\s+kaun|weather\s+kaisa)/i.test(a)
+  );
+}
+
 function handleInvalidAttempt(session, question, {
   clarificationPrefix,
   warningPrefix,
   firstAttemptMessage,
   secondAttemptMessage,
   repeatQuestionText,
+  candidateAnswer,
 } = {}) {
   session.invalidAttempts = session.invalidAttempts || {};
   const currentAttempts = (session.invalidAttempts[question.id] || 0) + 1;
   session.invalidAttempts[question.id] = currentAttempts;
 
   const originalQuestionText = repeatQuestionText || question.text;
+  const isEnglish = session.language === "English";
+  const isOffTopic = isOffTopicQuestionUtterance(candidateAnswer);
 
   if (currentAttempts === 1) {
-    const prefix =
-      clarificationPrefix ||
-      "Maaf kijiye, mujhe samajh nahi aaya ki ye sawal ka jawab kaise hai. Kripya is sawal ka seedha jawab dein";
+    let prefix;
+    if (isOffTopic) {
+      prefix = isEnglish
+        ? "I cannot answer questions unrelated to the interview. Let's focus on the interview. Please answer this question"
+        : "Maaf kijiye, main interview se alag sawalon ke jawab nahi de sakti. Chaliye interview par dhyan dete hain. Kripya is sawal ka jawab dein";
+    } else {
+      prefix =
+        clarificationPrefix ||
+        (isEnglish
+          ? "I didn't understand how that answers the question. Please provide a direct answer to this question"
+          : "Maaf kijiye, mujhe samajh nahi aaya ki ye sawal ka jawab kaise hai. Kripya is sawal ka seedha jawab dein");
+    }
     const message =
       firstAttemptMessage || `${prefix}: ${originalQuestionText}`;
 
@@ -663,9 +693,18 @@ function handleInvalidAttempt(session, question, {
   }
 
   if (currentAttempts === 2) {
-    const prefix =
-      warningPrefix ||
-      "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya is sawal ka seedha aur spasht jawab dein";
+    let prefix;
+    if (isOffTopic) {
+      prefix = isEnglish
+        ? "Your previous responses were not related to the interview. This is your final attempt. Please answer the assessment question directly"
+        : "Aapke pehle ke jawab interview se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya is sawal ka seedha jawab dein";
+    } else {
+      prefix =
+        warningPrefix ||
+        (isEnglish
+          ? "Your previous answers were not related to this question. This is your final attempt. Please answer clearly and directly"
+          : "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya is sawal ka seedha aur spasht jawab dein");
+    }
     const message =
       secondAttemptMessage || `${prefix}: ${originalQuestionText}`;
 
@@ -696,8 +735,9 @@ function handleInvalidAttempt(session, question, {
   session.endedAt = session.terminatedAt;
   clearShortTermMemory(session);
 
-  const terminationMessage =
-    "Teen baar koshish karne ke baad bhi relevant jawab na milne ki wajah se interview aage nahi badh sakta. Aapka interview yahin samapt hota hai.";
+  const terminationMessage = isEnglish
+    ? "Due to repeated invalid or off-topic responses, we cannot proceed with the interview. Your interview ends here."
+    : "Teen baar koshish karne ke baad bhi relevant jawab na milne ki wajah se interview aage nahi badh sakta. Aapka interview yahin samapt hota hai.";
 
   return {
     status: 200,
@@ -791,6 +831,7 @@ async function submitAnswer({
   diagnosticPromptTurn,
   diagnosticSessionGeneration,
 }, { interpretAnswerImpl = interpretAnswer } = {}) {
+  let interpretation = null;
   const session = sessions.get(sessionId);
 
   if (!session) {
@@ -1018,7 +1059,7 @@ async function submitAnswer({
     if (!inquiry) {
       const cq = detectCounterQuestion(
         cleanAnswer,
-        { text: qText },
+        { text: qText, id: qId, Step: qId },
         { language: session.language },
       );
       if (cq.isCounterQuestion) {
@@ -1092,7 +1133,6 @@ async function submitAnswer({
     if (isExplicitQuestion || cq.isCounterQuestion) {
       const inquiry = await checkCandidateInquiry(confirmPrompt, "A2_NAME_CONFIRM");
       if (inquiry) {
-        session.invalidAttempts = {};
         const replyText = (
           inquiry.counterQuestionAnswer ||
           inquiry.responseText ||
@@ -1162,7 +1202,6 @@ async function submitAnswer({
             interp.intent === "CLARIFICATION_REQUEST" ||
             interp.answerStatus === "counter_question"
           ) {
-            session.invalidAttempts = {};
             const replyText = (
               interp.counterQuestionAnswer ||
               interp.responseText ||
@@ -1429,9 +1468,62 @@ async function submitAnswer({
       };
     }
 
-    const confirmPromptFallback = isEnglish
-      ? `Please confirm: your name is ${pendingName}, right? You can say Yes or No.`
-      : `Kripya confirm karein: kya aapka naam ${pendingName} hai? Aap Haan ya Nahi bol sakti hain.`;
+    const isOffTopic = isOffTopicQuestionUtterance(cleanAnswer);
+    session.invalidAttempts = session.invalidAttempts || {};
+    const currentConfirmAttempts = (session.invalidAttempts["A2_NAME_CONFIRM"] || 0) + 1;
+    session.invalidAttempts["A2_NAME_CONFIRM"] = currentConfirmAttempts;
+
+    if (currentConfirmAttempts >= 3) {
+      session.status = "terminated";
+      session.terminationReason = "repeated_invalid_answers";
+      session.terminatedAt = new Date().toISOString();
+      session.terminatedAtQuestionId = "A2_NAME_CONFIRM";
+      session.completedAt = session.terminatedAt;
+      session.endedAt = session.terminatedAt;
+      clearShortTermMemory(session);
+
+      const terminationMessage = isEnglish
+        ? "Due to repeated invalid or off-topic responses, we cannot proceed with the interview. Your interview ends here."
+        : "Teen baar koshish karne ke baad bhi relevant jawab na milne ki wajah se interview aage nahi badh sakta. Aapka interview yahin samapt hota hai.";
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: true,
+          terminated: true,
+          sessionStatus: "terminated",
+          terminationReason: session.terminationReason,
+          terminatedAtQuestionId: "A2_NAME_CONFIRM",
+          terminatedAt: session.terminatedAt,
+          message: terminationMessage,
+          answeredQuestions: session.answers.length,
+          totalQuestions: questions.length,
+        },
+      };
+    }
+
+    let repromptMsg;
+    if (isOffTopic) {
+      repromptMsg =
+        currentConfirmAttempts === 1
+          ? isEnglish
+            ? `I cannot answer questions unrelated to the interview. Let's focus on the interview. Please confirm: your name is ${pendingName}, right?`
+            : `Maaf kijiye, main interview se alag sawalon ke jawab nahi de sakti. Chaliye interview par dhyan dete hain. Kripya confirm karein: kya aapka naam ${pendingName} hai?`
+          : isEnglish
+            ? `Your previous responses were not related to the interview. This is your final attempt. Please confirm: your name is ${pendingName}, right? You can say Yes or No.`
+            : `Aapke pehle ke jawab interview se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya confirm karein ki kya aapka naam ${pendingName} hai? Aap Haan ya Nahi bol sakti hain.`;
+    } else {
+      repromptMsg =
+        currentConfirmAttempts === 1
+          ? isEnglish
+            ? `Please confirm: your name is ${pendingName}, right? You can say Yes or No.`
+            : `Kripya confirm karein: kya aapka naam ${pendingName} hai? Aap Haan ya Nahi bol sakti hain.`
+          : isEnglish
+            ? `Your previous response was not clear. This is your final attempt. Please confirm if your name is ${pendingName} (Yes or No).`
+            : `Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya confirm karein ki kya aapka naam ${pendingName} hai (Haan ya Nahi).`;
+    }
+
     return {
       status: 200,
       body: {
@@ -1439,13 +1531,15 @@ async function submitAnswer({
         completed: false,
         nameConfirmationRequired: true,
         candidateName: pendingName,
-        message: confirmPromptFallback,
+        message: repromptMsg,
+        warningLevel: currentConfirmAttempts,
+        warning: currentConfirmAttempts > 1,
         questionNumber: session.currentQuestionIndex + 1,
         totalQuestions: questions.length,
         question: {
           id: "A2_NAME_CONFIRM",
           Step: "A2_NAME_CONFIRM",
-          text: confirmPromptFallback,
+          text: confirmPrompt,
           category: "Introduction",
         },
       },
@@ -1697,6 +1791,7 @@ async function submitAnswer({
             warningPrefix:
               "Aapka jawab is sawal se juda hua nahi hai. Ye aapka aakhri attempt hai. Kripya seedhe batayein",
             repeatQuestionText: pending.prompt,
+            candidateAnswer: followUpAnswer,
           },
         );
       }
@@ -1953,6 +2048,35 @@ async function submitAnswer({
         };
       }
 
+      const isIrrelevantFollowUp =
+        /\b(?:biryani|pizza|burger|maggi|cricket|football|movie|movies|cinema|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|blah\s+blah|asdf|qwerty|chair|table|desk|bottle|cat|dog|billi|kutta)\b/i.test(
+          normalized,
+        ) ||
+        /^(?:noise|<no speech>|<empty>|\.{2,}|uh+|um+|hmm+)$/i.test(normalized) ||
+        normalized.length < 2 ||
+        /(.)\1{3,}/u.test(normalized);
+
+      if (isIrrelevantFollowUp) {
+        return handleInvalidAttempt(
+          session,
+          {
+            id: `${pending.questionId}_FOLLOW_UP`,
+            text: pending.prompt,
+            category: pending.category || "General",
+          },
+          {
+            clarificationPrefix:
+              "Maaf kijiye, ye jawab is sawal se juda hua nahi hai. Kripya seedha jawab dein",
+            warningPrefix:
+              "Aapka jawab is sawal se juda hua nahi hai. Ye aapka aakhri attempt hai. Kripya spasht jawab dein",
+            repeatQuestionText: pending.prompt,
+            candidateAnswer: followUpAnswer,
+          },
+        );
+      }
+
+      session.invalidAttempts = {};
+
       const isStillUnclear =
         /^(?:pata\s+nahi|pata\s+nahin|not\s+sure|don't\s+know|dont\s+know|unsure|maybe|shayad|no\s+idea|samajh\s+nahi\s+aaya|skip|aage\s+badho|pass)[.!?\s]*$/i.test(
           normalized,
@@ -2084,7 +2208,6 @@ async function submitAnswer({
     if (cq.isCounterQuestion || consentOutcome === "unclear") {
       const inquiry = await checkCandidateInquiry(question.text, question.id);
       if (inquiry) {
-        session.invalidAttempts = {};
         const replyText = (
           inquiry.counterQuestionAnswer ||
           inquiry.responseText ||
@@ -2092,9 +2215,12 @@ async function submitAnswer({
           cq.reply ||
           ""
         ).trim();
-        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
-          ? replyText
-          : `${replyText} ${question.text}`;
+        const isRepeat = interpretation?.topic === "repeat_question";
+        const combinedMessage = isRepeat
+          ? `${replyText} ${question.text}`
+          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
+            ? replyText
+            : `${replyText} ${question.text}`;
         return {
           status: 200,
           body: {
@@ -2117,6 +2243,7 @@ async function submitAnswer({
           warningPrefix:
             "Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya spasht batayein",
           repeatQuestionText: question.text,
+          candidateAnswer: cleanAnswer,
         });
       }
     }
@@ -2185,7 +2312,6 @@ async function submitAnswer({
     if (isCandidateQuestion || (result.outcome === "clarification" && !result.area)) {
       const inquiry = await checkCandidateInquiry(question.text, question.id);
       if (inquiry) {
-        session.invalidAttempts = {};
         const replyText = (
           inquiry.counterQuestionAnswer ||
           inquiry.responseText ||
@@ -2193,9 +2319,12 @@ async function submitAnswer({
           cq.reply ||
           ""
         ).trim();
-        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
-          ? replyText
-          : `${replyText} ${question.text}`;
+        const isRepeat = interpretation?.topic === "repeat_question";
+        const combinedMessage = isRepeat
+          ? `${replyText} ${question.text}`
+          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
+            ? replyText
+            : `${replyText} ${question.text}`;
         return {
           status: 200,
           body: {
@@ -2214,10 +2343,11 @@ async function submitAnswer({
       if (result.outcome === "clarification" && !result.area) {
         return handleInvalidAttempt(session, question, {
           clarificationPrefix:
-            "Maaf kijiye, ye ilaqe ya area ka naam nahi lag raha. Kripya apne sheher ya area ka naam batayein",
+            "Maaf kijiye, screening ke liye humein aapka ilaka jaanna zaroori hai. Kripya apne sheher ya area ka naam batayein",
           warningPrefix:
-            "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apne sheher ya area ka naam seedhe batayein",
+            "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apne sheher aur local area ka naam spasht batayein",
           repeatQuestionText: question.text,
+          candidateAnswer: cleanAnswer,
         });
       }
     }
@@ -2349,7 +2479,6 @@ async function submitAnswer({
     if (cq.isCounterQuestion || result.outcome === "clarification") {
       const inquiry = await checkCandidateInquiry(question.text, question.id);
       if (inquiry) {
-        session.invalidAttempts = {};
         const replyText = (
           inquiry.counterQuestionAnswer ||
           inquiry.responseText ||
@@ -2357,9 +2486,12 @@ async function submitAnswer({
           cq.reply ||
           ""
         ).trim();
-        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
-          ? replyText
-          : `${replyText} ${question.text}`;
+        const isRepeat = interpretation?.topic === "repeat_question";
+        const combinedMessage = isRepeat
+          ? `${replyText} ${question.text}`
+          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
+            ? replyText
+            : `${replyText} ${question.text}`;
         return {
           status: 200,
           body: {
@@ -2399,10 +2531,11 @@ async function submitAnswer({
 
         return handleInvalidAttempt(session, question, {
           clarificationPrefix:
-            "Maaf kijiye, ye sahi umar nahi lag rahi. Kripya apni sahi umar saal mein batayein",
+            "Maaf kijiye, screening ke liye humein aapki umar jaanna zaroori hai. Kripya apni umar saal mein batayein",
           warningPrefix:
-            "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apni sahi umar saal mein spasht batayein",
+            "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apni exact umar saal mein batayein (jaise 25 saal)",
           repeatQuestionText: question.text,
+          candidateAnswer: cleanAnswer,
         });
       }
     }
@@ -2485,16 +2618,18 @@ async function submitAnswer({
     if (!nameIsClear) {
       const inquiry = await checkCandidateInquiry(question.text, question.id);
       if (inquiry) {
-        session.invalidAttempts = {};
         const replyText = (
           inquiry.counterQuestionAnswer ||
           inquiry.responseText ||
           inquiry.clarificationQuestion ||
           ""
         ).trim();
-        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
-          ? replyText
-          : `${replyText} ${question.text}`;
+        const isRepeat = interpretation?.topic === "repeat_question";
+        const combinedMessage = isRepeat
+          ? `${replyText} ${question.text}`
+          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
+            ? replyText
+            : `${replyText} ${question.text}`;
         return {
           status: 200,
           body: {
@@ -2548,6 +2683,7 @@ async function submitAnswer({
         warningPrefix:
           "Aapka jawab samajh nahi aaya. Ye aapka aakhri attempt hai. Kripya apna naam spasht batayein",
         repeatQuestionText: question.text,
+        candidateAnswer: cleanAnswer,
       });
     }
 
@@ -2719,7 +2855,6 @@ async function submitAnswer({
     if (isQuestionUtterance) {
       const inquiry = await checkCandidateInquiry(question.text, question.id);
       if (inquiry) {
-        session.invalidAttempts = {};
         const replyText = (
           inquiry.counterQuestionAnswer ||
           inquiry.responseText ||
@@ -2727,9 +2862,12 @@ async function submitAnswer({
           cq.reply ||
           ""
         ).trim();
-        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
-          ? replyText
-          : `${replyText} ${question.text}`;
+        const isRepeat = interpretation?.topic === "repeat_question";
+        const combinedMessage = isRepeat
+          ? `${replyText} ${question.text}`
+          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
+            ? replyText
+            : `${replyText} ${question.text}`;
         return {
           status: 200,
           body: {
@@ -2768,7 +2906,7 @@ async function submitAnswer({
         cleanAnswer,
       );
     const isIrrelevant =
-      /\b(?:biryani|pizza|burger|cricket|movie|anime|chair|table|laptop|pen|bottle)\b/i.test(
+      /\b(?:biryani|pizza|burger|cricket|football|movie|movies|cinema|anime|chair|table|laptop|pen|bottle|cat|dog|billi|kutta|weather|mausam|barish|rain|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|asdf|qwerty)\b/i.test(
         cleanAnswer,
       );
 
@@ -2895,16 +3033,30 @@ async function submitAnswer({
     if (isIrrelevant) {
       return handleInvalidAttempt(session, question, {
         clarificationPrefix:
-          "Maaf kijiye, ye jawab sawal se juda hua nahi hai. Kripya is sawal ka seedha jawab dein",
+          "Maaf kijiye, screening ke liye humein jaanna zaroori hai ki kya aap customer ke ghar travel kar sakti hain. Kripya batayein ki kya aap 3-4 km cluster mein travel karne ke liye taiyaar hain",
         warningPrefix:
-          "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya seedhe batayein",
+          "Aapke pehle ke jawab travel ke sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya spasht batayein ki kya aap travel kar sakti hain",
         repeatQuestionText: question.text,
+        candidateAnswer: cleanAnswer,
       });
     }
 
-    session.invalidAttempts = {};
+    const isAffirmativeTravel =
+      /^(?:(?:ji\s+)?(?:haan|han|haanji|hanji|yes|yeah|yep|ha|sure|ok|okay)(?:\s+(?:ji|madam|sir))?|ji|bilkul|theek\s+hai|thik\s+hai|ho\s+jayega|kar\s+lungi|kar\s+lunga|ja\s+sakti\s+hoon|ja\s+sakta\s+hoon|kar\s+sakti\s+hoon|kar\s+sakta\s+hoon|manage\s+kar\s+lungi|manage\s+kar\s+lunga|problem\s+nahi\s+hai|koi\s+dikkat\s+nahi\s+hai|koi\s+issue\s+nahi\s+hai|हाँ|हां|जी|जी\s+हाँ|बिल्कुल|हो\s+जाएगा)[.!?।\s]*$/iu.test(
+        cleanAnswer,
+      ) ||
+      /\b(?:travel\s+kar\s+sakti|travel\s+kar\s+sakta|ja\s+sakti|ja\s+sakta|kar\s+sakti|kar\s+sakta|kar\s+lungi|kar\s+lunga|manage\s+kar|willing|ready|comfortable|chalega|chalegi|bike|scooty|scooter|bus|auto|metro|public\s+transport|apni\s+gaadi|two\s*wheeler|koi\s+dikkat\s+nahi|koi\s+problem\s+nahi|no\s+problem|can\s+travel|will\s+travel)\b/i.test(
+        cleanAnswer,
+      );
 
-    if (unwillingTravel) {
+    const isNegativeTravel =
+      unwillingTravel ||
+      /^(?:no|nope|nahi|nahin|nhi|never|not\s+possible|nahi\s+ho\s+payega|nahi\s+kar\s+sakti|nahi\s+kar\s+sakta|nahi\s+ja\s+sakti|nahi\s+ja\s+sakta|नहीं|नही)[.!?।\s]*$/iu.test(
+        cleanAnswer,
+      );
+
+    if (isNegativeTravel) {
+      session.invalidAttempts = {};
       answerRecord.travelWillingness = "no";
       session.manualChecks = session.manualChecks || [];
       session.manualChecks.push({
@@ -2917,7 +3069,7 @@ async function submitAnswer({
       });
       session.manualReviewRequired = true;
       session.answers.push(answerRecord);
-    recordShortTermMemoryTurn(session, answerRecord);
+      recordShortTermMemoryTurn(session, answerRecord);
       advanceToNextApplicableQuestion(session);
       return {
         status: 200,
@@ -2932,20 +3084,32 @@ async function submitAnswer({
       };
     }
 
-    answerRecord.travelWillingness = "yes";
-    session.answers.push(answerRecord);
-    recordShortTermMemoryTurn(session, answerRecord);
-    advanceToNextApplicableQuestion(session);
-    return {
-      status: 200,
-      body: {
-        success: true,
-        completed: false,
-        questionNumber: session.currentQuestionIndex + 1,
-        totalQuestions: questions.length,
-        question: questions[session.currentQuestionIndex],
-      },
-    };
+    if (isAffirmativeTravel) {
+      session.invalidAttempts = {};
+      answerRecord.travelWillingness = "yes";
+      session.answers.push(answerRecord);
+      recordShortTermMemoryTurn(session, answerRecord);
+      advanceToNextApplicableQuestion(session);
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: questions[session.currentQuestionIndex],
+        },
+      };
+    }
+
+    return handleInvalidAttempt(session, question, {
+      clarificationPrefix:
+        "Maaf kijiye, screening ke liye humein jaanna zaroori hai ki kya aap customer ke ghar travel kar sakti hain. Kripya batayein ki kya aap 3-4 km cluster mein travel kar sakti hain",
+      warningPrefix:
+        "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya spasht batayein ki kya aap travel kar sakti hain",
+      repeatQuestionText: question.text,
+      candidateAnswer: cleanAnswer,
+    });
   }
 
   // Gemini interpretation for normal questions only.
@@ -2953,7 +3117,7 @@ async function submitAnswer({
     question.id,
   );
 
-  let interpretation = null;
+  interpretation = null;
   if (!isSpecialQuestion) {
     const interpretationQuestionIndex = session.currentQuestionIndex;
     try {
@@ -3007,7 +3171,6 @@ async function submitAnswer({
         interpretation.intent === "CLARIFICATION_REQUEST" ||
         interpretation.answerStatus === "counter_question"
       ) {
-        session.invalidAttempts = {};
         const isEnglish = session.language === "English";
         const reply =
           interpretation.counterQuestionAnswer ||
@@ -3017,9 +3180,12 @@ async function submitAnswer({
             ? "Urban Company is a salon-at-home service where bookings are at customer homes within a 3-4 km cluster of your area."
             : "Urban Company salon-at-home service hai jahan kaam aapke area ke 3-4 km cluster mein customer ke ghar par hota hai.");
         const replyText = reply.trim();
-        const combinedMessage = replyText.toLowerCase().includes(question.text.toLowerCase().trim())
-          ? replyText
-          : `${replyText} ${question.text}`;
+        const isRepeat = interpretation?.topic === "repeat_question";
+        const combinedMessage = isRepeat
+          ? `${replyText} ${question.text}`
+          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
+            ? replyText
+            : `${replyText} ${question.text}`;
         return {
           status: 200,
           body: {
@@ -3151,6 +3317,7 @@ async function submitAnswer({
           warningPrefix:
             "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya is sawal ka seedha aur spasht jawab dein",
           repeatQuestionText: question.text,
+          candidateAnswer: cleanAnswer,
         });
       }
 

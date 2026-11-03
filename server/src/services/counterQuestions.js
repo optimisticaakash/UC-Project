@@ -71,16 +71,62 @@ function detectCounterQuestion(answer, question = {}, { language = "Hindi" } = {
   }
 
   // 3. General Question Clarification / Repetition inquiries
-  const isGeneralClarificationQuery =
-    /\b(?:what\s+do\s+you\s+mean|what\s+does\s+(?:that|this|it)\s+mean|kya\s+matlab|matlab\s+kya|iska\s+(?:kya\s+)?matlab|sawal\s+samajh|samajh\s+nahi\s+aaya|samajh\s+nahi\s+aa\s+raha|thoda\s+explain|explain\s+kar\s+sakte|can\s+you\s+explain|please\s+explain|iska\s+matlab\s+bataiye)\b/i.test(
+  const isRepeatQuery =
+    /\b(?:repeat\s+(?:the\s+)?(?:question|sawal)|can\s+you\s+repeat|could\s+you\s+repeat|please\s+repeat|repeat\s+kijiye|repeat\s+karein|repeat\s+kar\s+do|repeat\s+karo|dobara\s+(?:boliye|bataiye|poochiye|puchiye|kahiye|repeat)|phir\s+se\s+(?:boliye|bataiye|poochiye|puchiye|kahiye|repeat)|ek\s+baar\s+(?:aur|phir\s+se|dobara)?\s*(?:boliye|bataiye|repeat\s+kijiye|repeat\s+karein)|pardon(?:\s+me)?)\b/i.test(
       normalized,
     ) ||
-    (/^\s*(?:samajh\s+nahi\s+aaya|kya\s+matlab|what\s+do\s+you\s+mean|explain\s+kijiye|please\s+explain|explain\s+karo)[.!?\s]*$/i.test(normalized));
+    /^\s*(?:repeat(?:\s+the\s+question)?|repeat\s+please|please\s+repeat|dobara|phir\s+se|pardon)[.!?\s]*$/i.test(normalized);
+
+  const isGeneralClarificationQuery =
+    isRepeatQuery ||
+    /\b(?:what\s+do\s+you\s+mean|what\s+does\s+(?:that|this|it)\s+mean|what\s+are\s+you\s+asking|kya\s+matlab|matlab\s+kya|iska\s+(?:kya\s+)?matlab|(?:sawal|question)\s+samajh|samajh\s+nahi\s+aaya|samajh\s+nahi\s+aa\s+raha|(?:aap\s+)?kya\s+p(?:oo|u)ch\s+rahe\s+(?:ho|hain|hai)|thoda\s+explain|explain\s+kar|can\s+you\s+explain|please\s+explain|iska\s+matlab\s+bataiye|thoda\s+aur\s+bataiye)\b/i.test(
+      normalized,
+    ) ||
+    /^\s*(?:samajh\s+nahi\s+aaya|kya\s+matlab|what\s+do\s+you\s+mean|explain\s+kijiye|explain\s+kariye|please\s+explain|explain\s+karo|kya\s+p(?:oo|u)ch\s+rahe\s+(?:ho|hain|hai))[.!?\s]*$/i.test(
+      normalized,
+    );
 
   if (isGeneralClarificationQuery) {
-    const reply = isEnglish
-      ? "Let me explain simply. We want to understand your experience and response:"
-      : "Aasaan shabdon mein, hum is baare mein aapka anubhav jaanna chahte hain:";
+    if (isRepeatQuery) {
+      const reply = isEnglish
+        ? "Certainly, let me repeat the question:"
+        : "Bilkul, main sawal dobara poochhti hoon:";
+      return {
+        isCounterQuestion: true,
+        intent: "CLARIFICATION_REQUEST",
+        topic: "repeat_question",
+        reply,
+      };
+    }
+
+    const qId = question.id || question.Step || "";
+    let reply;
+    if (qId === "A0") {
+      reply = isEnglish
+        ? "In simple words, we want to know if you agree to this screening interview:"
+        : "Aasaan shabdon mein, hum sirf ye jaanna chahte hain ki kya aap is screening interview ke liye taiyaar hain:";
+    } else if (qId === "A1") {
+      reply = isEnglish
+        ? "In simple words, please tell us which city and local area you live in:"
+        : "Aasaan shabdon mein, kripya batayein ki aap kis sheher aur local area mein rehti hain:";
+    } else if (qId === "A2") {
+      reply = isEnglish
+        ? "In simple words, please tell me your age in years."
+        : "Aasaan shabdon mein, kripya apni umar saal mein batayein.";
+    } else if (qId === "A2_NAME_CONFIRM") {
+      reply = isEnglish
+        ? "We just want to confirm whether this is your correct full name:"
+        : "Hum sirf ye confirm karna chahte hain ki kya ye aapka sahi naam hai:";
+    } else if (qId === "A9") {
+      reply = isEnglish
+        ? "In simple words, are you able to travel to customer homes within a 3-4 km cluster of your area for salon services?"
+        : "Aasaan shabdon mein, kya aap apne area ke 3-4 km cluster mein customer ke ghar jakar salon service dene ke liye comfortable hain?";
+    } else {
+      reply = isEnglish
+        ? "Let me explain simply. We want to understand your experience and response:"
+        : "Aasaan shabdon mein, hum is baare mein aapka anubhav jaanna chahte hain:";
+    }
+
     return {
       isCounterQuestion: true,
       intent: "CLARIFICATION_REQUEST",

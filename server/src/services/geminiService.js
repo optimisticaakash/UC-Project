@@ -10,8 +10,11 @@ const INTERPRETATION_REQUEST_OPTIONS = Object.freeze({
 const RELEVANT_PATTERNS =
   /\b(politely|polite|respectfully|calmly|patiently|courteously|customer|client|grahak|listen|listening|sunungi|sununga|sunti hoon|sunta hoon|samjhaungi|samjhaunga|help karungi|help karunga|sorry|apologize|apologise|maafi|relocate|relocation|travel|shift|shifting|saal|sal|years?|yrs?|yr|mahine|mahina|din|weeks?|months?|days?|ready|willing|kar sakti hoon|kar sakta hoon|kar paungi|kar paunga|mummy|mumma|maa|mother|papa|father|family|parivaar|ghar|rehte|rehti|rehta|sambhalti|sambhalta|waxing|wax|facial|cleanup|threading|manicure|pedicure|haircut|bleach|d-?tan|massage|spa|salon|beauty|parlour|parlor|scooty|bike|bus|auto|metro|vehicle|conveyance|two\s*wheeler|anubhav|experience|kaam\s+kiya)\b/i;
 
+const SHORT_DIRECT_ANSWER_PATTERNS =
+  /^(?:(?:\d{1,2}|ek|do|teen|chaar|char|panch|paanch|chheh|cheh|saat|aath|nau|das|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:saal|sal|years?|yrs?|mahine|months?)(?:\s+(?:ka)?(?:\s+(?:experience|anubhav|kaam))?)?|fresh|fresher|(?:(?:only\s+|sirf\s+)?(?:waxing|wax|facial|cleanup|clean\s*up|threading|manicure|pedicure|mani\s*pedi|hair\s*styling|haircut|hair\s*cut|bleach|d-?tan|massage|makeup))|(?:(?:apni\s+|khud\s+ki\s+)?(?:bike|scooty|scooter|bus|metro|auto|two\s*wheeler|public\s+transport)(?:\s+(?:se|pe|par|through))?)|(?:delhi|new\s+delhi|noida|gurgaon|gurugram|bangalore|bengaluru|mumbai|pune|hyderabad|chennai|kolkata|jaipur|lucknow|chandigarh))[.!?।\s]*$/iu;
+
 const IRRELEVANT_PATTERNS =
-  /\b(aaloo|aloo|potato|biryani|pizza|burger|maggi|cricket|football|movie|movies|cinema|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|blah\s+blah|asdf|qwerty|chair|table|desk|bottle|cat|dog|billi|kutta)\b/i;
+  /\b(aaloo|aloo|potato|biryani|pizza|burger|maggi|cricket|football|movie|movies|cinema|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|blah\s+blah|asdf|qwerty|chair|table|desk|bottle|cat|dog|billi|kutta|weather|mausam|barish|rain|politics|election|chutkula|joke)\b/i;
 
 let clientPromise;
 
@@ -110,7 +113,11 @@ function computeFallbackInterpretation({ question = "", answer = "", questionId 
   const isEnglish = language === "English" || /^[a-zA-Z\s.,!?'-]+$/.test(a);
 
   // Check for candidate counter-questions or clarification requests
-  const cq = detectCounterQuestion(answer, { text: question }, { language });
+  const cq = detectCounterQuestion(
+    answer,
+    { text: question, id: questionId, Step: questionId },
+    { language },
+  );
   if (cq.isCounterQuestion) {
     const isClarificationIntent = cq.intent === "CLARIFICATION_REQUEST";
     return {
@@ -152,22 +159,35 @@ function computeFallbackInterpretation({ question = "", answer = "", questionId 
     };
   }
 
-  // Experience question partial answer: e.g. "Yes, I have experience" / "haan experience hai"
+  // Experience question partial answer: e.g. "Yes, I have experience" / "haan experience hai" / "Thoda experience hai" / "I have some experience"
   const isExperienceQuestion = /experience|anubhav|services|kaam\s+kiya|salon/i.test(q);
   const isMinimalExperience =
-    /^(?:yes(?:,\s*|\s+)i\s+have\s+experience|i\s+have\s+experience|haan\s+experience\s+hai|mujhe\s+experience\s+hai|experience\s+hai|i\s+worked\s+in\s+a\s+salon|salon\s+mein\s+kaam\s+kiya\s+hai)[.!?\s]*$/i.test(a);
+    /^(?:yes(?:,\s*|\s+)?i\s+have\s+(?:some\s+)?experience|i\s+have\s+(?:some\s+)?experience|i\s+have\s+experience|thoda\s+(?:bahut\s+)?(?:experience|anubhav|kaam)(?:\s+hai)?|haan\s+(?:thoda\s+)?(?:experience|anubhav)\s+hai|mujhe\s+(?:thoda\s+)?(?:experience|anubhav)\s+hai|kuch\s+(?:experience|anubhav)\s+hai|experience\s+hai|anubhav\s+hai|i\s+worked\s+in\s+a\s+salon|salon\s+mein\s+kaam\s+kiya\s+hai)[.!?\s]*$/iu.test(
+      a,
+    );
 
   if (isExperienceQuestion && isMinimalExperience) {
-    const probe = isEnglish
-      ? "Could you briefly tell me which salon services you have experience with?"
-      : "Kripya batayein ki aapko salon ki kaun-kaun si services ka anubhav hai?";
+    const isDurationQuestion =
+      /\b(?:kitne\s+saal|kitne\s+sal|kitna\s+experience|kitna\s+anubhav|how\s+many\s+years|how\s+long)\b/i.test(
+        q,
+      );
+    let probe;
+    if (isDurationQuestion) {
+      probe = isEnglish
+        ? "Could you tell me how many months or years of salon experience you have?"
+        : "Kripya batayein ki aapko lagbhag kitne saal ya mahine ka anubhav hai?";
+    } else {
+      probe = isEnglish
+        ? "Could you briefly tell me which salon services you have experience with?"
+        : "Kripya batayein ki aapko salon ki kaun-kaun si services ka anubhav hai?";
+    }
     return {
       intent: "PARTIAL_OR_AMBIGUOUS_ANSWER",
       confidence: 0.9,
-      understoodAnswer: "Candidate gave a partial answer indicating experience without specific services.",
+      understoodAnswer: "Candidate gave a partial answer indicating experience without specific details.",
       responseText: probe,
       shouldRepeatPendingQuestion: false,
-      understanding: "Candidate gave a partial answer indicating experience without specific services.",
+      understanding: "Candidate gave a partial answer indicating experience without specific details.",
       answerStatus: "partial",
       needsClarification: true,
       naturalAcknowledgement: isEnglish ? "Understood." : "Theek hai.",
@@ -227,7 +247,19 @@ function computeFallbackInterpretation({ question = "", answer = "", questionId 
     .filter((word) => word.length > 3);
 
   const answerHasContext = questionKeywords.some((word) => a.includes(word));
-  const isLikelyIrrelevant = irrelevantPatterns.test(a) && !answerHasContext && !relevantPatterns.test(a);
+  const isCandidateQuestion =
+    /[?]$/.test(trimmed) ||
+    /^(?:what\s+is|who\s+is|who\s+won|what\s+are|where\s+is|how\s+many|capital\s+of|weather\s+kaisa|score\s+kya)\b/i.test(a);
+
+  const isOffTopicQuestion =
+    isCandidateQuestion &&
+    !cq.isCounterQuestion &&
+    !answerHasContext;
+
+  const isLikelyIrrelevant =
+    (irrelevantPatterns.test(a) || isOffTopicQuestion) &&
+    !answerHasContext &&
+    !SHORT_DIRECT_ANSWER_PATTERNS.test(trimmed);
 
   const isOpenEnded =
     /\b(?:kya\s+karengi|kya\s+karenge|what\s+would\s+you\s+do|kaise|how|kahan|where|kyun|why|kitna|kitne|how\s+much|how\s+many|steps\s+bataiye|kya\s+farak|kya\s+dhyan|kaun\s+kaun|safar|routine|kaise\s+manage)\b/i.test(
@@ -329,19 +361,19 @@ function computeFallbackInterpretation({ question = "", answer = "", questionId 
     };
   }
 
-  if (relevantPatterns.test(a)) {
+  if (SHORT_DIRECT_ANSWER_PATTERNS.test(trimmed)) {
     return {
       intent: "INTERVIEW_ANSWER",
-      confidence: 0.9,
+      confidence: 0.95,
       understoodAnswer: answer.trim(),
-      responseText: isEnglish ? "That makes sense." : "Theek hai.",
+      responseText: isEnglish ? "Understood." : "Theek hai.",
       shouldRepeatPendingQuestion: false,
-      understanding: "The answer contains a recognized relevant response.",
+      understanding: "Candidate gave a clear, direct answer to the question.",
       answerStatus: "sufficient",
       needsClarification: false,
       clarificationQuestion: "",
       counterQuestionAnswer: "",
-      naturalAcknowledgement: isEnglish ? "That makes sense." : "Theek hai.",
+      naturalAcknowledgement: isEnglish ? "Understood." : "Theek hai.",
     };
   }
 
@@ -364,19 +396,65 @@ function computeFallbackInterpretation({ question = "", answer = "", questionId 
     };
   }
 
-  if (words.length >= 3) {
+  const hasDomainRelevance =
+    answerHasContext ||
+    (/\b(waxing|wax|facial|cleanup|threading|manicure|pedicure|haircut|bleach|d-?tan|massage|spa|salon|beauty|parlour|parlor)\b/i.test(a) &&
+      /\b(service|services|wax|facial|kaam|salon|parlour|parlor|beauty)\b/i.test(q)) ||
+    (/\b(politely|polite|respectfully|calmly|patiently|courteously|listen|listening|sunungi|sununga|sunti\s+hoon|sunta\s+hoon|samjhaungi|samjhaunga|help|sorry|apologize|apologise|maafi|shanti|solution|discount|rate|rates|fixed|app)\b/i.test(a) &&
+      /\b(customer|client|grahak|naraz|unhappy|shikayat|complain|acne|jalan|discount)\b/i.test(q)) ||
+    (/\b(travel|relocate|shift|bike|scooty|bus|auto|metro|vehicle|conveyance|two\s*wheeler)\b/i.test(a) &&
+      /\b(travel|relocate|shift|cluster|door|area|location)\b/i.test(q)) ||
+    (/\b(?:\d{1,2}|ek|do|teen|chaar|char|panch|paanch|chheh|cheh|saat|aath|nau|das|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:saal|sal|years?|yrs?|yr|mahine|months?|din|days?|ghante|hours?)\b/i.test(a) &&
+      /\b(experience|anubhav|saal|sal|years|ghante|hours|time|kab|kitne)\b/i.test(q));
+
+  if (hasDomainRelevance) {
+    return {
+      intent: "INTERVIEW_ANSWER",
+      confidence: 0.9,
+      understoodAnswer: answer.trim(),
+      responseText: isEnglish ? "That makes sense." : "Theek hai.",
+      shouldRepeatPendingQuestion: false,
+      understanding: "The answer contains a recognized relevant response.",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      clarificationQuestion: "",
+      counterQuestionAnswer: "",
+      naturalAcknowledgement: isEnglish ? "That makes sense." : "Theek hai.",
+    };
+  }
+
+  if (words.length >= 3 && answerHasContext) {
     return {
       intent: "INTERVIEW_ANSWER",
       confidence: 0.85,
       understoodAnswer: answer.trim(),
       responseText: isEnglish ? "Understood." : "Theek hai.",
       shouldRepeatPendingQuestion: false,
-      understanding: "Candidate gave a substantive response.",
+      understanding: "Candidate gave a substantive response referencing the question topic.",
       answerStatus: "sufficient",
       needsClarification: false,
       clarificationQuestion: "",
       counterQuestionAnswer: "",
       naturalAcknowledgement: isEnglish ? "Understood." : "Theek hai.",
+    };
+  }
+
+  if (irrelevantPatterns.test(a)) {
+    const probe = isEnglish
+      ? "Could you please answer the question directly?"
+      : "Kripya is sawal ka seedha jawab dein.";
+    return {
+      intent: "IRRELEVANT_OR_NONRESPONSIVE",
+      confidence: 0.9,
+      understoodAnswer: "",
+      responseText: probe,
+      shouldRepeatPendingQuestion: true,
+      understanding: "The answer does not appear relevant to the question.",
+      answerStatus: "irrelevant",
+      needsClarification: true,
+      clarificationQuestion: probe,
+      counterQuestionAnswer: "",
+      naturalAcknowledgement: "",
     };
   }
 
@@ -672,7 +750,7 @@ Your task is to classify the candidate's utterance into EXACTLY ONE of the follo
      * Unknown / Unsupported Topics: If a candidate asks about specific policies, benefits, leave rules, or terms not listed above, politely state that the onboarding team will clarify them after the screening interview. Never invent policies.
    - In responseText: generate a concise (1-2 sentences), warm, conversational answer directly addressing their specific question using the grounded facts, then smoothly transition back to the pending interview question.
    - Set shouldRepeatPendingQuestion to true.
-   - NEVER classify a candidate's question as irrelevant or issue a warning.
+   - NEVER classify a relevant candidate question as irrelevant or issue a warning.
 
 3. "CLARIFICATION_REQUEST"
    The candidate asks what the question or an unfamiliar term means, asks for an example (e.g. "Aapne jo question poochha, kya aap ek example de sakte hain?"), asks you to explain or repeat, or says they did not understand.
@@ -687,9 +765,9 @@ Your task is to classify the candidate's utterance into EXACTLY ONE of the follo
    - NEVER issue an irrelevant-answer warning for a partial or hesitant answer.
 
 5. "IRRELEVANT_OR_NONRESPONSIVE"
-   The utterance is genuinely completely off-topic, unrelated conversation (e.g. "The weather is nice today, what did you eat?", talking about a cricket match, or meaningless gibberish like "habba jabba", "asdf qwerty", food items, random objects).
+   The utterance is genuinely completely off-topic, unrelated conversation (e.g. "The weather is nice today, what did you eat?", talking about a cricket match, asking off-topic trivia like who won a sports match, or meaningless gibberish like "habba jabba", "asdf qwerty", food items, random objects).
    - STRICT RULES:
-     * NEVER classify a candidate's question as irrelevant.
+     * NEVER classify a relevant interview- or job-related candidate question as irrelevant. However, completely off-topic questions (e.g. sports scores, movie trivia, weather, political questions, general trivia) that have nothing to do with the interview or job should be classified as IRRELEVANT_OR_NONRESPONSIVE.
      * NEVER classify a short or grammatically imperfect Hindi/Hinglish answer as irrelevant if it relates to the question.
      * NEVER classify silence, breathing, or background noise as irrelevant.
      * Do NOT infer irrelevance merely because the answer differs from an expected keyword.
@@ -820,10 +898,15 @@ Output MUST be strictly valid JSON without markdown wrapping:
       result.shouldRepeatPendingQuestion = true;
     }
 
-    // Safety guard 3: Short direct answers containing salon, experience, or transport terms must not be flagged irrelevant
+    // Safety guard 3: Short direct answers containing salon, experience, or transport terms must not be flagged irrelevant.
+    // Generic words like "family", "ghar", "customer", "ready" alone must NOT independently override irrelevance.
     if (intent === "IRRELEVANT_OR_NONRESPONSIVE") {
-      const isRelevantContent = RELEVANT_PATTERNS.test(cleanAnswer.toLowerCase());
-      if (isRelevantContent) {
+      const isShortDirect = SHORT_DIRECT_ANSWER_PATTERNS.test(cleanAnswer);
+      const isBinaryConfirmation =
+        question &&
+        /A2_NAME_CONFIRM|kya\s+(?:aap|tum|kabhi)|do\s+you|are\s+you|can\s+you|will\s+you|would\s+you|have\s+you/i.test(question) &&
+        /^(?:haan|ha|han|yes|yeah|yep|ji|sahi|sahi\s+hai|correct|right|no|nahi|nahin|nhi|galat)[.!?।\s]*$/iu.test(cleanAnswer);
+      if (isShortDirect || isBinaryConfirmation) {
         intent = "INTERVIEW_ANSWER";
         result.answerStatus = "sufficient";
         result.needsClarification = false;

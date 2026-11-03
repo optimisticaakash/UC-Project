@@ -296,4 +296,128 @@ test("interpretAnswer safety guard prevents false-positive irrelevant flags for 
   assert.equal(resShort.needsClarification, false);
 });
 
+test("Phase 1: fallbackInterpretation rejects arbitrary 3+ word answers lacking question context", () => {
+  const irrelevant3Word = [
+    { q: "Facial mask ke time acne wali customer kehti hai jalan ho rahi hai. Aap kya karengi?", a: "cricket match dekhna" },
+    { q: "Rica wax karte waqt skin prep kaise karti hain?", a: "aaj mausam achha" },
+    { q: "Customer app ke bahar discount maang rahi hai. Aap kya karengi?", a: "weather is nice" },
+  ];
+
+  for (const { q, a } of irrelevant3Word) {
+    const res = fallbackInterpretation({ question: q, answer: a });
+    assert.notEqual(res.answerStatus, "sufficient", `Answer "${a}" should not be marked sufficient`);
+    assert.equal(res.needsClarification, true, `Answer "${a}" should require clarification`);
+  }
+});
+
+test("Phase 1: Safety Guard 3 does NOT allow generic words like 'family', 'ghar', 'customer', 'ready' in irrelevant sentences to bypass IRRELEVANT_OR_NONRESPONSIVE", async () => {
+  // Candidate mentions 'family' or 'ghar' in an irrelevant sentence about watching cricket or eating pizza
+  const resFamily = await interpretAnswer({
+    question: "Facial mask ke time acne wali customer kehti hai jalan ho rahi hai. Aap kya karengi?",
+    answer: "meri family cricket match dekh rahi hai",
+    questionId: "C1",
+    generateTextImpl: async () => JSON.stringify({
+      intent: "IRRELEVANT_OR_NONRESPONSIVE",
+      confidence: 0.9,
+      understanding: "Candidate is talking about family watching cricket.",
+      answerStatus: "irrelevant",
+      needsClarification: true,
+      responseText: "Kripya sawal ka seedha jawab dein.",
+    }),
+  });
+
+  assert.equal(resFamily.intent, "IRRELEVANT_OR_NONRESPONSIVE", "Safety guard 3 must not convert family cricket talk into a sufficient answer");
+  assert.equal(resFamily.answerStatus, "irrelevant");
+  assert.equal(resFamily.needsClarification, true);
+
+  const resGhar = await interpretAnswer({
+    question: "Rica jaise lipo wax aur normal honey wax mein kya farak hota hai?",
+    answer: "ghar par pizza khaya tha",
+    questionId: "D2",
+    generateTextImpl: async () => JSON.stringify({
+      intent: "IRRELEVANT_OR_NONRESPONSIVE",
+      confidence: 0.9,
+      understanding: "Candidate talks about eating pizza at home.",
+      answerStatus: "irrelevant",
+      needsClarification: true,
+      responseText: "Kripya wax ke farak ke baare mein batayein.",
+    }),
+  });
+
+  assert.equal(resGhar.intent, "IRRELEVANT_OR_NONRESPONSIVE");
+  assert.equal(resGhar.answerStatus, "irrelevant");
+});
+
+test("Phase 1: Off-topic candidate questions (cricket score, weather, trivia) are classified as IRRELEVANT_OR_NONRESPONSIVE", () => {
+  const offTopicQueries = [
+    { q: "Aapko salon mein kitne saal ka anubhav hai?", a: "Who won the cricket match?" },
+    { q: "Kaam par aane ke liye travel kaise karti hain?", a: "Aaj ka weather kaisa hai?" },
+    { q: "Customer app ke bahar discount maang rahi hai. Aap kya karengi?", a: "What is the capital of France?" },
+  ];
+
+  for (const { q, a } of offTopicQueries) {
+    const res = fallbackInterpretation({ question: q, answer: a });
+    assert.equal(res.intent, "IRRELEVANT_OR_NONRESPONSIVE", `Query "${a}" should be flagged irrelevant`);
+    assert.equal(res.needsClarification, true);
+  }
+});
+
+test("Phase 1: Valid short direct answers and confirmation questions remain accepted as INTERVIEW_ANSWER", () => {
+  const validAnswers = [
+    { q: "Aapko salon mein kitne saal ka anubhav hai?", a: "2 years" },
+    { q: "Aapko salon mein kitne saal ka anubhav hai?", a: "Do saal" },
+    { q: "Aap sabse zyada kaun si service karti hain?", a: "Waxing" },
+    { q: "Kaam par aane ke liye travel kaise karti hain?", a: "Bike se" },
+    { q: "Aap kis city mein rehti hain?", a: "Delhi" },
+    { q: "Kya aap poori training attend kar sakti hain?", a: "Haan" },
+    { q: "Kya aap poori training attend kar sakti hain?", a: "Nahi" },
+  ];
+
+  for (const { q, a } of validAnswers) {
+    const res = fallbackInterpretation({ question: q, answer: a });
+    assert.equal(res.intent, "INTERVIEW_ANSWER", `Answer "${a}" should be accepted as INTERVIEW_ANSWER`);
+    assert.equal(res.answerStatus, "sufficient");
+    assert.equal(res.needsClarification, false);
+  }
+});
+
+test("Phase 2: Ambiguous experience answers trigger PARTIAL_OR_AMBIGUOUS_ANSWER contextual probe", () => {
+  const ambiguousAnswers = [
+    { q: "Aapko salon mein kitne saal ka anubhav hai?", a: "Thoda experience hai" },
+    { q: "Aapko salon mein kitne saal ka anubhav hai?", a: "I have some experience" },
+    { q: "Aapko salon mein kitne saal ka anubhav hai?", a: "Mujhe thoda anubhav hai" },
+    { q: "Aapka beauty ka safar kaise shuru hua? Salon mein kaam kiya hai?", a: "Haan experience hai" },
+  ];
+
+  for (const { q, a } of ambiguousAnswers) {
+    const res = fallbackInterpretation({ question: q, answer: a });
+    assert.equal(
+      res.intent,
+      "PARTIAL_OR_AMBIGUOUS_ANSWER",
+      `Answer "${a}" should be partial/ambiguous, got ${res.intent}`,
+    );
+    assert.equal(res.needsClarification, true);
+    assert.ok(res.clarificationQuestion.length > 5);
+  }
+});
+
+test("Phase 2: Candidate clarification queries return CLARIFICATION_REQUEST without treating as invalid", () => {
+  const clarificationQueries = [
+    { q: "Aadhaar ke anusaar aapki umar kitni hai?", a: "Aap kya pooch rahe ho?" },
+    { q: "Aadhaar ke anusaar aapki umar kitni hai?", a: "Question samajh nahi aaya" },
+    { q: "Aadhaar ke anusaar aapki umar kitni hai?", a: "Thoda explain kariye" },
+    { q: "Aadhaar ke anusaar aapki umar kitni hai?", a: "Can you repeat the question?" },
+    { q: "Aadhaar ke anusaar aapki umar kitni hai?", a: "What do you mean?" },
+  ];
+
+  for (const { q, a } of clarificationQueries) {
+    const res = fallbackInterpretation({ question: q, answer: a });
+    assert.equal(
+      res.intent,
+      "CLARIFICATION_REQUEST",
+      `Query "${a}" should be CLARIFICATION_REQUEST, got ${res.intent}`,
+    );
+    assert.ok(res.responseText.length > 5);
+  }
+});
 
