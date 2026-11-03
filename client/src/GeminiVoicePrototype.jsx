@@ -18,6 +18,7 @@ export default function GeminiVoicePrototype() {
     currentQuestionId,
     candidateName,
     captionText,
+    candidateTranscript,
     isProcessingAnswer,
     isPreparingResponse,
     isWaitingForBackend,
@@ -137,7 +138,7 @@ export default function GeminiVoicePrototype() {
       style={{
         minHeight: "auto",
         boxSizing: "border-box",
-        padding: "12px 20px 18px",
+        padding: "14px 20px 28px",
         background: "radial-gradient(ellipse at 50% 42%, #f0f1ff 0%, #fff 53%)",
         color: "#111318",
         fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
@@ -233,6 +234,7 @@ export default function GeminiVoicePrototype() {
         audioLevel={audioLevel}
         currentQuestion={currentQuestion}
         captionText={captionText}
+        candidateTranscript={candidateTranscript}
       />}
 
       {/* Name Confirmation Step: Clear Yes / No action buttons */}

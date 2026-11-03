@@ -53,6 +53,7 @@ export function useGeminiLiveInterview() {
   const [interviewLifecycle, setInterviewLifecycle] = useState("ready");
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [captionText, setCaptionText] = useState("");
+  const [candidateTranscript, setCandidateTranscript] = useState("");
   const [isProcessingAnswer, setIsProcessingAnswer] = useState(false);
   const [isPreparingResponse, setIsPreparingResponse] = useState(false);
   const [isWaitingForBackend, setIsWaitingForBackend] = useState(false);
@@ -320,6 +321,7 @@ export function useGeminiLiveInterview() {
 
       setCurrentQuestion(repeatRequest.prompt);
       setCaptionText("");
+      setCandidateTranscript("");
       captionsControllerRef.current.beginTurn({ targetQuestionText: repeatRequest.prompt });
 
       inputTurnRef.current.beginModelTurn();
@@ -439,7 +441,7 @@ export function useGeminiLiveInterview() {
       }
 
       setCaptionText("");
-
+      setCandidateTranscript("");
       captionsControllerRef.current.beginTurn({
         targetQuestionText: displayQuestionText || "",
       });
@@ -1073,6 +1075,7 @@ export function useGeminiLiveInterview() {
 
       setCurrentQuestion(nextPrompt);
       setCaptionText("");
+      setCandidateTranscript("");
       captionsControllerRef.current.beginTurn({ targetQuestionText: spokenTargetText });
       inputTurnRef.current.beginModelTurn();
       suppressWaitingSpeechRef.current = false;
@@ -1212,6 +1215,7 @@ export function useGeminiLiveInterview() {
       setCurrentQuestionId(null);
       setCurrentQuestion("");
       setCaptionText("");
+      setCandidateTranscript("");
       setCandidateName("");
       setSavedActiveSession(null);
       captionsControllerRef.current.reset();
@@ -1292,6 +1296,7 @@ export function useGeminiLiveInterview() {
       }
       setCurrentQuestion(interviewData.question?.text || "");
       setCaptionText("");
+      setCandidateTranscript("");
       captionsControllerRef.current.beginTurn({
         targetQuestionText: interviewData.question?.text || "",
       });
@@ -1514,6 +1519,13 @@ export function useGeminiLiveInterview() {
             !isInternalSpeechMarker(liveCandidateText)
           ) {
             candidateSpeechSinceSubmitRef.current = true;
+          }
+
+          if (content.interimInputTranscription || content.inputTranscription) {
+            const currentCandidateText = (inputTurnRef.current.getTranscript?.() || "").trim();
+            if (mountedRef.current && currentCandidateText && !isInternalSpeechMarker(currentCandidateText)) {
+              setCandidateTranscript(currentCandidateText);
+            }
           }
 
           if (inputTurn.activity) {
@@ -2326,6 +2338,7 @@ export function useGeminiLiveInterview() {
     }
     captionsControllerRef.current.reset();
     setCaptionText("");
+    setCandidateTranscript("");
     clearAnswerSettleTimer();
     clearNoSpeechTimer();
     clearPreparingResponseTimer();
@@ -2460,6 +2473,7 @@ export function useGeminiLiveInterview() {
     clearAnswerSettleTimer();
     setError("");
     inputTurnRef.current = createLiveInputTurn();
+    setCandidateTranscript(clean);
     const requestId = `req_txt_${Date.now()}`;
     await submitCandidateAnswer(clean, requestId, performance.now());
   }
@@ -2485,6 +2499,7 @@ export function useGeminiLiveInterview() {
     setError("");
     inputTurnRef.current = createLiveInputTurn();
     const answer = isConfirmed ? "yes" : "no";
+    setCandidateTranscript(isConfirmed ? "Yes" : "No");
     const requestId = `req_confirm_${Date.now()}`;
     await submitCandidateAnswer(answer, requestId, performance.now());
   }
@@ -2520,6 +2535,7 @@ export function useGeminiLiveInterview() {
     currentQuestionId,
     candidateName,
     captionText,
+    candidateTranscript,
     isProcessingAnswer,
     isPreparingResponse,
     isWaitingForBackend,

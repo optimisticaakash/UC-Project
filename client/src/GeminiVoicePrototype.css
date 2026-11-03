@@ -167,8 +167,9 @@
   pointer-events: none;
 }
 .uc-action {
+  height: 44px;
   min-height: 44px;
-  padding: 0 18px;
+  padding: 0 20px;
   border-radius: 999px;
   font: inherit;
   font-size: 13px;
@@ -178,6 +179,9 @@
   justify-content: center;
   gap: 8px;
   cursor: pointer;
+  box-sizing: border-box;
+  vertical-align: middle;
+  line-height: 1;
   transition:
     transform 0.18s ease,
     box-shadow 0.18s ease;
@@ -321,7 +325,8 @@
   .uc-actions {
     flex-direction: column;
     max-width: 280px;
-    margin: 0 auto;
+    margin: 20px auto 0 !important;
+    gap: 12px !important;
   }
   .uc-action {
     width: 100%;
