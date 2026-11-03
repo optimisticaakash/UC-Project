@@ -18,6 +18,7 @@ export default function GeminiVoicePrototype() {
     currentQuestionId,
     candidateName,
     captionText,
+    aiCaptionState,
     candidateTranscript,
     isProcessingAnswer,
     isPreparingResponse,
@@ -231,6 +232,7 @@ export default function GeminiVoicePrototype() {
       {/* One orb, centered */}
       {!interviewTerminal && <AIOrb
         isAiSpeaking={isAiSpeaking}
+        aiCaptionState={aiCaptionState}
         audioLevel={audioLevel}
         currentQuestion={currentQuestion}
         captionText={captionText}

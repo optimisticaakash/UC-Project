@@ -8,6 +8,9 @@ import {
   isTerminalInterviewState,
   resolveTerminalInterviewState,
   shouldDisplayInterviewView,
+  AI_CAPTION_STATES,
+  AI_CAPTION_LOADING_TEXT,
+  resolveAiCaptionModel,
 } from "./interviewUiState.js";
 
 test("interview status follows ready, active voice, and terminal lifecycle states", () => {
@@ -134,5 +137,126 @@ test("Regression Voice Sync 2: Missing audio recovery error is recognized as a s
     safeErr,
     "Sorry, I couldn't prepare the next question. Please ask me to repeat it or try your answer again.",
   );
+});
+
+test("AI Caption Lifecycle 1: Question loaded but audio not started shows loading status and hides full question", () => {
+  const question = "Namaste! Aapka naam Aakash hai, sahi hai na?";
+  const model = resolveAiCaptionModel({
+    currentQuestion: question,
+    captionText: "",
+    isAiSpeaking: false,
+    aiCaptionState: AI_CAPTION_STATES.LOADING,
+  });
+
+  assert.equal(model.state, "loading");
+  assert.equal(model.badgeText, "Preparing...");
+  assert.equal(model.captionText, AI_CAPTION_LOADING_TEXT);
+  assert.notEqual(model.captionText, question);
+  assert.equal(model.isLoading, true);
+  assert.equal(model.isSpeaking, false);
+  assert.equal(model.isCompleted, false);
+});
+
+test("AI Caption Lifecycle 2: Audio playback starts shows the progressive AI question caption", () => {
+  const question = "Namaste! Aapka naam Aakash hai, sahi hai na?";
+  const progressiveChunk = "Namaste! Aapka naam";
+  const model = resolveAiCaptionModel({
+    currentQuestion: question,
+    captionText: progressiveChunk,
+    isAiSpeaking: true,
+    aiCaptionState: AI_CAPTION_STATES.SPEAKING,
+  });
+
+  assert.equal(model.state, "speaking");
+  assert.equal(model.badgeText, "Speaking...");
+  assert.equal(model.captionText, progressiveChunk);
+  assert.equal(model.isLoading, false);
+  assert.equal(model.isSpeaking, true);
+  assert.equal(model.isCompleted, false);
+});
+
+test("AI Caption Lifecycle 3: Audio playback completes retains final caption and marks completed", () => {
+  const question = "Namaste! Aapka naam Aakash hai, sahi hai na?";
+  const model = resolveAiCaptionModel({
+    currentQuestion: question,
+    captionText: question,
+    isAiSpeaking: false,
+    aiCaptionState: AI_CAPTION_STATES.COMPLETED,
+  });
+
+  assert.equal(model.state, "completed");
+  assert.equal(model.badgeText, "Completed");
+  assert.equal(model.captionText, question);
+  assert.equal(model.isLoading, false);
+  assert.equal(model.isSpeaking, false);
+  assert.equal(model.isCompleted, true);
+});
+
+test("AI Caption Lifecycle 4: Audio generation/playback failure does not show a false speaking caption", () => {
+  const question = "Aap kis shahar mein rehti hain?";
+  const model = resolveAiCaptionModel({
+    currentQuestion: question,
+    captionText: "",
+    isAiSpeaking: false,
+    isPreparingResponse: false,
+  });
+
+  assert.notEqual(model.state, "speaking");
+  assert.equal(model.isSpeaking, false);
+  assert.notEqual(model.captionText, question);
+  assert.equal(model.captionText, AI_CAPTION_LOADING_TEXT);
+});
+
+test("AI Caption Lifecycle 5: A new question starting before previous playback completes clears old caption", () => {
+  // Turn 1 had completed text
+  const turn1Question = "Question 1: Aapka naam kya hai?";
+  const completedTurn1 = resolveAiCaptionModel({
+    currentQuestion: turn1Question,
+    captionText: turn1Question,
+    isAiSpeaking: false,
+    aiCaptionState: AI_CAPTION_STATES.COMPLETED,
+  });
+  assert.equal(completedTurn1.captionText, turn1Question);
+
+  // Turn 2 begins: new question loads, captionText resets to empty
+  const turn2Question = "Question 2: Aapka shahar kaun sa hai?";
+  const loadingTurn2 = resolveAiCaptionModel({
+    currentQuestion: turn2Question,
+    captionText: "",
+    isAiSpeaking: false,
+    aiCaptionState: AI_CAPTION_STATES.LOADING,
+  });
+
+  assert.equal(loadingTurn2.state, "loading");
+  assert.equal(loadingTurn2.captionText, AI_CAPTION_LOADING_TEXT);
+  assert.notEqual(loadingTurn2.captionText, turn1Question);
+  assert.notEqual(loadingTurn2.captionText, turn2Question);
+});
+
+test("AI Caption Lifecycle 6: Existing AI and Candidate captions continue working independently", () => {
+  // AI is in loading state
+  const aiLoadingModel = resolveAiCaptionModel({
+    currentQuestion: "Question 2",
+    captionText: "",
+    isAiSpeaking: false,
+    aiCaptionState: AI_CAPTION_STATES.LOADING,
+  });
+
+  // Candidate transcription exists from speech
+  const candidateTranscript = "Haan, mera naam Aakash hai";
+
+  // Both exist without interfering with one another
+  assert.equal(aiLoadingModel.captionText, AI_CAPTION_LOADING_TEXT);
+  assert.equal(candidateTranscript, "Haan, mera naam Aakash hai");
+
+  // When AI transitions to speaking, candidate text remains distinct
+  const aiSpeakingModel = resolveAiCaptionModel({
+    currentQuestion: "Question 2",
+    captionText: "Aap kis",
+    isAiSpeaking: true,
+    aiCaptionState: AI_CAPTION_STATES.SPEAKING,
+  });
+  assert.equal(aiSpeakingModel.captionText, "Aap kis");
+  assert.equal(candidateTranscript, "Haan, mera naam Aakash hai");
 });
 

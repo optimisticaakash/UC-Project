@@ -1,4 +1,4 @@
-import { getCandidateVisibleQuestion } from "../utils/interviewUiState.js";
+import { resolveAiCaptionModel } from "../utils/interviewUiState.js";
 
 export default function AIOrb({
   isAiSpeaking,
@@ -6,10 +6,14 @@ export default function AIOrb({
   currentQuestion,
   captionText,
   candidateTranscript = "",
+  aiCaptionState = null,
 }) {
-  const visibleQuestion = isAiSpeaking
-    ? (captionText || currentQuestion || "")
-    : (captionText || getCandidateVisibleQuestion(currentQuestion));
+  const captionModel = resolveAiCaptionModel({
+    aiCaptionState,
+    isAiSpeaking,
+    captionText,
+    currentQuestion,
+  });
 
   return (
     <section aria-label="AI interview session" aria-live="polite">
@@ -48,20 +52,22 @@ export default function AIOrb({
             <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-neutral-100">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-800 flex items-center gap-2">
                 <span
-                  className={`inline-block size-2 rounded-full ${
-                    isAiSpeaking ? "bg-blue-600 animate-pulse" : "bg-neutral-400"
-                  }`}
+                  className={`inline-block size-2 rounded-full ${captionModel.indicatorClass}`}
                 />
                 AI Interviewer
               </span>
-              {isAiSpeaking && (
-                <span className="text-[11px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                  Speaking...
+              {captionModel.badgeText && (
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${captionModel.badgeClass}`}>
+                  {captionModel.badgeText}
                 </span>
               )}
             </div>
-            <p className="text-sm sm:text-base text-neutral-900 leading-relaxed whitespace-pre-wrap break-words">
-              {visibleQuestion || "Preparing question..."}
+            <p
+              className={`text-sm sm:text-base leading-relaxed whitespace-pre-wrap break-words ${
+                captionModel.isLoading ? "text-neutral-400 italic" : "text-neutral-900"
+              }`}
+            >
+              {captionModel.captionText}
             </p>
           </div>
         </div>

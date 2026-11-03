@@ -53,6 +53,7 @@ export function useGeminiLiveInterview() {
   const [interviewLifecycle, setInterviewLifecycle] = useState("ready");
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [captionText, setCaptionText] = useState("");
+  const [aiCaptionState, setAiCaptionState] = useState("idle");
   const [candidateTranscript, setCandidateTranscript] = useState("");
   const [isProcessingAnswer, setIsProcessingAnswer] = useState(false);
   const [isPreparingResponse, setIsPreparingResponse] = useState(false);
@@ -321,6 +322,7 @@ export function useGeminiLiveInterview() {
 
       setCurrentQuestion(repeatRequest.prompt);
       setCaptionText("");
+      setAiCaptionState("loading");
       setCandidateTranscript("");
       captionsControllerRef.current.beginTurn({ targetQuestionText: repeatRequest.prompt });
 
@@ -441,6 +443,7 @@ export function useGeminiLiveInterview() {
       }
 
       setCaptionText("");
+      setAiCaptionState("loading");
       setCandidateTranscript("");
       captionsControllerRef.current.beginTurn({
         targetQuestionText: displayQuestionText || "",
@@ -1075,6 +1078,7 @@ export function useGeminiLiveInterview() {
 
       setCurrentQuestion(nextPrompt);
       setCaptionText("");
+      setAiCaptionState("loading");
       setCandidateTranscript("");
       captionsControllerRef.current.beginTurn({ targetQuestionText: spokenTargetText });
       inputTurnRef.current.beginModelTurn();
@@ -1215,6 +1219,7 @@ export function useGeminiLiveInterview() {
       setCurrentQuestionId(null);
       setCurrentQuestion("");
       setCaptionText("");
+      setAiCaptionState("idle");
       setCandidateTranscript("");
       setCandidateName("");
       setSavedActiveSession(null);
@@ -1296,6 +1301,7 @@ export function useGeminiLiveInterview() {
       }
       setCurrentQuestion(interviewData.question?.text || "");
       setCaptionText("");
+      setAiCaptionState("loading");
       setCandidateTranscript("");
       captionsControllerRef.current.beginTurn({
         targetQuestionText: interviewData.question?.text || "",
@@ -1580,6 +1586,7 @@ export function useGeminiLiveInterview() {
               captionsControllerRef.current.handleInterruption();
               if (mountedRef.current) {
                 setCaptionText(captionsControllerRef.current.getCaptionText());
+                setAiCaptionState("completed");
               }
               const pendingAnnouncement = pendingWaitAnnouncementRef.current;
               if (pendingAnnouncement?.coordinator.announced) {
@@ -1736,6 +1743,8 @@ export function useGeminiLiveInterview() {
             );
             setSpeakingState(true, "audio_scheduled");
             setPreparingResponse(false);
+            setAiCaptionState("speaking");
+            const turnForChunk = promptTurnRef.current;
             try {
               source.start(startAt);
 
@@ -1799,6 +1808,12 @@ export function useGeminiLiveInterview() {
                 msSincePromptSent: promptElapsedMs(generation),
               });
               if (
+                turnForChunk !== promptTurnRef.current ||
+                !isCurrentLiveGeneration(generation, liveGenerationRef.current)
+              ) {
+                return;
+              }
+              if (
                 audioContextRef.current === context &&
                 playbackSourcesRef.current.size === 0
               ) {
@@ -1847,6 +1862,7 @@ export function useGeminiLiveInterview() {
                 const completedCaption = captionsControllerRef.current.markPlaybackComplete();
                 if (mountedRef.current && completedCaption) {
                   setCaptionText(completedCaption);
+                  setAiCaptionState("completed");
                 }
                 if (playbackEndTurn?.answer && !answerSubmittingRef.current) {
                   scheduleAnswerSubmission(playbackEndTurn.answer);
@@ -1909,6 +1925,7 @@ export function useGeminiLiveInterview() {
                     language: candidateLanguageRef.current,
                     onStart: () => {
                       setSpeakingState(true, "tts_fallback_started");
+                      setAiCaptionState("speaking");
                     },
                     onEnd: () => {
                       ttsCancelRef.current = null;
@@ -1916,6 +1933,7 @@ export function useGeminiLiveInterview() {
                       const completedCaption = captionsControllerRef.current.markPlaybackComplete();
                       if (mountedRef.current && completedCaption) {
                         setCaptionText(completedCaption);
+                        setAiCaptionState("completed");
                       }
                     },
                     onError: (err) => {
@@ -1949,6 +1967,7 @@ export function useGeminiLiveInterview() {
               const completedCaption = captionsControllerRef.current.markPlaybackComplete();
               if (mountedRef.current && completedCaption) {
                 setCaptionText(completedCaption);
+                setAiCaptionState("completed");
               }
             }
 
@@ -2219,6 +2238,7 @@ export function useGeminiLiveInterview() {
     setCurrentQuestionId(null);
     setCurrentQuestion("");
     setCaptionText("");
+    setAiCaptionState("idle");
     setCandidateName("");
     captionsControllerRef.current.reset();
     inputTurnRef.current.reset();
@@ -2338,6 +2358,7 @@ export function useGeminiLiveInterview() {
     }
     captionsControllerRef.current.reset();
     setCaptionText("");
+    setAiCaptionState("idle");
     setCandidateTranscript("");
     clearAnswerSettleTimer();
     clearNoSpeechTimer();
@@ -2535,6 +2556,7 @@ export function useGeminiLiveInterview() {
     currentQuestionId,
     candidateName,
     captionText,
+    aiCaptionState,
     candidateTranscript,
     isProcessingAnswer,
     isPreparingResponse,
