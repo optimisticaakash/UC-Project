@@ -4,7 +4,13 @@ const assert = require("node:assert/strict");
 const { classifyConsent } = require("./rules/consentRules");
 const { evaluateAge } = require("./rules/ageRules");
 const { classifyLocation } = require("./rules/locationRules");
-const { fallbackInterpretation } = require("./geminiService");
+const {
+  fallbackInterpretation,
+  extractFallbackFacts,
+  sanitizeExtractedFacts,
+  formatMemoryContext,
+  interpretAnswer,
+} = require("./geminiService");
 const { liveVoiceInstructions } = require("./liveVoiceInstructions");
 const activeQuestionBank = require("../data/questionBank.json");
 const workbookQuestionMapping = require(
@@ -26,6 +32,14 @@ const {
   classifyNameAnswer,
   isSaneName,
   updateCandidateName,
+  restoreSessionSnapshot,
+  createShortTermMemory,
+  mergeShortTermMemoryFacts,
+  recordShortTermMemoryTurn,
+  clearShortTermMemory,
+  isSessionExpired,
+  cleanupExpiredSessions,
+  INTERVIEW_SESSION_TTL_MS,
 } = require("./interview");
 
 const householdQuestion =
@@ -4800,6 +4814,874 @@ test("Regression: Identity warning text and payload integrity for spoken dialogu
   assert.equal(mismatchRes.body.question.id, "A2_NAME");
 });
 
+test("Session Memory Phase 1: newly created interview session initializes with independent shortTermMemory", () => {
+  const session1 = startInterview();
+  const sessionObj1 = getSessionForPersistence(session1.sessionId);
 
+  assert.ok(sessionObj1.shortTermMemory, "Session must have shortTermMemory");
+  assert.deepEqual(sessionObj1.shortTermMemory.facts, {});
+  assert.deepEqual(sessionObj1.shortTermMemory.coveredTopics, []);
+  assert.deepEqual(sessionObj1.shortTermMemory.recentTurns, []);
+  assert.equal(Array.isArray(sessionObj1.shortTermMemory.coveredTopics), true);
+  assert.equal(Array.isArray(sessionObj1.shortTermMemory.recentTurns), true);
+});
+
+test("Session Memory Phase 1: two independent sessions receive isolated memory instances", () => {
+  const session1 = startInterview();
+  const session2 = startInterview();
+
+  const sessionObj1 = getSessionForPersistence(session1.sessionId);
+  const sessionObj2 = getSessionForPersistence(session2.sessionId);
+
+  // References must be distinct
+  assert.notEqual(sessionObj1.shortTermMemory, sessionObj2.shortTermMemory);
+  assert.notEqual(sessionObj1.shortTermMemory.facts, sessionObj2.shortTermMemory.facts);
+  assert.notEqual(sessionObj1.shortTermMemory.coveredTopics, sessionObj2.shortTermMemory.coveredTopics);
+  assert.notEqual(sessionObj1.shortTermMemory.recentTurns, sessionObj2.shortTermMemory.recentTurns);
+
+  // Mutating Session 1's facts does not affect Session 2
+  sessionObj1.shortTermMemory.facts.city = "Delhi";
+  assert.equal(sessionObj1.shortTermMemory.facts.city, "Delhi");
+  assert.equal(sessionObj2.shortTermMemory.facts.city, undefined);
+  assert.deepEqual(sessionObj2.shortTermMemory.facts, {});
+
+  // Mutating Session 1's arrays does not affect Session 2
+  sessionObj1.shortTermMemory.coveredTopics.push("location");
+  sessionObj1.shortTermMemory.recentTurns.push({ qId: "A1", a: "Delhi" });
+
+  assert.equal(sessionObj1.shortTermMemory.coveredTopics.length, 1);
+  assert.equal(sessionObj1.shortTermMemory.recentTurns.length, 1);
+  assert.equal(sessionObj2.shortTermMemory.coveredTopics.length, 0);
+  assert.equal(sessionObj2.shortTermMemory.recentTurns.length, 0);
+  assert.deepEqual(sessionObj2.shortTermMemory.coveredTopics, []);
+  assert.deepEqual(sessionObj2.shortTermMemory.recentTurns, []);
+});
+
+test("Session Memory Phase 1: backward compatibility preserves legacy sessions lacking shortTermMemory", () => {
+  const legacySnapshot = {
+    sessionId: "legacy-session-id-123",
+    status: "in_progress",
+    startedAt: new Date().toISOString(),
+    currentQuestionIndex: 0,
+    answers: [],
+  };
+
+  restoreSessionSnapshot(legacySnapshot.sessionId, legacySnapshot);
+  const restored = getSessionForPersistence(legacySnapshot.sessionId);
+
+  assert.ok(restored.shortTermMemory, "Legacy snapshot should receive default shortTermMemory upon restore");
+  assert.deepEqual(restored.shortTermMemory.facts, {});
+  assert.deepEqual(restored.shortTermMemory.coveredTopics, []);
+  assert.deepEqual(restored.shortTermMemory.recentTurns, []);
+});
+
+test("Session Memory Phase 2: extractFallbackFacts extracts candidate city accurately", () => {
+  const facts = extractFallbackFacts("I live in Delhi.");
+  assert.equal(facts.currentCity, "Delhi");
+
+  const hindiFacts = extractFallbackFacts("Main Bangalore mein rehti hoon");
+  assert.equal(hindiFacts.currentCity, "Bangalore");
+});
+
+test("Session Memory Phase 2: extracts multiple facts from a single candidate answer", () => {
+  const utterance = "I live in Delhi and have two years of experience in hair styling. I also have my own scooty.";
+  const facts = extractFallbackFacts(utterance);
+
+  assert.equal(facts.currentCity, "Delhi");
+  assert.equal(facts.experience, "2 years");
+  assert.ok(Array.isArray(facts.skills));
+  assert.ok(facts.skills.includes("Hair styling"));
+  assert.equal(facts.vehicle, "scooty");
+});
+
+test("Session Memory Phase 2: explicit correction updates existing fact in session memory", () => {
+  const session = startInterview();
+  const sessionObj = getSessionForPersistence(session.sessionId);
+
+  mergeShortTermMemoryFacts(sessionObj, { currentCity: "Delhi" });
+  assert.equal(sessionObj.shortTermMemory.facts.currentCity, "Delhi");
+
+  // Candidate later provides a correction
+  mergeShortTermMemoryFacts(sessionObj, { currentCity: "Noida" });
+  assert.equal(sessionObj.shortTermMemory.facts.currentCity, "Noida");
+});
+
+test("Session Memory Phase 2: uncertain and hypothetical statements are not extracted as facts", () => {
+  // Direct test of fallback extraction filtering hypothetical statements
+  const hypothetical = "Agar mujhe gaadi mil jaye toh shayad main Mumbai shift ho jaun";
+  const facts = extractFallbackFacts(hypothetical);
+  assert.equal(facts.currentCity, undefined);
+
+  // Test sanitization of raw AI outputs
+  const rawAiWithHypothetical = {
+    currentCity: "Mumbai",
+  };
+  const sanitized = sanitizeExtractedFacts(rawAiWithHypothetical, hypothetical);
+  assert.deepEqual(sanitized, {});
+});
+
+test("Session Memory Phase 2: empty, placeholder, and prototype poisoning keys are rejected", () => {
+  const session = startInterview();
+  const sessionObj = getSessionForPersistence(session.sessionId);
+
+  const maliciousPayload = {
+    currentCity: "Delhi",
+    invalidOne: "unknown",
+    invalidTwo: "none",
+    invalidThree: "n/a",
+    invalidFour: "",
+    invalidFive: null,
+    invalidSix: undefined,
+    __proto__: { hacked: true },
+    constructor: "malicious",
+  };
+
+  mergeShortTermMemoryFacts(sessionObj, maliciousPayload);
+
+  assert.equal(sessionObj.shortTermMemory.facts.currentCity, "Delhi");
+  assert.equal(sessionObj.shortTermMemory.facts.invalidOne, undefined);
+  assert.equal(sessionObj.shortTermMemory.facts.invalidTwo, undefined);
+  assert.equal(sessionObj.shortTermMemory.facts.invalidThree, undefined);
+  assert.equal(sessionObj.shortTermMemory.facts.invalidFour, undefined);
+  assert.equal(sessionObj.shortTermMemory.facts.invalidFive, undefined);
+  assert.equal(sessionObj.shortTermMemory.facts.invalidSix, undefined);
+  assert.equal(Object.prototype.hacked, undefined);
+});
+
+test("Session Memory Phase 2: fallback interpretation extracts fallback facts without throwing", () => {
+  const fallback = fallbackInterpretation(
+    "Aapka salon ka kitna experience hai?",
+    "Mera 3 saal ka experience hai waxing aur facial mein",
+  );
+
+  assert.ok(fallback);
+  assert.ok(fallback.extractedFacts);
+  assert.equal(fallback.extractedFacts.experience, "3 years");
+  assert.ok(Array.isArray(fallback.extractedFacts.skills));
+  assert.ok(fallback.extractedFacts.skills.includes("Waxing"));
+  assert.ok(fallback.extractedFacts.skills.includes("Facial"));
+});
+
+test("Session Memory Phase 2: simultaneous sessions maintain strictly isolated facts", () => {
+  const s1 = startInterview();
+  const s2 = startInterview();
+  const obj1 = getSessionForPersistence(s1.sessionId);
+  const obj2 = getSessionForPersistence(s2.sessionId);
+
+  mergeShortTermMemoryFacts(obj1, {
+    candidateName: "Sunita",
+    currentCity: "Delhi",
+    skills: ["Hair styling"],
+  });
+
+  mergeShortTermMemoryFacts(obj2, {
+    candidateName: "Pooja",
+    currentCity: "Mumbai",
+    skills: ["Nail art"],
+  });
+
+  assert.equal(obj1.shortTermMemory.facts.candidateName, "Sunita");
+  assert.equal(obj1.shortTermMemory.facts.currentCity, "Delhi");
+  assert.deepEqual(obj1.shortTermMemory.facts.skills, ["Hair styling"]);
+
+  assert.equal(obj2.shortTermMemory.facts.candidateName, "Pooja");
+  assert.equal(obj2.shortTermMemory.facts.currentCity, "Mumbai");
+  assert.deepEqual(obj2.shortTermMemory.facts.skills, ["Nail art"]);
+});
+
+test("Session Memory Phase 2: deterministic questions merge facts into shortTermMemory during interview", async () => {
+  const session = startInterview();
+  const sessionId = session.sessionId;
+
+  // Step 1: Name capture
+  await submitAnswer({
+    sessionId,
+    questionId: "A2_NAME",
+    answer: "Mera naam Sunita hai",
+  });
+  await submitAnswer({
+    sessionId,
+    questionId: "A2_NAME_CONFIRM",
+    answer: "Haan sahi hai",
+  });
+  let sessionObj = getSessionForPersistence(sessionId);
+  assert.equal(sessionObj.shortTermMemory.facts.candidateName, "Sunita");
+
+  // Step 2: Consent & Language (A0)
+  await submitAnswer({
+    sessionId,
+    questionId: "A0",
+    answer: "Haan, main Hindi mein interview dene ke liye tayyar hoon.",
+  });
+  sessionObj = getSessionForPersistence(sessionId);
+  assert.equal(sessionObj.shortTermMemory.facts.preferredLanguage, "Hindi");
+
+  // Step 3: Location (A1)
+  await submitAnswer({
+    sessionId,
+    questionId: "A1",
+    answer: "Main Rohini Delhi mein rehti hoon mere paas scooty hai.",
+  });
+  sessionObj = getSessionForPersistence(sessionId);
+  assert.equal(sessionObj.shortTermMemory.facts.currentCity, "Delhi");
+  assert.equal(sessionObj.shortTermMemory.facts.vehicle, "scooty");
+
+  // Travel follow-up 1: travel clarification
+  await submitAnswer({
+    sessionId,
+    questionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Haan main 3-4 km travel kar sakti hoon.",
+  });
+
+  // Travel follow-up 2: move timeline
+  await submitAnswer({
+    sessionId,
+    questionId: "A1_MOVE_TIMELINE",
+    answer: "Main turant join kar sakti hoon.",
+  });
+
+  // Step 4: Age (A2)
+  await submitAnswer({
+    sessionId,
+    questionId: "A2",
+    answer: "Meri umar 26 saal hai.",
+  });
+  sessionObj = getSessionForPersistence(sessionId);
+  assert.equal(sessionObj.shortTermMemory.facts.age, 26);
+});
+
+test("Session Memory Phase 3: known city is injected into Gemini prompt context", async () => {
+  let capturedPrompt = "";
+  const sessionMemory = {
+    facts: {
+      currentCity: "Delhi",
+      localArea: "Rohini",
+    },
+  };
+
+  const formatted = formatMemoryContext(sessionMemory);
+  assert.match(formatted, /Current City: Delhi/);
+  assert.match(formatted, /Local Area: Rohini/);
+
+  await interpretAnswer({
+    question: "Aap kis area mein kaam karna chahti hain?",
+    answer: "Rohini Sector 7",
+    questionId: "A1",
+    language: "Hindi",
+    sessionMemory,
+    generateTextImpl: async (prompt) => {
+      capturedPrompt = prompt;
+      return JSON.stringify({
+        intent: "INTERVIEW_ANSWER",
+        confidence: 0.95,
+        understoodAnswer: "Rohini Sector 7",
+        responseText: "Achha, aap Delhi Rohini mein rehti hain.",
+        shouldRepeatPendingQuestion: false,
+        naturalAcknowledgement: "Achha, Rohini Sector 7 noted.",
+        extractedFacts: { localArea: "Rohini Sector 7" },
+      });
+    },
+  });
+
+  assert.match(capturedPrompt, /Known Candidate Facts from This Session/);
+  assert.match(capturedPrompt, /Current City: Delhi/);
+  assert.match(capturedPrompt, /Local Area: Rohini/);
+  assert.match(capturedPrompt, /Session Memory Guidelines/);
+});
+
+test("Session Memory Phase 3: known experience and skills are available in prompt context", async () => {
+  let capturedPrompt = "";
+  const sessionMemory = {
+    facts: {
+      experience: "3 years",
+      skills: ["Hair styling", "Waxing"],
+      vehicle: "scooty",
+    },
+  };
+
+  const formatted = formatMemoryContext(sessionMemory);
+  assert.match(formatted, /Experience: 3 years/);
+  assert.match(formatted, /Skills: Hair styling, Waxing/);
+  assert.match(formatted, /Vehicle\/Conveyance: scooty/);
+
+  await interpretAnswer({
+    question: "Aap waxing mein kaunse techniques use karti hain?",
+    answer: "Main rica aur roll-on waxing karti hoon.",
+    questionId: "B1",
+    language: "Hindi",
+    sessionMemory,
+    generateTextImpl: async (prompt) => {
+      capturedPrompt = prompt;
+      return JSON.stringify({
+        intent: "INTERVIEW_ANSWER",
+        confidence: 0.95,
+        understoodAnswer: "Rica and roll-on waxing",
+        responseText: "Theek hai.",
+        shouldRepeatPendingQuestion: false,
+        naturalAcknowledgement: "Samajh gayi.",
+        extractedFacts: { skills: ["Waxing"] },
+      });
+    },
+  });
+
+  assert.match(capturedPrompt, /Experience: 3 years/);
+  assert.match(capturedPrompt, /Skills: Hair styling, Waxing/);
+});
+
+test("Session Memory Phase 3: candidate corrections update context and use latest fact", async () => {
+  const session = startInterview();
+  const sessionObj = getSessionForPersistence(session.sessionId);
+
+  // Initial city
+  mergeShortTermMemoryFacts(sessionObj, { currentCity: "Delhi" });
+  let formatted = formatMemoryContext(sessionObj.shortTermMemory);
+  assert.match(formatted, /Current City: Delhi/);
+
+  // Correction
+  mergeShortTermMemoryFacts(sessionObj, { currentCity: "Noida" });
+  formatted = formatMemoryContext(sessionObj.shortTermMemory);
+  assert.match(formatted, /Current City: Noida/);
+  assert.doesNotMatch(formatted, /Current City: Delhi/);
+});
+
+test("Session Memory Phase 3: two sessions never share memory context", async () => {
+  const session1 = startInterview();
+  const session2 = startInterview();
+  const obj1 = getSessionForPersistence(session1.sessionId);
+  const obj2 = getSessionForPersistence(session2.sessionId);
+
+  mergeShortTermMemoryFacts(obj1, { currentCity: "Delhi", candidateName: "Sunita" });
+  mergeShortTermMemoryFacts(obj2, { currentCity: "Mumbai", candidateName: "Pooja" });
+
+  let prompt1 = "";
+  let prompt2 = "";
+
+  await interpretAnswer({
+    question: "Where do you live?",
+    answer: "Near station",
+    questionId: "A1",
+    sessionMemory: obj1.shortTermMemory,
+    generateTextImpl: async (prompt) => {
+      prompt1 = prompt;
+      return JSON.stringify({
+        intent: "INTERVIEW_ANSWER",
+        confidence: 0.95,
+        understoodAnswer: "Near station",
+        responseText: "Understood.",
+        shouldRepeatPendingQuestion: false,
+        naturalAcknowledgement: "Understood.",
+        extractedFacts: {},
+      });
+    },
+  });
+
+  await interpretAnswer({
+    question: "Where do you live?",
+    answer: "Near market",
+    questionId: "A1",
+    sessionMemory: obj2.shortTermMemory,
+    generateTextImpl: async (prompt) => {
+      prompt2 = prompt;
+      return JSON.stringify({
+        intent: "INTERVIEW_ANSWER",
+        confidence: 0.95,
+        understoodAnswer: "Near market",
+        responseText: "Understood.",
+        shouldRepeatPendingQuestion: false,
+        naturalAcknowledgement: "Understood.",
+        extractedFacts: {},
+      });
+    },
+  });
+
+  assert.match(prompt1, /Current City: Delhi/);
+  assert.doesNotMatch(prompt1, /Current City: Mumbai/);
+  assert.doesNotMatch(prompt1, /Candidate Name: Pooja/);
+
+  assert.match(prompt2, /Current City: Mumbai/);
+  assert.doesNotMatch(prompt2, /Current City: Delhi/);
+  assert.doesNotMatch(prompt2, /Candidate Name: Sunita/);
+});
+
+test("Session Memory Phase 3: missing or empty memory preserves existing behavior cleanly", async () => {
+  assert.equal(formatMemoryContext(null), "");
+  assert.equal(formatMemoryContext({}), "");
+  assert.equal(formatMemoryContext({ facts: {} }), "");
+
+  let promptWithoutMemory = "";
+  const result = await interpretAnswer({
+    question: "Do you have children?",
+    answer: "Yes, I have two kids.",
+    questionId: "A3",
+    language: "English",
+    sessionMemory: null,
+    generateTextImpl: async (prompt) => {
+      promptWithoutMemory = prompt;
+      return JSON.stringify({
+        intent: "INTERVIEW_ANSWER",
+        confidence: 0.95,
+        understoodAnswer: "Has two kids",
+        responseText: "Thank you for sharing that.",
+        shouldRepeatPendingQuestion: false,
+        naturalAcknowledgement: "Thank you.",
+        extractedFacts: { hasChildren: true },
+      });
+    },
+  });
+
+  assert.ok(result);
+  assert.equal(result.intent, "INTERVIEW_ANSWER");
+  assert.doesNotMatch(promptWithoutMemory, /Known Candidate Facts/);
+});
+
+test("Session Memory Phase 3: Gemini failure preserves fallback without extra API calls", async () => {
+  let callCount = 0;
+  await assert.rejects(
+    async () => {
+      await interpretAnswer({
+        question: "Tell me about your salon experience.",
+        answer: "I worked 3 years in a salon.",
+        questionId: "A4",
+        sessionMemory: { facts: { currentCity: "Delhi" } },
+        generateTextImpl: async () => {
+          callCount += 1;
+          const err = new Error("Rate limit exceeded");
+          err.name = "RateLimitError";
+          err.status = 429;
+          throw err;
+        },
+      });
+    },
+    /Rate limit exceeded/,
+  );
+
+  // Exactly 1 call was attempted (no retry loops or secondary calls)
+  assert.equal(callCount, 1);
+
+  // Fallback generates clean interpretation without throwing
+  const fallback = fallbackInterpretation({
+    question: "Tell me about your salon experience.",
+    answer: "I worked 3 years in a salon.",
+    questionId: "A4",
+    language: "English",
+    sessionMemory: { facts: { currentCity: "Delhi" } },
+  });
+  assert.ok(fallback);
+  assert.ok(fallback.extractedFacts);
+  assert.equal(fallback.extractedFacts.experience, "3 years");
+});
+
+test("Session Memory Phase 3: mandatory question progression is strictly preserved", async () => {
+  const session = startInterview();
+  const sessionId = session.sessionId;
+  const sessionObj = getSessionForPersistence(sessionId);
+
+  // Populate memory with facts that relate to later questions
+  mergeShortTermMemoryFacts(sessionObj, {
+    candidateName: "Sunita",
+    currentCity: "Delhi",
+    localArea: "Rohini",
+    experience: "3 years",
+    skills: ["Hair styling", "Waxing"],
+    vehicle: "scooty",
+    hasChildren: false,
+  });
+
+  // Verify that interview STILL starts at question 1 (A2_NAME), NOT skipping anything
+  const currentQ = session.question;
+  assert.equal(currentQ.id, "A2_NAME");
+
+  // Step 1: Submit Name
+  const res1 = await submitAnswer({
+    sessionId,
+    questionId: "A2_NAME",
+    answer: "Sunita",
+  });
+  assert.equal(res1.body.question.id, "A2_NAME_CONFIRM");
+
+  // Step 2: Confirm Name
+  const res2 = await submitAnswer({
+    sessionId,
+    questionId: "A2_NAME_CONFIRM",
+    answer: "Haan",
+  });
+  assert.equal(res2.body.question.id, "A0"); // Next MUST be A0
+
+  // Step 3: Consent (A0)
+  const res3 = await submitAnswer({
+    sessionId,
+    questionId: "A0",
+    answer: "Haan main ready hoon.",
+  });
+  assert.equal(res3.body.question.id, "A1"); // Next MUST be A1
+
+  // Questions are never skipped regardless of facts in memory
+  assert.equal(res3.body.questionNumber, 3);
+});
+
+test("Session Memory Phase 4: memory is available and accessible during an active interview", () => {
+  const session = startInterview();
+  const sessionObj = getSessionForPersistence(session.sessionId);
+
+  assert.equal(sessionObj.status, "in_progress");
+  mergeShortTermMemoryFacts(sessionObj, {
+    currentCity: "Delhi",
+    experience: "2 years",
+    skills: ["Hair styling"],
+  });
+
+  assert.equal(sessionObj.shortTermMemory.facts.currentCity, "Delhi");
+  assert.equal(sessionObj.shortTermMemory.facts.experience, "2 years");
+  assert.deepEqual(sessionObj.shortTermMemory.facts.skills, ["Hair styling"]);
+});
+
+test("Session Memory Phase 4: memory is cleared after successful interview completion", () => {
+  const session = startInterview();
+  const sessionObj = getSessionForPersistence(session.sessionId);
+
+  mergeShortTermMemoryFacts(sessionObj, {
+    currentCity: "Delhi",
+    experience: "3 years",
+  });
+  recordShortTermMemoryTurn(sessionObj, {
+    questionId: "A1",
+    questionText: "Location",
+    answer: "Delhi",
+  });
+
+  assert.equal(sessionObj.shortTermMemory.facts.currentCity, "Delhi");
+  assert.equal(sessionObj.shortTermMemory.recentTurns.length, 1);
+
+  // Mark completion via clearShortTermMemory as triggered on interview end
+  sessionObj.status = "completed";
+  sessionObj.completedAt = new Date().toISOString();
+  clearShortTermMemory(sessionObj);
+
+  assert.deepEqual(sessionObj.shortTermMemory.facts, {});
+  assert.deepEqual(sessionObj.shortTermMemory.recentTurns, []);
+  assert.deepEqual(sessionObj.shortTermMemory.coveredTopics, []);
+});
+
+test("Session Memory Phase 4: memory is cleared after cancellation or explicit deletion", () => {
+  // Cancellation via endInterview
+  const s1 = startInterview();
+  const obj1 = getSessionForPersistence(s1.sessionId);
+  mergeShortTermMemoryFacts(obj1, { currentCity: "Delhi" });
+  assert.equal(obj1.shortTermMemory.facts.currentCity, "Delhi");
+
+  const endRes = endInterview(s1.sessionId);
+  assert.equal(endRes.body.success, true);
+  assert.equal(obj1.status, "incomplete");
+  assert.deepEqual(obj1.shortTermMemory.facts, {});
+
+  // Deletion via deleteReport
+  const s2 = startInterview();
+  const obj2 = getSessionForPersistence(s2.sessionId);
+  mergeShortTermMemoryFacts(obj2, { currentCity: "Mumbai" });
+  assert.equal(obj2.shortTermMemory.facts.currentCity, "Mumbai");
+
+  const delRes = deleteReport(s2.sessionId);
+  assert.equal(delRes.body.success, true);
+  assert.deepEqual(obj2.shortTermMemory.facts, {});
+  assert.equal(getSessionForPersistence(s2.sessionId), null);
+});
+
+test("Session Memory Phase 4: expired sessions do not retain active memory and are cleaned up", async () => {
+  const session = startInterview();
+  const sessionObj = getSessionForPersistence(session.sessionId);
+  mergeShortTermMemoryFacts(sessionObj, { currentCity: "Jaipur" });
+
+  // Simulate session started 10 hours ago (TTL is 8 hours)
+  sessionObj.startedAt = new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString();
+
+  assert.equal(isSessionExpired(sessionObj), true);
+
+  // Submitting an answer rejects expired session and cleans up memory
+  const res = await submitInterviewAnswer({
+    sessionId: session.sessionId,
+    questionId: "A2_NAME",
+    answer: "Test Name",
+  });
+  assert.equal(res.status, 400);
+  assert.equal(res.body.expired, true);
+  assert.equal(sessionObj.status, "incomplete");
+  assert.deepEqual(sessionObj.shortTermMemory.facts, {});
+
+  // cleanupExpiredSessions cleans up any remaining expired sessions
+  const sExpired = startInterview();
+  const objExpired = getSessionForPersistence(sExpired.sessionId);
+  objExpired.startedAt = new Date(Date.now() - 9 * 60 * 60 * 1000).toISOString();
+  mergeShortTermMemoryFacts(objExpired, { currentCity: "Lucknow" });
+
+  const cleaned = cleanupExpiredSessions();
+  assert.ok(cleaned >= 1);
+  assert.equal(objExpired.status, "incomplete");
+  assert.deepEqual(objExpired.shortTermMemory.facts, {});
+});
+
+test("Session Memory Phase 4: starting a new interview creates fresh, unpolluted memory", () => {
+  const s1 = startInterview();
+  const obj1 = getSessionForPersistence(s1.sessionId);
+  mergeShortTermMemoryFacts(obj1, {
+    candidateName: "Pooja",
+    currentCity: "Pune",
+    skills: ["Facial"],
+  });
+
+  const s2 = startInterview();
+  const obj2 = getSessionForPersistence(s2.sessionId);
+
+  assert.deepEqual(obj2.shortTermMemory.facts, {});
+  assert.deepEqual(obj2.shortTermMemory.recentTurns, []);
+  assert.deepEqual(obj2.shortTermMemory.coveredTopics, []);
+  assert.equal(obj2.shortTermMemory.facts.currentCity, undefined);
+});
+
+test("Session Memory Phase 4: cleaning up one session does not affect another session", () => {
+  const s1 = startInterview();
+  const s2 = startInterview();
+  const obj1 = getSessionForPersistence(s1.sessionId);
+  const obj2 = getSessionForPersistence(s2.sessionId);
+
+  mergeShortTermMemoryFacts(obj1, { currentCity: "Delhi" });
+  mergeShortTermMemoryFacts(obj2, { currentCity: "Mumbai" });
+
+  endInterview(s1.sessionId);
+
+  assert.deepEqual(obj1.shortTermMemory.facts, {});
+  assert.equal(obj2.shortTermMemory.facts.currentCity, "Mumbai");
+});
+
+test("Session Memory Phase 4: reports, answers, and assessment records remain intact after memory cleanup", () => {
+  const session = startInterview();
+  const sessionObj = getSessionForPersistence(session.sessionId);
+
+  // Set up full assessment records
+  sessionObj.candidateName = "Anjali";
+  sessionObj.status = "completed";
+  sessionObj.completedAt = new Date().toISOString();
+  sessionObj.consentOutcome = "accepted";
+  sessionObj.language = "Hindi";
+  sessionObj.eligibilityOutcome = "eligible";
+  sessionObj.manualReviewRequired = false;
+  sessionObj.answers = [
+    { questionId: "A2_NAME", answer: "Anjali", answeredAt: new Date().toISOString() },
+    { questionId: "A0", answer: "Haan main tayyar hoon", answeredAt: new Date().toISOString() },
+    { questionId: "A1", answer: "Delhi", answeredAt: new Date().toISOString() },
+    { questionId: "A2", answer: "25 saal", answeredAt: new Date().toISOString() },
+  ];
+
+  mergeShortTermMemoryFacts(sessionObj, { currentCity: "Delhi", candidateName: "Anjali" });
+
+  // Clean memory on completion
+  clearShortTermMemory(sessionObj);
+
+  // Report must retain all answers, status, and assessment records
+  const reportRes = getReport(session.sessionId);
+  assert.equal(reportRes.body.success, true);
+  const rep = reportRes.body.report;
+
+  assert.equal(rep.candidateName, "Anjali");
+  assert.equal(rep.status, "completed");
+  assert.equal(rep.consentOutcome, "accepted");
+  assert.equal(rep.language, "Hindi");
+  assert.equal(rep.eligibilityOutcome, "eligible");
+  assert.equal(rep.answers.length, 4);
+  assert.equal(rep.answers[0].questionId, "A2_NAME");
+  assert.equal(rep.answers[1].questionId, "A0");
+  assert.equal(rep.answers[2].questionId, "A1");
+  assert.equal(rep.answers[3].questionId, "A2");
+});
+
+test("Session Memory Phase 4: session restoration is backward compatible and clears memory for terminal snapshots", () => {
+  // Legacy snapshot lacking shortTermMemory
+  const legacySnapshot = {
+    sessionId: "legacy-test-1",
+    status: "in_progress",
+    startedAt: new Date().toISOString(),
+    currentQuestionIndex: 0,
+    answers: [],
+  };
+  restoreSessionSnapshot(legacySnapshot.sessionId, legacySnapshot);
+  const restoredLegacy = getSessionForPersistence(legacySnapshot.sessionId);
+  assert.ok(restoredLegacy.shortTermMemory);
+  assert.deepEqual(restoredLegacy.shortTermMemory.facts, {});
+
+  // Terminal snapshot with leftover facts
+  const terminalSnapshot = {
+    sessionId: "terminal-test-1",
+    status: "completed",
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    currentQuestionIndex: 50,
+    answers: [],
+    shortTermMemory: {
+      facts: { currentCity: "Delhi" },
+      recentTurns: [{ q: "A1", a: "Delhi" }],
+      coveredTopics: ["Location"],
+    },
+  };
+  restoreSessionSnapshot(terminalSnapshot.sessionId, terminalSnapshot);
+  const restoredTerminal = getSessionForPersistence(terminalSnapshot.sessionId);
+  assert.deepEqual(restoredTerminal.shortTermMemory.facts, {});
+  assert.deepEqual(restoredTerminal.shortTermMemory.recentTurns, []);
+  assert.deepEqual(restoredTerminal.shortTermMemory.coveredTopics, []);
+
+  // In-progress snapshot retains facts for resumption
+  const inProgressSnapshot = {
+    sessionId: "inprogress-test-1",
+    status: "in_progress",
+    startedAt: new Date().toISOString(),
+    currentQuestionIndex: 2,
+    answers: [],
+    shortTermMemory: {
+      facts: { currentCity: "Bangalore" },
+      recentTurns: [],
+      coveredTopics: [],
+    },
+  };
+  restoreSessionSnapshot(inProgressSnapshot.sessionId, inProgressSnapshot);
+  const restoredInProgress = getSessionForPersistence(inProgressSnapshot.sessionId);
+  assert.equal(restoredInProgress.shortTermMemory.facts.currentCity, "Bangalore");
+});
+
+test("A2_NAME_CONFIRM: accepts Hindi Devanagari affirmative 'हाँ, सही है' and advances to A0", async () => {
+  const started = startInterview({ candidatePhone: "9876543210" });
+  const nameRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Aakash",
+  });
+  assert.equal(nameRes.status, 200);
+  assert.equal(nameRes.body.question.id, "A2_NAME_CONFIRM");
+  assert.equal(nameRes.body.candidateName, "Aakash");
+
+  const confirmRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME_CONFIRM",
+    answer: "हाँ, सही है",
+  });
+  assert.equal(confirmRes.status, 200);
+  assert.equal(confirmRes.body.nameConfirmed, true);
+  assert.equal(confirmRes.body.question.id, "A0");
+  assert.equal(confirmRes.body.candidateName, "Aakash");
+});
+
+test("A2_NAME_CONFIRM: accepts various Hindi and English affirmative responses and advances to A0", async () => {
+  const affirmativeVariants = [
+    "हाँ",
+    "हां",
+    "जी हाँ",
+    "जी हां",
+    "हाँजी",
+    "हांजी",
+    "हाँ सही है",
+    "हाँ बिल्कुल",
+    "हाँ ठीक है",
+    "सही है",
+    "यही है",
+    "haan",
+    "haan sahi hai",
+    "yes",
+    "yes that's correct",
+    "correct",
+  ];
+
+  for (const variant of affirmativeVariants) {
+    const started = startInterview({ candidatePhone: `98765432${Math.floor(10 + Math.random() * 89)}` });
+    await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: "A2_NAME",
+      answer: "Aakash",
+    });
+    const confirmRes = await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: "A2_NAME_CONFIRM",
+      answer: variant,
+    });
+    assert.equal(confirmRes.status, 200, `Failed for affirmative variant: ${variant}`);
+    assert.equal(confirmRes.body.nameConfirmed, true, `Expected nameConfirmed: true for: ${variant}`);
+    assert.equal(confirmRes.body.question.id, "A0", `Expected advance to A0 for: ${variant}`);
+  }
+});
+
+test("A2_NAME_CONFIRM: rejects negative responses in Hindi and English without advancing to A0", async () => {
+  const negativeVariants = [
+    "nahi",
+    "nahin",
+    "no",
+    "wrong",
+    "that's not my name",
+    "नहीं",
+    "नही",
+    "गलत",
+    "गलत है",
+    "नहीं गलत है",
+    "गलत नाम है",
+  ];
+
+  for (const variant of negativeVariants) {
+    const started = startInterview({ candidatePhone: `98765431${Math.floor(10 + Math.random() * 89)}` });
+    await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: "A2_NAME",
+      answer: "Aakash",
+    });
+    const res = await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: "A2_NAME_CONFIRM",
+      answer: variant,
+    });
+    assert.equal(res.status, 200, `Failed for negative variant: ${variant}`);
+    assert.notEqual(res.body.question?.id, "A0", `Must NOT advance to A0 for negative answer: ${variant}`);
+    assert.notEqual(res.body.nameConfirmed, true, `Must NOT confirm name for negative answer: ${variant}`);
+    assert.equal(res.body.nameCorrectionRequired, true, `Must require name correction for: ${variant}`);
+    assert.equal(res.body.question?.id, "A2_NAME", `Must return to A2_NAME for: ${variant}`);
+  }
+});
+
+test("A2_NAME_CONFIRM: handles explicit name correction in Hindi and English", async () => {
+  const started = startInterview({ candidatePhone: "9876543211" });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Aakash",
+  });
+  const correctionRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME_CONFIRM",
+    answer: "Nahi mera naam Sunita hai",
+  });
+  assert.equal(correctionRes.status, 200);
+  assert.equal(correctionRes.body.question.id, "A2_NAME_CONFIRM");
+  assert.equal(correctionRes.body.candidateName, "Sunita");
+
+  const confirmRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME_CONFIRM",
+    answer: "हाँ, सही है",
+  });
+  assert.equal(confirmRes.status, 200);
+  assert.equal(confirmRes.body.question.id, "A0");
+  assert.equal(confirmRes.body.candidateName, "Sunita");
+});
+
+test("A2_NAME_CONFIRM: does not advance on unclear or invalid responses", async () => {
+  const started = startInterview({ candidatePhone: "9876543212" });
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Aakash",
+  });
+  const unclearRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME_CONFIRM",
+    answer: "kuch bhi",
+  });
+  assert.equal(unclearRes.status, 200);
+  assert.notEqual(unclearRes.body.question?.id, "A0");
+  assert.equal(unclearRes.body.nameConfirmationRequired, true);
+  assert.equal(unclearRes.body.candidateName, "Aakash");
+});
 
 

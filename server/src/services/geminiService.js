@@ -55,7 +55,32 @@ async function generateText(input) {
   return text.trim();
 }
 
-function fallbackInterpretation({ question = "", answer = "", questionId = null, language = "Hindi" }) {
+function fallbackInterpretation(firstArg, ...rest) {
+  let params;
+  if (firstArg && typeof firstArg === "object" && ("question" in firstArg || "answer" in firstArg || "questionId" in firstArg || "language" in firstArg)) {
+    params = firstArg;
+  } else if (typeof firstArg === "string") {
+    params = {
+      question: firstArg,
+      answer: rest[0] || "",
+      questionId: rest[1] || null,
+      language: rest[2] || "Hindi",
+    };
+  } else {
+    params = firstArg || {};
+  }
+  const result = computeFallbackInterpretation(params);
+  if (result && typeof result === "object") {
+    if (result.intent === "INTERVIEW_ANSWER" || result.intent === "PARTIAL_OR_AMBIGUOUS_ANSWER") {
+      result.extractedFacts = extractFallbackFacts(params.answer || "");
+    } else {
+      result.extractedFacts = {};
+    }
+  }
+  return result;
+}
+
+function computeFallbackInterpretation({ question = "", answer = "", questionId = null, language = "Hindi" }) {
   const trimmed = typeof answer === "string" ? answer.trim() : "";
   const isInaudibleMarker = !trimmed || /^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(trimmed);
   if (isInaudibleMarker) {
@@ -374,6 +399,199 @@ function fallbackInterpretation({ question = "", answer = "", questionId = null,
   };
 }
 
+const WORD_TO_NUM = {
+  one: "1", ek: "1",
+  two: "2", do: "2",
+  three: "3", teen: "3",
+  four: "4", chaar: "4", char: "4",
+  five: "5", panch: "5", paanch: "5",
+  six: "6", chheh: "6", cheh: "6",
+  seven: "7", saat: "7",
+  eight: "8", aath: "8",
+  nine: "9", nau: "9",
+  ten: "10", das: "10",
+};
+
+function extractFallbackFacts(answer) {
+  if (typeof answer !== "string" || !answer.trim()) return {};
+  const text = answer.trim();
+  const lower = text.toLowerCase();
+  const facts = {};
+
+  const isHypotheticalTarget = (target) => {
+    if (!target) return false;
+    const tgt = target.toLowerCase();
+    return (
+      new RegExp(String.raw`\b(?:agar|if|maybe|shayad|might)\b[^.!?।]{0,100}\b${tgt}\b`, "i").test(lower) ||
+      new RegExp(String.raw`\b${tgt}\b[^.!?।]{0,100}\b(?:agar|if|maybe|shayad|might)\b`, "i").test(lower)
+    );
+  };
+
+  // Cities
+  const cityMatch = lower.match(/\b(delhi|new\s+delhi|noida|gurgaon|gurugram|bangalore|bengaluru|mumbai|pune|hyderabad|chennai|kolkata|jaipur|lucknow|chandigarh)\b/i);
+  if (cityMatch && !isHypotheticalTarget(cityMatch[1])) {
+    const rawCity = cityMatch[1].toLowerCase();
+    const formattedCity = rawCity === "new delhi" ? "New Delhi" :
+      rawCity.charAt(0).toUpperCase() + rawCity.slice(1);
+    facts.currentCity = formattedCity;
+  }
+
+  // Experience
+  const expMatch = text.match(/\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|ek|do|teen|chaar|panch)\s*(?:saal|sal|years?|yrs?)\b/i);
+  if (expMatch && !isHypotheticalTarget(expMatch[1])) {
+    const rawNum = expMatch[1].toLowerCase();
+    const num = WORD_TO_NUM[rawNum] || rawNum;
+    facts.experience = `${num} years`;
+  }
+
+  // Skills
+  const skills = [];
+  if (/\b(?:hair\s*styling|hair\s*cut|haircut|hairstyling)\b/i.test(lower)) skills.push("Hair styling");
+  if (/\b(?:waxing|wax|rica|roll\s*on)\b/i.test(lower)) skills.push("Waxing");
+  if (/\b(?:facial|cleanup|clean\s*up)\b/i.test(lower)) skills.push("Facial");
+  if (/\b(?:threading)\b/i.test(lower)) skills.push("Threading");
+  if (/\b(?:manicure|pedicure|mani\s*pedi)\b/i.test(lower)) skills.push("Manicure/Pedicure");
+  if (/\b(?:makeup|make\s*up|bridal)\b/i.test(lower)) skills.push("Makeup");
+  if (skills.length > 0) {
+    facts.skills = skills;
+  }
+
+  // Vehicle
+  const vehicleMatch = lower.match(/\b(scooty|scooter|bike|motorcycle|bus|metro|auto)\b/i);
+  if (vehicleMatch && !isHypotheticalTarget(vehicleMatch[1])) {
+    facts.vehicle = vehicleMatch[1].toLowerCase();
+  }
+
+  return facts;
+}
+
+function sanitizeExtractedFacts(raw, utterance = "") {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const cleaned = {};
+  const utteranceLower = typeof utterance === "string" ? utterance.toLowerCase() : "";
+
+  const isValidString = (val) =>
+    typeof val === "string" &&
+    val.trim() &&
+    !/^(?:unknown|none|n\/a|null|undefined|not\s+specified|maybe|shayad)$/i.test(val.trim());
+
+  const isHypotheticalTarget = (target) => {
+    if (!utteranceLower || !target) return false;
+    const tgt = target.toLowerCase();
+    return (
+      new RegExp(String.raw`\b(?:agar|if|maybe|shayad|might)\b[^.!?।]{0,100}\b${tgt}\b`, "i").test(utteranceLower) ||
+      new RegExp(String.raw`\b${tgt}\b[^.!?।]{0,100}\b(?:agar|if|maybe|shayad|might)\b`, "i").test(utteranceLower)
+    );
+  };
+
+  if (isValidString(raw.currentCity)) {
+    const city = raw.currentCity.trim();
+    if (!isHypotheticalTarget(city)) {
+      cleaned.currentCity = city;
+    }
+  }
+
+  if (isValidString(raw.localArea)) {
+    cleaned.localArea = raw.localArea.trim();
+  }
+
+  if (isValidString(raw.experience)) {
+    cleaned.experience = raw.experience.trim();
+  }
+
+  if (isValidString(raw.vehicle)) {
+    const veh = raw.vehicle.trim();
+    if (!isHypotheticalTarget(veh)) {
+      cleaned.vehicle = veh.toLowerCase();
+    }
+  }
+
+  if (isValidString(raw.preferredLanguage)) {
+    cleaned.preferredLanguage = raw.preferredLanguage.trim();
+  }
+
+  if (isValidString(raw.candidateName)) {
+    cleaned.candidateName = raw.candidateName.trim();
+  }
+
+  if (Array.isArray(raw.skills)) {
+    const validSkills = raw.skills
+      .filter(isValidString)
+      .map((s) => s.trim());
+    if (validSkills.length > 0) {
+      cleaned.skills = Array.from(new Set(validSkills));
+    }
+  }
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (Object.prototype.hasOwnProperty.call(cleaned, key)) continue;
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    if (isValidString(value)) {
+      if (!isHypotheticalTarget(value)) {
+        cleaned[key] = value.trim();
+      }
+    } else if (Array.isArray(value)) {
+      const arr = value.filter(isValidString).map((v) => v.trim());
+      if (arr.length > 0) cleaned[key] = Array.from(new Set(arr));
+    }
+  }
+
+  return cleaned;
+}
+
+function formatMemoryContext(sessionMemory) {
+  if (!sessionMemory) return "";
+  const facts =
+    sessionMemory && typeof sessionMemory === "object"
+      ? sessionMemory.facts && typeof sessionMemory.facts === "object"
+        ? sessionMemory.facts
+        : sessionMemory
+      : null;
+  if (!facts || typeof facts !== "object" || Array.isArray(facts)) return "";
+
+  const items = [];
+  if (facts.candidateName && typeof facts.candidateName === "string" && facts.candidateName.trim()) {
+    items.push(`Candidate Name: ${facts.candidateName.trim()}`);
+  }
+  if (facts.preferredLanguage && typeof facts.preferredLanguage === "string" && facts.preferredLanguage.trim()) {
+    items.push(`Preferred Language: ${facts.preferredLanguage.trim()}`);
+  }
+  if (facts.currentCity && typeof facts.currentCity === "string" && facts.currentCity.trim()) {
+    items.push(`Current City: ${facts.currentCity.trim()}`);
+  }
+  if (facts.localArea && typeof facts.localArea === "string" && facts.localArea.trim()) {
+    items.push(`Local Area: ${facts.localArea.trim()}`);
+  }
+  if (facts.experience && typeof facts.experience === "string" && facts.experience.trim()) {
+    items.push(`Experience: ${facts.experience.trim()}`);
+  }
+  if (Array.isArray(facts.skills) && facts.skills.length > 0) {
+    items.push(`Skills: ${facts.skills.join(", ")}`);
+  }
+  if (facts.vehicle && typeof facts.vehicle === "string" && facts.vehicle.trim()) {
+    items.push(`Vehicle/Conveyance: ${facts.vehicle.trim()}`);
+  }
+  if (typeof facts.age === "number" || (typeof facts.age === "string" && facts.age.trim())) {
+    items.push(`Age: ${facts.age}`);
+  }
+  if (typeof facts.hasChildren === "boolean") {
+    items.push(`Has Children: ${facts.hasChildren ? "Yes" : "No"}`);
+  }
+
+  for (const [key, val] of Object.entries(facts)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    if (["candidateName", "preferredLanguage", "currentCity", "localArea", "experience", "skills", "vehicle", "age", "hasChildren"].includes(key)) continue;
+    if (typeof val === "string" && val.trim() && !/^(?:unknown|none|n\/a|null|undefined)$/i.test(val.trim())) {
+      items.push(`${key}: ${val.trim()}`);
+    } else if (typeof val === "number" || typeof val === "boolean") {
+      items.push(`${key}: ${val}`);
+    }
+  }
+
+  if (items.length === 0) return "";
+  return items.join("; ");
+}
+
 async function interpretAnswer({
   question,
   answer,
@@ -381,6 +599,7 @@ async function interpretAnswer({
   previousContext = [],
   pendingFollowUp = null,
   language = "Hindi",
+  sessionMemory = null,
   diagnosticRequestId,
   diagnosticPromptTurn,
   diagnosticSessionGeneration,
@@ -396,8 +615,23 @@ async function interpretAnswer({
 
   const cleanAnswer = answer.trim();
   if (!cleanAnswer || /^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(cleanAnswer)) {
-    return fallbackInterpretation({ question, answer: cleanAnswer, questionId, language });
+    return fallbackInterpretation({ question, answer: cleanAnswer, questionId, language, sessionMemory });
   }
+
+  const memorySummary = formatMemoryContext(sessionMemory);
+  const memorySection = memorySummary
+    ? `Known Candidate Facts from This Session (already shared by candidate): ${memorySummary}
+
+Session Memory Guidelines (Crucial for Natural Conversation):
+- Known Candidate Facts listed above have ALREADY been shared by the candidate earlier in this interview.
+- When generating responseText, naturalAcknowledgement, or follow-up probes:
+  1. Acknowledge previously shared information naturally when relevant (e.g. if the candidate mentions their location or experience, refer to it warmly, such as "Achha, aap Delhi mein rehti hain...").
+  2. Avoid asking the candidate to repeat information they have already provided. If a detail is already listed in Known Candidate Facts, do not ask for it again.
+  3. If a follow-up or clarification is required, ask only for missing or additional details genuinely needed (e.g. if currentCity is known as Delhi but specific area is needed: "Achha, aap Delhi mein rehti hain. Delhi mein kis area mein rehti hain?").
+  4. Respect candidate corrections: if the candidate corrects a previously shared fact in this utterance, use the updated fact.
+  5. Never invent, assume, or hallucinate candidate facts that were not stated.
+  6. Do not output raw JSON, internal variable names, or technical terms in conversational fields. Keep responses natural, concise, and respectful.`
+    : "";
 
   const contextSummary = Array.isArray(previousContext) && previousContext.length > 0
     ? previousContext.map((c) => `Q: ${c.questionText || c.questionId} -> A: ${c.answer}`).join("\n")
@@ -410,8 +644,7 @@ Analyze the candidate's utterance in the context of the current interview questi
 Candidate Language: ${language || "Hindi"}
 Current Question [${questionId || "Question"}]: "${question.trim()}"
 ${pendingFollowUp ? `Pending Follow-up Probe: "${pendingFollowUp}"` : ""}
-${contextSummary ? `Recent Context:\n${contextSummary}` : ""}
-Candidate Spoken Utterance: "${cleanAnswer}"
+${memorySection ? `${memorySection}\n` : ""}${contextSummary ? `Recent Context:\n${contextSummary}\n` : ""}Candidate Spoken Utterance: "${cleanAnswer}"
 
 Your task is to classify the candidate's utterance into EXACTLY ONE of the following 6 intents:
 
@@ -469,6 +702,21 @@ Your task is to classify the candidate's utterance into EXACTLY ONE of the follo
    - In responseText: ask the candidate to repeat or type their response.
    - NEVER issue a warning penalty.
 
+7. "extractedFacts" (Optional structured facts about the candidate):
+   Extract ONLY clear, factual attributes EXPLICITLY stated by the candidate about themselves in this utterance.
+   - Do NOT guess, assume, or infer missing details.
+   - Do NOT store hypothetical or conditional statements (e.g. "If I relocate...", "Agar car ho toh...", "Maybe", "Shayad").
+   - Do NOT store off-topic chatter.
+   - If candidate explicitly corrects a prior fact, capture the new corrected value.
+   - Supported fields (include ONLY fields explicitly stated in the answer):
+     * "currentCity": string (e.g. "Delhi", "Bangalore")
+     * "localArea": string (e.g. "Whitefield", "Rohini")
+     * "experience": string (e.g. "2 years", "6 months")
+     * "skills": array of strings (e.g. ["Hair styling", "Waxing", "Facial"])
+     * "vehicle": string (e.g. "scooty", "bike", "metro")
+     * "preferredLanguage": string (e.g. "Hindi", "English")
+   If no factual attributes were explicitly stated, return an empty object: {}.
+
 Output MUST be strictly valid JSON without markdown wrapping:
 {
   "intent": "INTERVIEW_ANSWER" | "RELEVANT_COUNTER_QUESTION" | "CLARIFICATION_REQUEST" | "PARTIAL_OR_AMBIGUOUS_ANSWER" | "IRRELEVANT_OR_NONRESPONSIVE" | "UNINTELLIGIBLE_OR_NO_INPUT",
@@ -476,7 +724,8 @@ Output MUST be strictly valid JSON without markdown wrapping:
   "understoodAnswer": "summary of answer or empty string",
   "responseText": "conversational response to speak to candidate",
   "shouldRepeatPendingQuestion": false,
-  "naturalAcknowledgement": "brief acknowledgement"
+  "naturalAcknowledgement": "brief acknowledgement",
+  "extractedFacts": {}
 }
 `;
 
@@ -600,6 +849,11 @@ Output MUST be strictly valid JSON without markdown wrapping:
     const counterQuestionAnswer = (result.counterQuestionAnswer || (intent === "RELEVANT_COUNTER_QUESTION" ? responseText : "")).trim();
     const naturalAcknowledgement = (result.naturalAcknowledgement || (intent === "INTERVIEW_ANSWER" ? "Theek hai." : "")).trim();
 
+    const rawFacts = result.extractedFacts;
+    const extractedFacts = (rawFacts && typeof rawFacts === "object" && !Array.isArray(rawFacts))
+      ? sanitizeExtractedFacts(rawFacts, cleanAnswer)
+      : extractFallbackFacts(cleanAnswer);
+
     const interpretation = {
       intent,
       confidence: typeof result.confidence === "number" ? result.confidence : 0.9,
@@ -614,6 +868,7 @@ Output MUST be strictly valid JSON without markdown wrapping:
       clarificationQuestion,
       counterQuestionAnswer,
       naturalAcknowledgement,
+      extractedFacts,
     };
 
     console.info("[UC Answer Interpretation] interpretation_completed", {
@@ -643,4 +898,7 @@ module.exports = {
   interpretAnswer,
   fallbackInterpretation,
   INTERPRETATION_REQUEST_OPTIONS,
+  sanitizeExtractedFacts,
+  extractFallbackFacts,
+  formatMemoryContext,
 };

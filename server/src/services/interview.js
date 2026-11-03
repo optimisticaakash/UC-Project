@@ -4,7 +4,7 @@ const path = require("path");
 const { classifyConsent, classifyLanguage } = require("./rules/consentRules");
 const { evaluateAge } = require("./rules/ageRules");
 const { classifyLocation } = require("./rules/locationRules");
-const { interpretAnswer } = require("./geminiService");
+const { interpretAnswer, extractFallbackFacts } = require("./geminiService");
 const { detectCounterQuestion } = require("./counterQuestions");
 
 const bankPath = path.join(__dirname, "../data/questionBank.json");
@@ -92,6 +92,131 @@ function advanceToNextApplicableQuestion(session) {
   }
 }
 
+function createShortTermMemory() {
+  return {
+    facts: {},
+    coveredTopics: [],
+    recentTurns: [],
+  };
+}
+
+const INTERVIEW_SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+
+const TERMINAL_STATUSES = new Set([
+  "completed",
+  "rejected",
+  "manual_review",
+  "incomplete",
+  "terminated",
+]);
+
+function clearShortTermMemory(session) {
+  if (!session) return;
+  session.shortTermMemory = createShortTermMemory();
+}
+
+function isSessionExpired(session, maxAgeMs = INTERVIEW_SESSION_TTL_MS, currentTime = Date.now()) {
+  if (!session) return false;
+  if (session.expiresAt) {
+    const expires = new Date(session.expiresAt).getTime();
+    if (!Number.isNaN(expires) && expires <= currentTime) return true;
+  }
+  if (session.startedAt) {
+    const started = new Date(session.startedAt).getTime();
+    if (!Number.isNaN(started) && (currentTime - started) > maxAgeMs) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function cleanupExpiredSessions({ maxAgeMs = INTERVIEW_SESSION_TTL_MS, currentTime = Date.now() } = {}) {
+  let cleanedCount = 0;
+  for (const session of sessions.values()) {
+    if (isSessionExpired(session, maxAgeMs, currentTime)) {
+      if (session.status === "in_progress" || session.status === "paused") {
+        session.status = "incomplete";
+        session.endedAt = new Date(currentTime).toISOString();
+        session.terminationReason = "session_expired";
+      }
+      clearShortTermMemory(session);
+      cleanedCount += 1;
+    }
+  }
+  return cleanedCount;
+}
+
+function mergeShortTermMemoryFacts(session, newFacts) {
+  if (!session || !newFacts || typeof newFacts !== "object" || Array.isArray(newFacts)) {
+    return;
+  }
+  if (!session.shortTermMemory || typeof session.shortTermMemory !== "object") {
+    session.shortTermMemory = createShortTermMemory();
+  }
+  if (!session.shortTermMemory.facts || typeof session.shortTermMemory.facts !== "object") {
+    session.shortTermMemory.facts = {};
+  }
+
+  const facts = session.shortTermMemory.facts;
+
+  for (const [key, val] of Object.entries(newFacts)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    if (val === null || val === undefined) continue;
+
+    if (typeof val === "string") {
+      const cleanVal = val.trim();
+      if (!cleanVal || /^(?:unknown|none|n\/a|null|undefined|not\s+specified)$/i.test(cleanVal)) {
+        continue;
+      }
+      facts[key] = cleanVal;
+    } else if (typeof val === "number" || typeof val === "boolean") {
+      facts[key] = val;
+    } else if (Array.isArray(val)) {
+      const cleanArr = val
+        .filter((item) => typeof item === "string" && item.trim() && !/^(?:unknown|none|n\/a|null|undefined)$/i.test(item.trim()))
+        .map((item) => item.trim());
+
+      if (cleanArr.length > 0) {
+        const existingArr = Array.isArray(facts[key]) ? facts[key] : [];
+        const mergedSet = new Set([...existingArr, ...cleanArr]);
+        facts[key] = Array.from(mergedSet);
+      }
+    }
+  }
+}
+
+function recordShortTermMemoryTurn(session, turn) {
+  if (!session || !turn) return;
+  if (!session.shortTermMemory || typeof session.shortTermMemory !== "object") {
+    session.shortTermMemory = createShortTermMemory();
+  }
+  if (!Array.isArray(session.shortTermMemory.recentTurns)) {
+    session.shortTermMemory.recentTurns = [];
+  }
+  if (!Array.isArray(session.shortTermMemory.coveredTopics)) {
+    session.shortTermMemory.coveredTopics = [];
+  }
+
+  const qId = turn.questionId || "";
+  const aText = typeof turn.answer === "string" ? turn.answer : "";
+  if (qId && aText) {
+    session.shortTermMemory.recentTurns.push({
+      questionId: qId,
+      questionText: turn.questionText || "",
+      answer: aText,
+      timestamp: turn.answeredAt || new Date().toISOString(),
+    });
+    if (session.shortTermMemory.recentTurns.length > 10) {
+      session.shortTermMemory.recentTurns.shift();
+    }
+  }
+
+  const category = turn.category || "";
+  if (category && typeof category === "string" && !session.shortTermMemory.coveredTopics.includes(category)) {
+    session.shortTermMemory.coveredTopics.push(category);
+  }
+}
+
 function startInterview({ candidateId, profileName } = {}) {
   if (candidateId) {
     for (const priorSession of sessions.values()) {
@@ -101,6 +226,7 @@ function startInterview({ candidateId, profileName } = {}) {
       ) {
         priorSession.status = "incomplete";
         priorSession.endedAt = new Date().toISOString();
+        clearShortTermMemory(priorSession);
       }
     }
   }
@@ -113,6 +239,7 @@ function startInterview({ candidateId, profileName } = {}) {
     ...(profileName ? { profileName: formatCandidateName(profileName) } : {}),
     currentQuestionIndex: 0,
     answers: [],
+    shortTermMemory: createShortTermMemory(),
     status: "in_progress",
     manualReviewRequired: false,
     manualReviewPaused: false,
@@ -143,14 +270,30 @@ function getSessionSnapshot(sessionId) {
 }
 
 function restoreSessionSnapshot(sessionId, snapshot) {
-  if (snapshot) sessions.set(sessionId, structuredClone(snapshot));
-  else sessions.delete(sessionId);
+  if (snapshot) {
+    const clone = structuredClone(snapshot);
+    if (!clone.shortTermMemory || typeof clone.shortTermMemory !== "object") {
+      clone.shortTermMemory = createShortTermMemory();
+    }
+    if (TERMINAL_STATUSES.has(clone.status)) {
+      clearShortTermMemory(clone);
+    }
+    sessions.set(sessionId, clone);
+  } else {
+    sessions.delete(sessionId);
+  }
 }
 
 function restoreSessions(restoredSessions) {
   sessions.clear();
   for (const session of restoredSessions) {
     if (session?.sessionId && session.status && session.startedAt) {
+      if (!session.shortTermMemory || typeof session.shortTermMemory !== "object") {
+        session.shortTermMemory = createShortTermMemory();
+      }
+      if (TERMINAL_STATUSES.has(session.status)) {
+        clearShortTermMemory(session);
+      }
       sessions.set(session.sessionId, session);
     }
   }
@@ -551,6 +694,7 @@ function handleInvalidAttempt(session, question, {
   session.terminatedAtQuestionId = question.id;
   session.completedAt = session.terminatedAt;
   session.endedAt = session.terminatedAt;
+  clearShortTermMemory(session);
 
   const terminationMessage =
     "Teen baar koshish karne ke baad bhi relevant jawab na milne ki wajah se interview aage nahi badh sakta. Aapka interview yahin samapt hota hai.";
@@ -656,6 +800,25 @@ async function submitAnswer({
         success: false,
         code: "SESSION_NOT_FOUND",
         message: "Interview session not found.",
+      },
+    };
+  }
+
+  if (isSessionExpired(session)) {
+    if (session.status === "in_progress" || session.status === "paused") {
+      session.status = "incomplete";
+      session.endedAt = new Date().toISOString();
+      session.terminationReason = "session_expired";
+    }
+    clearShortTermMemory(session);
+    return {
+      status: 400,
+      body: {
+        success: false,
+        code: "SESSION_EXPIRED",
+        message: "This interview session has expired.",
+        sessionStatus: session.status,
+        expired: true,
       },
     };
   }
@@ -791,6 +954,7 @@ async function submitAnswer({
       } else {
         session.answers.push(nameRecord);
       }
+      recordShortTermMemoryTurn(session, nameRecord);
       session.pendingNameConfirmation = null;
       session.currentQuestionIndex += 1;
     } else {
@@ -833,6 +997,7 @@ async function submitAnswer({
         answer: cleanAnswer,
         questionId: qId,
         language: session.language,
+        sessionMemory: session.shortTermMemory,
         diagnosticRequestId: safeRequestId,
         diagnosticPromptTurn: safePromptTurn,
         diagnosticSessionGeneration: safeSessionGeneration,
@@ -960,12 +1125,12 @@ async function submitAnswer({
     }
 
     let isAffirmative =
-      /^(?:(?:ji\s+)?(?:haan|han|haanji|hanji|yes|yeah|yep|ha)(?:\s+ji)?(?:\s+(?:sahi(?:\s+hai)?|theek\s+hai|thik\s+hai|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|(?:mera\s+)?(?:yahi|wahi)\s+naam\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|bilkul(?:\s+sahi(?:\s+hai)?)?|bilkul(?:\s+theek(?:\s+hai)?)?|correct|right|that's\s+correct|that's\s+right|that's\s+my\s+name))?|ji|sahi|sahi\s+hai|correct|right|that's\s+correct|that's\s+right|that's\s+my\s+name|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|mera\s+(?:yahi|wahi)\s+naam\s+hai|mera\s+naam\s+(?:yahi|wahi)\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|theek\s+hai|thik\s+hai|bilkul|bilkul\s+sahi(?:\s+hai)?|bilkul\s+theek(?:\s+hai)?|bilkul\s+thik(?:\s+hai)?|ji\s+bilkul|ji\s+haan\s+bilkul|हाँ|हां|जी|जी\s+हाँ|जी\s+हां|बिल्कुल|बिल्कुल\s+सही|सही\s+है|वही\s+है|यही\s+है|यही\s+नाम\s+है|मेरा\s+यही\s+नाम\s+है)[.!?।\s]*$/iu.test(
+      /^(?:(?:ji\s+)?(?:haan|han|haanji|hanji|yes|yeah|yep|ha)(?:\s+ji)?(?:\s+(?:sahi(?:\s+hai)?|theek\s+hai|thik\s+hai|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|(?:mera\s+)?(?:yahi|wahi)\s+naam\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|bilkul(?:\s+sahi(?:\s+hai)?)?|bilkul(?:\s+theek(?:\s+hai)?)?|correct|right|that's\s+correct|that's\s+right|that's\s+my\s+name))?|(?:(?:जी\s+)?(?:हाँ|हां|हाँजी|हांजी))(?:\s+जी)?(?:\s+(?:सही(?:\s+hai)?|theek\s+hai|thik\s+hai|सही(?:\s+है)?|ठीक(?:\s+है)?|बिल्कुल(?:\s+सही(?:\s+है)?)?|बिल्कुल(?:\s+theek(?:\s+hai)?)?|वही\s+है|यही\s+है|यही\s+नाम\s+है|मेरा\s+(?:यही|वही)\s+नाम\s+है))?|जी|sahi|sahi\s+hai|correct|right|that's\s+correct|that's\s+right|that's\s+my\s+name|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|mera\s+(?:yahi|wahi)\s+naam\s+hai|mera\s+naam\s+(?:yahi|wahi)\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|theek\s+hai|thik\s+hai|bilkul|bilkul\s+sahi(?:\s+hai)?|bilkul\s+theek(?:\s+hai)?|bilkul\s+thik(?:\s+hai)?|ji\s+bilkul|ji\s+haan\s+bilkul|हाँ|हां|जी\s+हाँ|जी\s+हां|बिल्कुल|बिल्कुल\s+सही(?:\s+है)?|सही|सही\s+है|ठीक\s+है|वही\s+है|यही\s+है|यही\s+नाम\s+है|मेरा\s+(?:यही|वही)\s+नाम\s+है)[.!?।\s]*$/iu.test(
         normalizedConfirmation,
       );
 
     let isNegative =
-      /^(?:no|nope|nahi|nahin|nhi|galat|wrong(?:\s+name)?|incorrect|not\s+(?:correct|right|my\s+name)|(?:that|it|this|ye|that's)\s+(?:is\s+)?not\s+my\s+name|ye\s+mera\s+naam\s+nahi\s+hai|mera\s+naam\s+galat\s+hai|galat\s+naam\s+hai|galat\s+hai|naam\s+galat\s+hai|गलत|गलत\s+है|नहीं|नही|गलत\s+नाम\s+है|मेरा\s+नाम\s+गलत\s+है)(?:\s+(?:hai|ji|sir|madam))?[.!?।\s]*$/iu.test(
+      /^(?:no|nope|nahi|nahin|nhi|galat|wrong(?:\s+name)?|incorrect|not\s+(?:correct|right|my\s+name)|(?:that|it|this|ye|that's)\s+(?:is\s+)?not\s+my\s+name|ye\s+mera\s+naam\s+nahi\s+hai|mera\s+naam\s+galat\s+hai|galat\s+naam\s+hai|galat\s+hai|naam\s+galat\s+hai|गलत|गलत\s+है|नहीं|नही|गलत\s+नाम\s+है|मेरा\s+नाम\s+गलत\s+है|(?:नहीं|नही)(?:\s+(?:गलत|गलत\s+है|ये\s+गलत\s+है|ये\s+मेरा\s+नाम\s+नहीं\s+है|मेरा\s+नाम\s+नहीं\s+है)))(?:\s+(?:hai|ji|sir|madam))?[.!?।\s]*$/iu.test(
         normalizedConfirmation,
       ) ||
       (/^(?:no|nope|nahi|nahin|nhi)\b/i.test(normalizedConfirmation) &&
@@ -985,6 +1150,7 @@ async function submitAnswer({
           answer: cleanAnswer,
           questionId: "A2_NAME_CONFIRM",
           language: session.language,
+          sessionMemory: session.shortTermMemory,
           diagnosticRequestId: safeRequestId,
           diagnosticPromptTurn: safePromptTurn,
           diagnosticSessionGeneration: safeSessionGeneration,
@@ -1030,9 +1196,15 @@ async function submitAnswer({
 
           if (interp.intent === "INTERVIEW_ANSWER") {
             const understood = (interp.understoodAnswer || "").toLowerCase();
-            if (/\b(?:yes|haan|han|agree|confirmed|correct|right|sahi)\b/i.test(understood)) {
+            if (
+              /\b(?:yes|haan|han|agree|confirmed|correct|right|sahi)\b/i.test(understood) ||
+              /(?:हाँ|हां|सही|बिल्कुल|कन्फर्म|पुष्टि)/u.test(understood)
+            ) {
               isAffirmative = true;
-            } else if (/\b(?:no|nahi|nahin|reject|wrong|galat|incorrect)\b/i.test(understood)) {
+            } else if (
+              /\b(?:no|nahi|nahin|reject|wrong|galat|incorrect)\b/i.test(understood) ||
+              /(?:नहीं|नही|गलत)/u.test(understood)
+            ) {
               isNegative = true;
             } else {
               const parsedFromUnderstood = classifyNameAnswer(interp.understoodAnswer);
@@ -1052,6 +1224,7 @@ async function submitAnswer({
     if (isAffirmative) {
       session.invalidAttempts = {};
       session.candidateName = formatCandidateName(pendingName);
+      mergeShortTermMemoryFacts(session, { candidateName: session.candidateName });
       const nameRecord = {
         questionId: "A2_NAME",
         questionText: questions[0].text,
@@ -1065,6 +1238,7 @@ async function submitAnswer({
       } else {
         session.answers.push(nameRecord);
       }
+      recordShortTermMemoryTurn(session, nameRecord);
       session.pendingNameConfirmation = null;
       session.currentQuestionIndex += 1;
 
@@ -1105,6 +1279,7 @@ async function submitAnswer({
           session.manualReviewReason =
             "Identity verification failed: candidate repeatedly rejected the registered profile name.";
           session.candidateName = session.profileName;
+          clearShortTermMemory(session);
           const mismatchMessage = isEnglish
             ? `This interview is associated with ${session.profileName}'s registered profile. Since the name could not be verified, this session has been flagged for manual review.`
             : `Ye interview ${session.profileName} ke registered profile se juda hai. Naam verify nahi ho paya, isliye is session ko manual review ke liye flag kar diya gaya hai.`;
@@ -1201,6 +1376,7 @@ async function submitAnswer({
         session.manualReviewRequired = true;
         session.manualReviewReason =
           "Identity mismatch: candidate corrected name to a value that does not match the registered profile after warning.";
+        clearShortTermMemory(session);
         const mismatchMessage = isEnglish
           ? `This interview is associated with ${session.profileName}'s registered profile. The corrected name does not match. This session has been flagged for manual review.`
           : `Ye interview ${session.profileName} ke registered profile se juda hai. Aapne jo naam bataya woh match nahi karta. Is session ko manual review ke liye flag kar diya gaya hai.`;
@@ -1545,6 +1721,7 @@ async function submitAnswer({
         if (session.currentQuestionIndex >= questions.length) {
           session.status = "completed";
           session.completedAt = new Date().toISOString();
+          clearShortTermMemory(session);
 
           return {
             status: 200,
@@ -1628,6 +1805,7 @@ async function submitAnswer({
       if (session.currentQuestionIndex >= questions.length) {
         session.status = "completed";
         session.completedAt = new Date().toISOString();
+        clearShortTermMemory(session);
 
         return {
           status: 200,
@@ -1665,6 +1843,7 @@ async function submitAnswer({
           answer: followUpAnswer,
           questionId: `${pending.questionId}_FOLLOW_UP`,
           language: session.language,
+          sessionMemory: session.shortTermMemory,
           diagnosticRequestId: safeRequestId,
           diagnosticPromptTurn: safePromptTurn,
           diagnosticSessionGeneration: safeSessionGeneration,
@@ -1779,7 +1958,7 @@ async function submitAnswer({
           normalized,
         );
 
-      session.answers.push({
+      const followUpRecord = {
         questionId: `${pending.questionId}_FOLLOW_UP`,
         parentQuestionId: pending.questionId,
         questionText: pending.prompt,
@@ -1788,7 +1967,14 @@ async function submitAnswer({
         answer: followUpAnswer,
         answeredAt: new Date().toISOString(),
         isFollowUp: true,
-      });
+      };
+      session.answers.push(followUpRecord);
+      recordShortTermMemoryTurn(session, followUpRecord);
+
+      const probeFacts = extractFallbackFacts(followUpAnswer);
+      if (probeFacts && Object.keys(probeFacts).length > 0) {
+        mergeShortTermMemoryFacts(session, probeFacts);
+      }
 
       if (isStillUnclear) {
         session.manualChecks = session.manualChecks || [];
@@ -1809,6 +1995,7 @@ async function submitAnswer({
       if (session.currentQuestionIndex >= questions.length) {
         session.status = "completed";
         session.completedAt = new Date().toISOString();
+        clearShortTermMemory(session);
 
         return {
           status: 200,
@@ -1940,11 +2127,13 @@ async function submitAnswer({
 
     answerRecord.consentOutcome = outcome;
     session.answers.push(answerRecord);
+    recordShortTermMemoryTurn(session, answerRecord);
 
     if (outcome === "refused") {
       session.consentOutcome = "refused";
       session.status = "manual_review";
       session.completedAt = new Date().toISOString();
+      clearShortTermMemory(session);
 
       return {
         status: 200,
@@ -1964,6 +2153,7 @@ async function submitAnswer({
     const detectedLanguage = classifyLanguage(cleanAnswer) || "Hindi";
     session.consentOutcome = "accepted";
     session.language = detectedLanguage;
+    mergeShortTermMemoryFacts(session, { preferredLanguage: detectedLanguage });
     answerRecord.language = detectedLanguage;
     session.currentQuestionIndex += 1;
 
@@ -2054,7 +2244,16 @@ async function submitAnswer({
     answerRecord.locationOutcome = result.outcome;
     answerRecord.manualReviewRequired = true;
 
+    if (result.area) {
+      mergeShortTermMemoryFacts(session, { localArea: result.area });
+    }
+    const locFacts = extractFallbackFacts(cleanAnswer);
+    if (locFacts && Object.keys(locFacts).length > 0) {
+      mergeShortTermMemoryFacts(session, locFacts);
+    }
+
     session.answers.push(answerRecord);
+    recordShortTermMemoryTurn(session, answerRecord);
     session.locationOutcome = result.outcome;
     session.manualChecks = session.manualChecks || [];
 
@@ -2212,13 +2411,21 @@ async function submitAnswer({
 
     answerRecord.age = result.age;
     answerRecord.eligibilityOutcome = result.outcome;
+    if (result.age) {
+      mergeShortTermMemoryFacts(session, { age: result.age });
+    }
+    if (result.dob) {
+      mergeShortTermMemoryFacts(session, { dob: result.dob });
+    }
     session.answers.push(answerRecord);
+    recordShortTermMemoryTurn(session, answerRecord);
 
     session.eligibilityOutcome = result.outcome;
 
     if (result.outcome === "reject") {
       session.status = "rejected";
       session.completedAt = new Date().toISOString();
+      clearShortTermMemory(session);
 
       return {
         status: 200,
@@ -2417,6 +2624,7 @@ async function submitAnswer({
       session.manualReviewReason =
         "Identity mismatch: candidate spoke a name that does not match the registered profile after warning.";
       session.candidateName = profileName; // Preserve the authoritative identity
+      clearShortTermMemory(session);
       const mismatchMessage = isEnglish
         ? `This interview is associated with ${profileName}'s registered profile. The name you provided does not match. This session has been flagged for manual review.`
         : `Ye interview ${profileName} ke registered profile se juda hai. Aapne jo naam bataya woh match nahi karta. Is session ko manual review ke liye flag kar diya gaya hai.`;
@@ -2709,6 +2917,7 @@ async function submitAnswer({
       });
       session.manualReviewRequired = true;
       session.answers.push(answerRecord);
+    recordShortTermMemoryTurn(session, answerRecord);
       advanceToNextApplicableQuestion(session);
       return {
         status: 200,
@@ -2725,6 +2934,7 @@ async function submitAnswer({
 
     answerRecord.travelWillingness = "yes";
     session.answers.push(answerRecord);
+    recordShortTermMemoryTurn(session, answerRecord);
     advanceToNextApplicableQuestion(session);
     return {
       status: 200,
@@ -2751,6 +2961,9 @@ async function submitAnswer({
         question: question.text,
         answer: cleanAnswer,
         questionId: question.id,
+        language: session.language,
+        sessionMemory: session.shortTermMemory,
+        previousContext: (session.answers || []).slice(-3),
         diagnosticRequestId: safeRequestId,
         diagnosticPromptTurn: safePromptTurn,
         diagnosticSessionGeneration: safeSessionGeneration,
@@ -2779,6 +2992,15 @@ async function submitAnswer({
       }
 
       answerRecord.interpretation = interpretation;
+
+      if (
+        interpretation?.extractedFacts &&
+        typeof interpretation.extractedFacts === "object" &&
+        interpretation.intent !== "IRRELEVANT_OR_NONRESPONSIVE" &&
+        interpretation.intent !== "UNINTELLIGIBLE_OR_NO_INPUT"
+      ) {
+        mergeShortTermMemoryFacts(session, interpretation.extractedFacts);
+      }
 
       if (
         interpretation.intent === "RELEVANT_COUNTER_QUESTION" ||
@@ -3015,6 +3237,11 @@ async function submitAnswer({
       classDetailsProvided: details.classDetails,
       caregiverDetailsProvided: details.caregiverDetails,
     };
+    if (childPresence === "none") {
+      mergeShortTermMemoryFacts(session, { hasChildren: false });
+    } else if (childPresence === "present") {
+      mergeShortTermMemoryFacts(session, { hasChildren: true });
+    }
   }
 
   // Sequential flow for questions other than A0.
@@ -3024,6 +3251,7 @@ async function submitAnswer({
   if (session.currentQuestionIndex >= questions.length) {
     session.status = "completed";
     session.completedAt = new Date().toISOString();
+    clearShortTermMemory(session);
 
     return {
       status: 200,
@@ -3093,6 +3321,8 @@ function endInterview(sessionId) {
     session.status = "incomplete";
     session.endedAt = new Date().toISOString();
   }
+
+  clearShortTermMemory(session);
 
   // Terminal outcomes (completed, rejected, manual_review) and an earlier
   // incomplete end are intentionally idempotent and remain unchanged.
@@ -3315,12 +3545,14 @@ function deleteReport(sessionId) {
       body: { success: false, message: "A valid session ID is required." },
     };
   }
-  if (!sessions.has(sessionId)) {
+  const session = sessions.get(sessionId);
+  if (!session) {
     return {
       status: 404,
       body: { success: false, message: "Interview report not found." },
     };
   }
+  clearShortTermMemory(session);
   sessions.delete(sessionId);
   return {
     status: 200,
@@ -3337,6 +3569,7 @@ function updateCandidateName(sessionId, candidateName) {
   }
   const formatted = formatCandidateName(classification.name || candidateName);
   session.candidateName = formatted;
+  mergeShortTermMemoryFacts(session, { candidateName: formatted });
   if (session.pendingNameConfirmation) {
     session.pendingNameConfirmation.name = formatted;
   }
@@ -3368,4 +3601,11 @@ module.exports = {
   classifyNameAnswer,
   isSaneName,
   updateCandidateName,
+  createShortTermMemory,
+  mergeShortTermMemoryFacts,
+  recordShortTermMemoryTurn,
+  clearShortTermMemory,
+  isSessionExpired,
+  cleanupExpiredSessions,
+  INTERVIEW_SESSION_TTL_MS,
 };
