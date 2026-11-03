@@ -323,6 +323,7 @@ export function useGeminiLiveInterview() {
       captionsControllerRef.current.beginTurn({ targetQuestionText: repeatRequest.prompt });
 
       inputTurnRef.current.beginModelTurn();
+      suppressWaitingSpeechRef.current = false;
       authorizedModelTurnRef.current = true;
       audioChunksReceivedForTurnRef.current = 0;
       const isIdentity = Boolean(
@@ -1186,6 +1187,19 @@ export function useGeminiLiveInterview() {
 
   async function startOrResume(isResume = false) {
     if (startingRef.current || connectedRef.current) return;
+
+    // Unlock Web Audio immediately within the synchronous user gesture
+    try {
+      if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioContextRef.current.state === "suspended") {
+        audioContextRef.current.resume().catch(() => {});
+      }
+    } catch (e) {
+      console.warn("[Interview] AudioContext unlock on gesture:", e?.message || e);
+    }
+
     clearAnswerSettleTimer();
     clearNoSpeechTimer();
 
@@ -1310,11 +1324,18 @@ export function useGeminiLiveInterview() {
 
       micStreamRef.current = stream;
 
-      const audioContext = new AudioContext();
-      await audioContext.audioWorklet.addModule(
-        "/audio/mic-capture-worklet.js"
-      );
-      audioContextRef.current = audioContext;
+      let audioContext = audioContextRef.current;
+      if (!audioContext || audioContext.state === "closed") {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContextRef.current = audioContext;
+      }
+      try {
+        await audioContext.audioWorklet.addModule(
+          "/audio/mic-capture-worklet.js"
+        );
+      } catch (workletErr) {
+        console.warn("[Interview] AudioWorklet addModule notice:", workletErr?.message || workletErr);
+      }
       audioContext.addEventListener("statechange", () => {
         diagnostic("audio_context_state", {
           state: audioContext.state,
@@ -1326,7 +1347,9 @@ export function useGeminiLiveInterview() {
           playbackQueueRef.current.cancelAll("audio_context_closed");
         }
       });
-      await audioContext.resume();
+      if (audioContext.state === "suspended") {
+        await audioContext.resume().catch(() => {});
+      }
 
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
@@ -1505,6 +1528,10 @@ export function useGeminiLiveInterview() {
           // Play audio chunks in order at 24 kHz.
           const context = audioContextRef.current;
 
+          const hasIncomingAudioChunks = (content.modelTurn?.parts || []).some(
+            (part) => Boolean(part.inlineData)
+          );
+
           if (inputTurn.interruptionConfirmed) {
             diagnostic("model_interruption_confirmed", {
               interruptionConfirmed: inputTurn.interruptionConfirmed,
@@ -1521,23 +1548,6 @@ export function useGeminiLiveInterview() {
               promptTurn: promptTurnRef.current,
             });
 
-            authorizedModelTurnRef.current = false;
-            captionsControllerRef.current.handleInterruption();
-            if (mountedRef.current) {
-              setCaptionText(captionsControllerRef.current.getCaptionText());
-            }
-            const pendingAnnouncement = pendingWaitAnnouncementRef.current;
-            if (pendingAnnouncement?.coordinator.announced) {
-              pendingAnnouncement.coordinator.markSpeechFinished("interrupted");
-              suppressWaitingSpeechRef.current = true;
-            }
-            setPreparingResponse(false);
-            diagnostic("playback_interrupted", {
-              scheduledSources: playbackSourcesRef.current.size,
-              queueMsRemaining: context
-                ? Math.max(0, (nextPlayTimeRef.current - context.currentTime) * 1000)
-                : null,
-            });
             for (const source of playbackSourcesRef.current) {
               try {
                 source.stop();
@@ -1548,7 +1558,31 @@ export function useGeminiLiveInterview() {
             playbackSourcesRef.current.clear();
             playbackQueueRef.current.cancelAll("interrupted");
             nextPlayTimeRef.current = context?.currentTime || 0;
-            setSpeakingState(false, "interrupted");
+
+            const isGenuinePlaybackInterruption =
+              !hasIncomingAudioChunks &&
+              (audioChunksReceivedForTurnRef.current > 0 || speakingStateRef.current);
+
+            if (isGenuinePlaybackInterruption) {
+              authorizedModelTurnRef.current = false;
+              captionsControllerRef.current.handleInterruption();
+              if (mountedRef.current) {
+                setCaptionText(captionsControllerRef.current.getCaptionText());
+              }
+              const pendingAnnouncement = pendingWaitAnnouncementRef.current;
+              if (pendingAnnouncement?.coordinator.announced) {
+                pendingAnnouncement.coordinator.markSpeechFinished("interrupted");
+                suppressWaitingSpeechRef.current = true;
+              }
+              setPreparingResponse(false);
+              diagnostic("playback_interrupted", {
+                scheduledSources: playbackSourcesRef.current.size,
+                queueMsRemaining: context
+                  ? Math.max(0, (nextPlayTimeRef.current - context.currentTime) * 1000)
+                  : null,
+              });
+              setSpeakingState(false, "interrupted");
+            }
           }
 
           const parts = content.modelTurn?.parts || [];
@@ -2431,6 +2465,9 @@ export function useGeminiLiveInterview() {
   }
 
   async function confirmName(isConfirmed) {
+    if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+      audioContextRef.current.resume().catch(() => {});
+    }
     if (
       isAiSpeaking ||
       isProcessingAnswer ||
