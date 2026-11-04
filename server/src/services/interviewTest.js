@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
+require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 
 const { classifyConsent } = require("./rules/consentRules");
 const { evaluateAge } = require("./rules/ageRules");
@@ -39,6 +41,9 @@ const {
   clearShortTermMemory,
   isSessionExpired,
   cleanupExpiredSessions,
+  getActiveInquiry,
+  pauseInterview,
+  resumeInterview,
   INTERVIEW_SESSION_TTL_MS,
 } = require("./interview");
 
@@ -2102,7 +2107,7 @@ test("Natural Travel Flow: handles multi-turn travel uncertainty, cross-question
   assert.equal(crossQRes.body.question.id, "A1_TRAVEL_CLARIFICATION");
   // Bot explains verified salon-at-home cluster reason and explores practical options
   assert.match(crossQRes.body.message, /salon-at-home/i);
-  assert.match(crossQRes.body.message, /3-4 km cluster/i);
+  assert.match(crossQRes.body.message, /local area|onboarding/i);
 
   // 3. Candidate changes mind and agrees: "Haan, main auto ya bus se manage kar lungi"
   const agreedRes = await submitAnswer({
@@ -2309,8 +2314,9 @@ test("2-Warning Policy: Location A1 gives 2 warnings and terminates on 3rd inval
   assert.equal(res1.body.clarificationRequired, true);
   assert.equal(res1.body.warningLevel, 1);
   assert.equal(res1.body.question.id, "A1");
-  assert.ok(res1.body.message.includes("Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?"));
-  assert.equal(res1.body.repeatedQuestionText, "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?");
+  assert.match(res1.body.message, /sheher ya area ka naam batayein/i);
+  assert.equal(res1.body.message.includes("Aap Bangalore mein kis area mein rehti hain"), false);
+  assert.match(res1.body.repeatedQuestionText, /sheher ya area ka naam batayein/i);
 
   // Attempt 2 on A1
   const res2 = await submitAnswer({
@@ -2322,8 +2328,9 @@ test("2-Warning Policy: Location A1 gives 2 warnings and terminates on 3rd inval
   assert.equal(res2.body.warningLevel, 2);
   assert.equal(res2.body.warning, true);
   assert.match(res2.body.message, /aakhri attempt/i);
-  assert.ok(res2.body.message.includes("Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?"));
-  assert.equal(res2.body.repeatedQuestionText, "Aap Bangalore mein kis area mein rehti hain? Roz aas-paas kin areas mein aana-jaana hota hai?");
+  assert.match(res2.body.message, /sheher aur local area ka naam spasht batayein/i);
+  assert.equal(res2.body.message.includes("Aap Bangalore mein kis area mein rehti hain"), false);
+  assert.match(res2.body.repeatedQuestionText, /sheher aur local area ka naam spasht batayein/i);
 
   // Attempt 3 on A1
   const res3 = await submitAnswer({
@@ -3020,7 +3027,7 @@ test("Counter Question Handling: candidate asking 'Where do I have to travel?' o
   assert.equal(crossQuestionRes.body.clarificationRequired, true);
   assert.equal(crossQuestionRes.body.counterQuestionHandled, true);
   assert.equal(crossQuestionRes.body.question.id, "A1");
-  assert.match(crossQuestionRes.body.message, /3-4 km cluster/i);
+  assert.match(crossQuestionRes.body.message, /local area|onboarding/i);
   assert.equal(crossQuestionRes.body.invalidAnswer, undefined);
 
   // Candidate confirms area and willingness to travel within the cluster
@@ -3221,7 +3228,7 @@ test("Regression 2, 10 & 11: Legitimate counter-questions do not increment warni
   assert.equal(travelQueryRes.status, 200);
   assert.equal(travelQueryRes.body.question.id, "A1", "Question must remain A1");
   assert.equal(travelQueryRes.body.counterQuestionHandled, true);
-  assert.match(travelQueryRes.body.message, /3-4 km/i);
+  assert.match(travelQueryRes.body.message, /local area|customer ke ghar|onboarding team/i);
   assert.equal(Object.keys(session.invalidAttempts || {}).length, 0);
 
   // Candidate answers A1 and travel clarification to advance to A2
@@ -3805,7 +3812,7 @@ test("Intent Regression 3 & 5: Salary, training, and travel questions do not tri
   }, { interpretAnswerImpl: fallbackInterpretation });
   assert.equal(resTravel.status, 200);
   assert.equal(resTravel.body.question.id, "A7");
-  assert.match(resTravel.body.message, /3-4 km/i);
+  assert.match(resTravel.body.message, /local area|customer ke ghar|onboarding team/i);
 
   const session = getSessionForPersistence(started.sessionId);
   assert.equal(Object.keys(session.invalidAttempts || {}).length, 0, "No warnings for job inquiries");
@@ -6436,7 +6443,7 @@ test("Phase 2: Case 3 - General question (A7): clarification preserves existing 
   assert.equal(session.invalidAttempts["A7"], 1, "Clarification on general question must preserve invalidAttempts count of 1");
 
   // Second invalid attempt: warningLevel progresses to 2
-  const off2 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Aaj ka mausam kaisa hai?" }, opts);
+  const off2 = await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Habba jabba cricket match" }, opts);
   assert.equal(off2.status, 200);
   assert.equal(off2.body.warningLevel, 2);
   assert.equal(off2.body.warning, true);
@@ -6662,5 +6669,2344 @@ test("Phase 2: Location validation - Two invalid location answers followed by a 
   assert.equal(valid.body.question.id, "A1_TRAVEL_CLARIFICATION");
   session = getSessionForPersistence(started.sessionId);
   assert.deepEqual(session.invalidAttempts, {});
+});
+
+// =========================================================================
+// PHASE 1: ADAPTIVE CONVERSATIONAL INTERVIEWER - BACKEND FOUNDATION TESTS
+// =========================================================================
+
+test("Phase 1 Inquiry 1: Candidate asks a relevant cross-question on a normal question", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Pati aur bachche hain" });
+
+  const sessionBefore = getSessionForPersistence(started.sessionId);
+  const qIndexBefore = sessionBefore.currentQuestionIndex;
+  const answersCountBefore = sessionBefore.answers.length;
+
+  // On normal question A4: Candidate asks about training
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A4",
+    answer: "Training kitne din ki hogi?",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      topic: "training",
+      responseText: "Ji haan, screening clear karne ke baad Urban Company training provide karti hai.",
+      counterQuestionAnswer: "Ji haan, screening clear karne ke baad Urban Company training provide karti hai.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.counterQuestionHandled, true);
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A4");
+
+  const inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry, "activeInquiry must be initialized");
+  assert.equal(inquiry.status, "in_progress");
+  assert.equal(inquiry.originalQuestionId, "A4");
+  assert.equal(inquiry.originalQuestionIndex, qIndexBefore);
+  assert.equal(inquiry.turnCount, 1);
+  assert.equal(inquiry.turns.length, 2);
+  assert.equal(inquiry.turns[0].role, "candidate");
+  assert.equal(inquiry.turns[0].text, "Training kitne din ki hogi?");
+  assert.equal(inquiry.turns[1].role, "interviewer");
+
+  const sessionAfter = getSessionForPersistence(started.sessionId);
+  assert.equal(sessionAfter.currentQuestionIndex, qIndexBefore, "Question index must not advance");
+  assert.equal(sessionAfter.answers.length, answersCountBefore, "No answer record should be submitted");
+});
+
+test("Phase 1 Inquiry 2: Candidate asks why age is required on A2", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // On A2, candidate asks why age is required
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Aap meri umar kyun pooch rahe hain?",
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.counterQuestionHandled, true);
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A2");
+  assert.match(res.body.message, /18 saal/i);
+
+  const inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry);
+  assert.equal(inquiry.originalQuestionId, "A2");
+  assert.equal(inquiry.rootTopic, "age_policy");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.deepEqual(session.invalidAttempts, {}, "Must not log invalid attempt for asking why age is needed");
+});
+
+test("Phase 1 Inquiry 3: Candidate asks a question on special question A1", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // On A1, candidate asks about work locations
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kahan kahan kaam milega aur kitni door jana hoga?",
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.counterQuestionHandled, true);
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A1");
+  assert.match(res.body.message, /local area|customer ke ghar|onboarding team/i);
+
+  const inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry);
+  assert.equal(inquiry.originalQuestionId, "A1");
+  assert.equal(inquiry.rootTopic, "travel");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.deepEqual(session.invalidAttempts, {});
+});
+
+test("Phase 1 Inquiry 4: Candidate expresses a travel concern on A9", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Geeta" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Whitefield, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahine mein" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Ghar mein main aur pati hain, koi bachche nahi hain" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Parlor mein kaam karti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Waxing aur facial" });
+
+  // On A9, candidate expresses hesitation regarding late travel
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Shaam ko late aana mushkil hoga, kya door jana padega?",
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.counterQuestionHandled, true);
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A9");
+  assert.match(res.body.message, /local area|customer ke ghar|onboarding team/i);
+
+  const inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry);
+  assert.equal(inquiry.originalQuestionId, "A9");
+  assert.equal(inquiry.rootTopic, "travel_constraint");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.answers.some((a) => a.questionId === "A9"), false);
+});
+
+test("Phase 1 Inquiry 5: Candidate asks multiple relevant follow-up questions during active inquiry (adaptive conversational depth)", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // Turn 1 on A2: Candidate asks why age is required
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Aap meri umar kyun pooch rahe hain?",
+  });
+
+  let inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry);
+  assert.equal(inquiry.turnCount, 1);
+
+  // Turn 2 on A2: Candidate asks second follow-up about documents
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Verification ke liye voter ID chalega kya?",
+  });
+
+  assert.equal(res2.status, 200);
+  assert.equal(res2.body.counterQuestionHandled, true);
+  assert.equal(res2.body.question.id, "A2");
+  assert.match(res2.body.message, /voter id|government photo id|valid government/i);
+
+  // Adaptive depth: Inquiry remains in progress (NOT prematurely closed at 2 turns)
+  inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry, "Inquiry must remain active for further follow-up questions");
+  assert.equal(inquiry.status, "in_progress");
+  assert.equal(inquiry.turnCount, 2);
+
+  // Turn 3 on A2: Candidate asks third follow-up about training center
+  const res3 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Training center kahan hoga?",
+  });
+
+  assert.equal(res3.status, 200);
+  assert.equal(res3.body.counterQuestionHandled, true);
+  assert.equal(res3.body.question.id, "A2");
+  assert.match(res3.body.message, /training center/i);
+
+  inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry);
+  assert.equal(inquiry.turnCount, 3);
+  assert.equal(inquiry.turns.length, 6, "Must retain 3 candidate turns and 3 interviewer turns");
+
+  // Turn 4 on A2: Candidate signals resolution ("Samajh aa gaya")
+  const res4 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Theek hai, samajh aa gaya",
+  });
+
+  assert.equal(res4.status, 200);
+  assert.match(res4.body.message, /wapas aate hain/i);
+
+  // Inquiry is now safely closed
+  inquiry = getActiveInquiry(started.sessionId);
+  assert.equal(inquiry, null, "Inquiry clears after candidate signals resolution");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.currentQuestionIndex, 3, "Current index remains on A2");
+
+  // Turn 5 on A2: Candidate answers with actual age
+  const res5 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "26 saal",
+  });
+  assert.equal(res5.status, 200);
+  const sessionAfter = getSessionForPersistence(started.sessionId);
+  assert.equal(sessionAfter.eligibilityOutcome, "pass");
+});
+
+test("Phase 1 Inquiry 6: Original question ID and index remain unchanged during inquiry", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  const sessionBefore = getSessionForPersistence(started.sessionId);
+  const indexBefore = sessionBefore.currentQuestionIndex;
+
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Travel kahan karna hoga?",
+  });
+
+  assert.equal(res.body.question.id, "A1");
+  assert.equal(res.body.questionNumber, indexBefore + 1);
+
+  const sessionAfter = getSessionForPersistence(started.sessionId);
+  assert.equal(sessionAfter.currentQuestionIndex, indexBefore);
+});
+
+test("Phase 1 Inquiry 7: Assessment answer records and scoring remain unchanged during inquiry", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  const sessionBefore = getSessionForPersistence(started.sessionId);
+  const answersLengthBefore = sessionBefore.answers.length;
+  const initialAnswers = JSON.stringify(sessionBefore.answers);
+
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Nearby ka matlab kya hai?",
+  });
+
+  const sessionDuring = getSessionForPersistence(started.sessionId);
+  assert.equal(sessionDuring.answers.length, answersLengthBefore);
+  assert.equal(JSON.stringify(sessionDuring.answers), initialAnswers);
+});
+
+test("Phase 1 Inquiry 8: Invalid attempt counter remains unchanged during inquiry", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // Make 1 invalid attempt on A2
+  const invRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Main market mein hoon",
+  });
+  assert.equal(invRes.body.warningLevel, 1);
+  let session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.invalidAttempts["A2"], 1);
+
+  // Now ask a question on A2
+  const inqRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Age limit kya hai?",
+  });
+  assert.equal(inqRes.body.counterQuestionHandled, true);
+
+  // Assert invalid attempt counter is still EXACTLY 1 (neither incremented to 2 nor cleared to 0)
+  session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.invalidAttempts["A2"], 1);
+});
+
+test("Phase 1 Inquiry 9: A genuine assessment answer closes inquiry and is validated exactly once", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // Initiate inquiry on A2
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Aap meri umar kyun pooch rahe hain?",
+  });
+  assert.ok(getActiveInquiry(started.sessionId));
+
+  // Now candidate provides genuine age answer
+  const answerRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Meri umar 24 saal hai",
+  });
+
+  assert.equal(answerRes.status, 200);
+  assert.equal(getActiveInquiry(started.sessionId), null, "Inquiry must be closed");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.eligibilityOutcome, "pass");
+  const a2Answers = session.answers.filter((a) => a.questionId === "A2");
+  assert.equal(a2Answers.length, 1, "Must be recorded and validated exactly once");
+  assert.match(a2Answers[0].answer, /24 saal/i);
+});
+
+test("Phase 1 Inquiry 10: A short 'haan' or 'okay' does not accidentally submit an assessment answer", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // Initiate inquiry on A2
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Umar kyun pooch rahe hain?",
+  });
+
+  // Candidate simply says "Theek hai" (acknowledging the explanation)
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Theek hai",
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.question.id, "A2");
+  assert.match(res.body.message, /wapas aate hain/i);
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.answers.some((a) => a.questionId === "A2"), false, "'Theek hai' must not be recorded as age");
+  assert.deepEqual(session.invalidAttempts, {}, "Must not trigger an invalid attempt");
+});
+
+test("Phase 1 Inquiry 11: Existing retry/termination behaviour still works", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // Invalid attempt 1 on A2
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "Movie dekh rahi hoon" });
+  let session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.invalidAttempts["A2"], 1);
+
+  // Invalid attempt 2 on A2
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "Pizza pasand hai" });
+  session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.invalidAttempts["A2"], 2);
+
+  // Candidate asks question
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "Age limit kya hai?" });
+  session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.invalidAttempts["A2"], 2, "Attempts count preserved at 2");
+
+  // Third invalid attempt triggers termination policy
+  const termRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Mujhe nahi batana kuch bhi",
+  });
+
+  assert.equal(termRes.status, 200);
+  assert.equal(termRes.body.completed, true);
+  assert.equal(termRes.body.terminated, true);
+  assert.equal(termRes.body.sessionStatus, "terminated");
+  session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.status, "terminated");
+});
+
+test("Phase 1 Inquiry 12: Legacy session without activeInquiry works normally", async () => {
+  const started = startInterview();
+  const session = getSessionForPersistence(started.sessionId);
+  delete session.activeInquiry;
+
+  restoreSessionSnapshot(started.sessionId, session);
+  const restored = getSessionForPersistence(started.sessionId);
+  assert.equal(restored.activeInquiry, null, "activeInquiry normalized to null");
+
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Kavita",
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.question.id, "A2_NAME_CONFIRM");
+});
+
+test("Phase 1 Inquiry 13: Paused/resumed session preserves active inquiry where supported", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kahan jana hoga kaam ke liye?",
+  });
+
+  let inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq, "Active inquiry initiated");
+
+  // Pause interview
+  const pauseRes = pauseInterview(started.sessionId);
+  assert.equal(pauseRes.status, 200);
+  inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq, "Active inquiry preserved during pause");
+
+  // Resume interview
+  const resumeRes = resumeInterview(started.sessionId);
+  assert.equal(resumeRes.status, 200);
+  inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq, "Active inquiry preserved after resume");
+  assert.equal(inq.originalQuestionId, "A1");
+});
+
+test("Phase 1 Inquiry 14: Completed/rejected/cancelled sessions clear temporary inquiry state", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Initiate inquiry on A1
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  });
+  assert.ok(getActiveInquiry(started.sessionId));
+
+  // End interview early
+  const endRes = endInterview(started.sessionId);
+  assert.equal(endRes.status, 200);
+  assert.equal(getActiveInquiry(started.sessionId), null, "Inquiry state cleared upon session termination");
+});
+
+test("Phase 1 Inquiry 15: Repetitive inquiry detection breaks infinite loops", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Turn 1 on A1: Candidate asks about work location
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  });
+  let inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq, "Active inquiry initiated");
+
+  // Turn 2 on A1: Candidate asks the EXACT same question again
+  const repRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  });
+
+  assert.equal(repRes.status, 200);
+  assert.match(repRes.body.message, /pehle bataya|earlier/i, "Repetition detection provides recap");
+  assert.match(repRes.body.message, /wapas aate hain/i, "Pivots back to pending question");
+  assert.equal(getActiveInquiry(started.sessionId), null, "Loop broken and inquiry resolved");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.currentQuestionIndex, 2, "Current index remains on A1");
+  assert.deepEqual(session.invalidAttempts, {});
+});
+
+test("Phase 1 Inquiry 16: Configurable safety boundary prevents exceeding MAX_ADAPTIVE_INQUIRY_TURNS", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // 5 distinct counter questions on A2
+  // Turn 1: Why age is needed
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Aap meri umar kyun pooch rahe hain?",
+  });
+  // Turn 2: Verification documents
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Verification ke liye voter ID chalega kya?",
+  });
+  // Turn 3: Training center
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Training center kahan hoga?",
+  });
+  // Turn 4: Nearby travel query
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Nearby area kitni door hota hai?",
+  });
+
+  let inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq);
+  assert.equal(inq.turnCount, 4);
+
+  // Turn 5: Safety policy (boundary trigger = 5 turns)
+  const res5 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Urban Company safety policy kya hai?",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      topic: "safety",
+      responseText: "Urban Company 24/7 partner safety support aur SOS feature provide karti hai.",
+      counterQuestionAnswer: "Urban Company 24/7 partner safety support aur SOS feature provide karti hai.",
+      answerStatus: "counter_question",
+    }),
+  });
+
+  assert.equal(res5.status, 200);
+  assert.match(res5.body.message, /vistaar se baat kar li|covered this in detail|wapas aate hain/i);
+  assert.equal(getActiveInquiry(started.sessionId), null, "Safety boundary closes inquiry");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.currentQuestionIndex, 3, "Still on A2");
+});
+
+test("Phase 1 Inquiry 17: Candidate answering an AI conversational follow-up/probe", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Geeta" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Whitefield, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahine mein" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Ghar mein main aur pati hain, koi bachche nahi hain" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Parlor mein kaam karti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Waxing aur facial" });
+
+  // Turn 1 on A9: Candidate expresses hesitation
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Shaam ko late aana mushkil hoga, kya door jana padega?",
+  });
+  assert.match(res1.body.message, /chinta kam hoti hai|travel/i);
+
+  let inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq, "Active inquiry started");
+
+  // Turn 2 on A9: Candidate answers conversational probe ("Haan 3-4 km toh main manage kar lungi")
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Haan 3-4 km toh main manage kar lungi",
+  });
+
+  assert.equal(res2.status, 200);
+  assert.match(res2.body.message, /samajh gayi|understood|wapas aate hain/i);
+
+  // Inquiry must be closed cleanly
+  assert.equal(getActiveInquiry(started.sessionId), null);
+
+  const session = getSessionForPersistence(started.sessionId);
+  // Must NOT be submitted as an answer to A9
+  assert.equal(session.answers.some((a) => a.questionId === "A9"), false);
+  // Must NOT be treated as an invalid attempt
+  assert.deepEqual(session.invalidAttempts, {});
+  // Pending question A9 remains pending
+  assert.equal(res2.body.question.id, "A9");
+});
+
+test("Phase 1 Inquiry 18: Candidate explicitly asks to continue interview ('aage badhiye')", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Initiate inquiry on A1
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  });
+  assert.ok(getActiveInquiry(started.sessionId));
+
+  // Candidate explicitly asks to continue
+  const contRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Ji theek hai, aage badhiye agla sawal poochiye",
+  });
+
+  assert.equal(contRes.status, 200);
+  assert.match(contRes.body.message, /bilkul|sure|wapas aate hain/i);
+  assert.equal(getActiveInquiry(started.sessionId), null, "Inquiry closed upon explicit continue request");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.deepEqual(session.invalidAttempts, {}, "No invalid attempts logged");
+  assert.equal(contRes.body.question.id, "A1");
+});
+
+test("Phase 1 Inquiry 19: Candidate acknowledges explanation ('theek hai') on non-binary question", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Initiate inquiry on A1
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  });
+
+  // Candidate says "Okay theek hai"
+  const ackRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Theek hai",
+  });
+
+  assert.equal(ackRes.status, 200);
+  assert.match(ackRes.body.message, /wapas aate hain/i);
+  assert.equal(getActiveInquiry(started.sessionId), null);
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.deepEqual(session.invalidAttempts, {}, "Acknowledgement must not increment invalidAttempts");
+  assert.equal(ackRes.body.question.id, "A1");
+});
+
+test("Phase 1 Inquiry 20: Candidate answers conversational probe and asks another cross-question in the same turn", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Geeta" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Whitefield, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahine mein" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Ghar mein main aur pati hain, koi bachche nahi hain" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Parlor mein kaam karti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Waxing aur facial" });
+
+  // Turn 1 on A9: Candidate expresses hesitation
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Shaam ko late aana mushkil hoga, kya door jana padega?",
+  });
+
+  // Turn 2 on A9: Candidate answers probe AND asks another cross-question
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Haan 3-4 km manage kar lungi, par training center kahan hai?",
+  });
+
+  assert.equal(res2.status, 200);
+  assert.match(res2.body.message, /training center|training/i);
+
+  const inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq, "Active inquiry remains in progress because candidate asked a new question");
+  assert.equal(inq.turnCount, 2);
+});
+
+test("Phase 1 Inquiry 21: A2 composite probe answer + valid age answer", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // Turn 1 on A2: Candidate asks travel hesitation inquiry
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Shaam ko late aana mushkil hoga, kya door jana padega?",
+  });
+  assert.match(res1.body.message, /chinta kam hoti hai|travel/i);
+  let inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq, "Active inquiry started");
+
+  // Turn 2 on A2: Composite answer (answers probe + states age)
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Haan, travel manage kar lungi, aur meri age 26 saal hai.",
+  });
+
+  assert.equal(res2.status, 200);
+  assert.equal(res2.body.question.id, "A3", "Valid composite answer advances to question A3");
+
+  const session = getSessionForPersistence(started.sessionId);
+  const a2Answers = session.answers.filter((a) => a.questionId === "A2");
+  assert.equal(a2Answers.length, 1, "A2 answer stored exactly once");
+  assert.equal(a2Answers[0].answer, "meri age 26 saal hai.");
+  assert.equal(a2Answers[0].age, 26);
+  assert.equal(session.eligibilityOutcome, "pass");
+  assert.deepEqual(session.invalidAttempts, {});
+  assert.equal(getActiveInquiry(started.sessionId), null, "Inquiry closed after composite assessment answer");
+});
+
+test("Phase 1 Inquiry 22: A1 composite probe answer + valid location", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Turn 1 on A1: Candidate expresses travel hesitation (triggers conversational probe)
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Shaam ko late aana mushkil hoga, kya door jana padega?",
+  });
+  assert.match(res1.body.message, /chinta kam hoti hai|travel/i);
+  assert.ok(getActiveInquiry(started.sessionId));
+
+  // Turn 2 on A1: Composite answer (probe answer + valid location)
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Haan travel manage kar lungi, aur main HSR Layout mein rehti hoon.",
+  });
+
+  assert.equal(res2.status, 200);
+  const session = getSessionForPersistence(started.sessionId);
+  const a1Answers = session.answers.filter((a) => a.questionId === "A1");
+  assert.equal(a1Answers.length, 1, "A1 location stored exactly once");
+  assert.equal(a1Answers[0].answer, "main HSR Layout mein rehti hoon.", "Conversational probe part excluded from saved answer");
+  assert.match(a1Answers[0].location, /HSR Layout/i);
+  assert.equal(getActiveInquiry(started.sessionId), null);
+});
+
+test("Phase 1 Inquiry 23: Composite utterance where assessment answer is invalid on A2", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+
+  // Turn 1 on A2: Candidate asks inquiry
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Aap meri umar kyun pooch rahe hain?",
+  });
+
+  // Turn 2 on A2: Composite answer with invalid age part
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Haan travel manage kar lungi, aur meri age pizza pasand hai.",
+  });
+
+  assert.equal(res2.status, 200);
+  assert.equal(res2.body.question.id, "A2", "Session stays on A2 upon invalid assessment answer");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.invalidAttempts["A2"], 1, "Invalid assessment part registers warningLevel 1");
+  assert.equal(session.answers.filter((a) => a.questionId === "A2").length, 0, "Invalid answer not saved to answers");
+});
+
+test("Phase 1 Inquiry 24: Continued hesitation after explanation on A9 remains in inquiry", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Geeta" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Whitefield, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahine mein" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Ghar mein main aur pati hain, koi bachche nahi hain" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Parlor mein kaam karti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Waxing aur facial" });
+
+  // Turn 1 on A9: Candidate expresses initial hesitation
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Shaam ko late aana mushkil hoga, kya door jana padega?",
+  });
+
+  let inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq);
+  assert.equal(inq.turnCount, 1);
+
+  // Turn 2 on A9: Candidate expresses continued hesitation
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Par mujhe abhi bhi dar lag raha hai, agar night mein late ho gaya toh?",
+  });
+
+  assert.equal(res2.status, 200);
+  inq = getActiveInquiry(started.sessionId);
+  assert.ok(inq, "Active inquiry preserved on continued hesitation");
+  assert.equal(inq.turnCount, 2, "Turn count incremented adaptively");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.answers.filter((a) => a.questionId === "A9").length, 0, "Concern not falsely marked resolved");
+});
+
+test("Phase 1 Inquiry 25: Explicit concern resolution vs generic acknowledgement distinct messaging", async () => {
+  // 1. Explicit resolution
+  const s1 = startInterview();
+  await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A1", answer: "Kaam kahan hoga?" });
+
+  const resExplicit = await submitAnswer({
+    sessionId: s1.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Theek hai, samajh aa gaya",
+  });
+  assert.match(resExplicit.body.message, /bahut badhiya/i, "Explicit resolution gives affirmative acknowledgment");
+
+  // 2. Generic acknowledgement
+  const s2 = startInterview();
+  await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A1", answer: "Kaam kahan hoga?" });
+
+  const resGeneric = await submitAnswer({
+    sessionId: s2.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Theek hai",
+  });
+  assert.match(resGeneric.body.message, /agar koi aur sawal nahi/i, "Generic acknowledgement checks if further questions exist");
+});
+
+test("Phase 1 Inquiry 26: Session cancellation and terminal status clear activeInquiry", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Initiate inquiry
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  });
+  assert.ok(getActiveInquiry(started.sessionId), "Inquiry active before cancellation");
+
+  // Cancel / end interview
+  const endRes = endInterview(started.sessionId);
+  assert.equal(endRes.status, 200);
+  assert.equal(getActiveInquiry(started.sessionId), null, "Inquiry cleared upon endInterview");
+
+  // Restore snapshot with cancelled status
+  const session = getSessionForPersistence(started.sessionId);
+  session.status = "cancelled";
+  session.activeInquiry = { status: "in_progress", originalQuestionId: "A1" };
+  restoreSessionSnapshot(started.sessionId, session);
+
+  assert.equal(getActiveInquiry(started.sessionId), null, "Restoring cancelled status clears activeInquiry");
+});
+
+test("Phase 2.1 Inquiry 1: Successful contextual response generated by Gemini", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  const sessionBefore = getSessionForPersistence(started.sessionId);
+  const qIndexBefore = sessionBefore.currentQuestionIndex;
+  const answersBefore = sessionBefore.answers.length;
+
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Mujhe travel kitna karna padega?",
+  }, {
+    generateInquiryResponseImpl: async ({ candidateUtterance, currentQuestion }) => {
+      assert.equal(candidateUtterance, "Mujhe travel kitna karna padega?");
+      assert.equal(currentQuestion.id, "A1");
+      return {
+        topic: "travel",
+        replyText: "Urban Company mein bookings aapke ghar ke 3-4 km cluster mein hi milti hain, door nahi jaana hota.",
+        probeQuestion: "Kya yeh aapke liye theek rahega?",
+        suggestedNextAction: "CONTINUE_INQUIRY",
+      };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.counterQuestionHandled, true);
+  assert.equal(res.body.clarificationRequired, true);
+  assert.match(res.body.message, /3-4 km cluster mein hi milti hain/);
+  assert.match(res.body.message, /Kya yeh aapke liye theek rahega\?/);
+  assert.ok(res.body.question, "Response must include pending assessment question");
+  assert.equal(res.body.question.id, "A1");
+  assert.ok(res.body.question.text, "Pending question must have valid text");
+
+  const sessionAfter = getSessionForPersistence(started.sessionId);
+  assert.equal(sessionAfter.currentQuestionIndex, qIndexBefore, "Question index must not advance");
+  assert.equal(sessionAfter.answers.length, answersBefore, "No assessment answer should be stored");
+  assert.deepEqual(sessionAfter.invalidAttempts || {}, {}, "invalidAttempts must remain unchanged");
+
+  const inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry);
+  assert.equal(inquiry.turnCount, 1);
+  assert.equal(inquiry.turns.length, 2);
+  assert.equal(inquiry.turns[0].role, "candidate");
+  assert.equal(inquiry.turns[1].role, "interviewer");
+  assert.match(inquiry.turns[1].text, /3-4 km cluster/);
+});
+
+test("Phase 2.1 Inquiry 2: Follow-up in active inquiry receives turns history and updates turns", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Turn 1
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "travel",
+      replyText: "Aapke paas ke 3-4 km cluster mein.",
+      probeQuestion: "",
+      suggestedNextAction: "CONTINUE_INQUIRY",
+    }),
+  });
+
+  // Turn 2 follow-up
+  let receivedTurns = null;
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kya mujhe bus se travel karna padega?",
+  }, {
+    generateInquiryResponseImpl: async ({ activeInquiryTurns }) => {
+      receivedTurns = activeInquiryTurns;
+      return {
+        topic: "travel",
+        replyText: "Aap bus, auto, ya scooty jo bhi suvidhajanak ho use kar sakti hain.",
+        probeQuestion: "",
+        suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+      };
+    },
+  });
+
+  assert.equal(res2.status, 200);
+  assert.equal(res2.body.counterQuestionHandled, true);
+  assert.match(res2.body.message, /bus, auto, ya scooty/);
+  assert.ok(receivedTurns && receivedTurns.length >= 2, "Previous turns must be passed into Gemini helper");
+  assert.equal(receivedTurns[0].text, "Kaam kahan hoga?");
+
+  const inquiry = getActiveInquiry(started.sessionId);
+  assert.ok(inquiry);
+  assert.equal(inquiry.turnCount, 2);
+  assert.equal(inquiry.turns.length, 4);
+});
+
+test("Phase 2.1 Inquiry 3: Unverified policy question receives polite onboarding deferral", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kitni salary milegi per month?",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "earnings",
+      replyText: "Main screening assistant hoon, earnings aur payout slabs ki poori jaankari onboarding team share karegi.",
+      probeQuestion: "",
+      suggestedNextAction: "DEFER_TO_ONBOARDING",
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.match(res.body.message, /onboarding team share karegi/);
+  assert.ok(res.body.message.includes(res.body.question.text));
+});
+
+test("Phase 2.1 Inquiry 4: Fallbacks for Gemini errors (malformed JSON, empty, 429, 503, timeout)", async () => {
+  const scenarios = [
+    {
+      name: "malformed JSON",
+      mock: async () => {
+        const err = new Error("Invalid JSON");
+        err.code = "AI_MALFORMED_JSON";
+        throw err;
+      },
+    },
+    {
+      name: "empty response",
+      mock: async () => {
+        const err = new Error("Empty response");
+        err.code = "AI_INVALID_STRUCTURE";
+        throw err;
+      },
+    },
+    {
+      name: "429 rate limit",
+      mock: async () => {
+        const err = new Error("Quota exceeded");
+        err.code = "AI_RATE_LIMIT";
+        throw err;
+      },
+    },
+    {
+      name: "503 unavailable",
+      mock: async () => {
+        const err = new Error("Model unavailable");
+        err.code = "AI_INTERPRETATION_UNAVAILABLE";
+        throw err;
+      },
+    },
+    {
+      name: "timeout",
+      mock: async () => {
+        const err = new Error("Timed out");
+        err.code = "AI_TIMEOUT";
+        throw err;
+      },
+    },
+  ];
+
+  for (const { name, mock } of scenarios) {
+    const started = startInterview();
+    await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+    await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+    await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+    const qBefore = getSessionForPersistence(started.sessionId).currentQuestionIndex;
+
+    const res = await submitAnswer({
+      sessionId: started.sessionId,
+      expectedQuestionId: "A1",
+      answer: "Kaam kahan hoga?",
+    }, {
+      generateInquiryResponseImpl: mock,
+    });
+
+    assert.equal(res.status, 200, `Scenario ${name} must succeed via fallback`);
+    assert.equal(res.body.counterQuestionHandled, true);
+    // Fallback deterministic response from detectCounterQuestion mentions local area/onboarding team
+    assert.match(res.body.message, /local area|customer ke ghar|onboarding team/i);
+
+    const sessionAfter = getSessionForPersistence(started.sessionId);
+    assert.equal(sessionAfter.currentQuestionIndex, qBefore, "Question index must not advance on fallback");
+    assert.deepEqual(sessionAfter.invalidAttempts || {}, {}, "invalidAttempts must remain unchanged on fallback");
+  }
+});
+
+test("Phase 2.1 Inquiry 5: Existing activeInquiry repetition and 5-turn boundary checks remain authoritative", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  const mockGemini = async () => ({
+    topic: "travel",
+    replyText: "Urban Company mein 3-4 km cluster mein kaam hota hai.",
+    probeQuestion: "",
+    suggestedNextAction: "CONTINUE_INQUIRY",
+  });
+
+  // Turn 1
+  await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  }, { generateInquiryResponseImpl: mockGemini });
+
+  // Repeating the same inquiry immediately triggers repetition loop closure regardless of Gemini
+  const repeatRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  }, { generateInquiryResponseImpl: mockGemini });
+
+  assert.equal(repeatRes.status, 200);
+  assert.match(repeatRes.body.message, /jaise maine pehle bataya/i);
+  assert.equal(getActiveInquiry(started.sessionId), null, "Repetitive inquiry closes inquiry");
+});
+
+test("Phase 2.1.1 Inquiry: Invented earnings or kit claims trigger safe onboarding deferral", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Candidate asks about earnings and Gemini attempts to invent rupee numbers
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kitna paisa milega?",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "earnings",
+      replyText: "Aapko har mahine ₹30,000 milenge.",
+      probeQuestion: "",
+      suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.counterQuestionHandled, true);
+  // Must NOT include the invented amount
+  assert.doesNotMatch(res.body.message, /30,000/);
+  // Must route to onboarding deferral
+  assert.match(res.body.message, /onboarding team share karegi/i);
+  assert.ok(res.body.message.includes(res.body.question.text));
+});
+
+test("Phase 2.1.1 Inquiry: Normal travel and training explanations remain natural and unblocked", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Normal travel explanation
+  const travelRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kaam kahan hoga?",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "travel",
+      replyText: "Urban Company mein bookings aapke ghar ke 3-4 km cluster mein hi hoti hain, door nahi jaana hota.",
+      probeQuestion: "Kya yeh aapke liye theek rahega?",
+      suggestedNextAction: "CONTINUE_INQUIRY",
+    }),
+  });
+
+  assert.equal(travelRes.status, 200);
+  assert.match(travelRes.body.message, /3-4 km cluster mein hi hoti hain/);
+  assert.match(travelRes.body.message, /Kya yeh aapke liye theek rahega\?/);
+
+  // Normal training explanation follow-up
+  const trainRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Kya mujhe training di jayegi?",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "training",
+      replyText: "Screening clear karne ke baad Urban Company sabhi partners ko proper service aur hygiene training deti hai.",
+      probeQuestion: "",
+      suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+    }),
+  });
+
+  assert.equal(trainRes.status, 200);
+  assert.match(trainRes.body.message, /proper service aur hygiene training deti hai/);
+});
+
+test("Stage 1 Validation: classifyLocation rejects off-topic, random, and greeting responses", () => {
+  const invalidInputs = [
+    "My favourite colour is blue.",
+    "Hello hello.",
+    "I like eating pizza.",
+    "Random unrelated words.",
+    "Who won the 2011 cricket world cup?",
+    "habba jabba blabla.",
+    "Namaste namaste",
+    "How are you today?",
+    "main ek achha insaan hoon",
+  ];
+
+  for (const input of invalidInputs) {
+    const res = classifyLocation(input);
+    assert.equal(res.outcome, "clarification", `Expected clarification for input: "${input}"`);
+    assert.equal(res.area, null, `Expected null area for input: "${input}"`);
+  }
+});
+
+test("Stage 1 Validation: classifyLocation correctly accepts valid location inputs", () => {
+  const validInputs = [
+    { input: "Main Bangalore mein Whitefield mein rehti hoon.", expectedWillingness: "unknown" },
+    { input: "I live in Whitefield, Bangalore.", expectedWillingness: "unknown" },
+    { input: "Main Indiranagar mein rehti hoon.", expectedWillingness: "unknown" },
+    { input: "Bellandur; haan, door bhi jaungi", expectedWillingness: "yes" },
+    { input: "Indirapuram", expectedWillingness: "unknown" },
+    { input: "Noida sector 62 mein rehti hoon", expectedWillingness: "unknown" },
+  ];
+
+  for (const { input, expectedWillingness } of validInputs) {
+    const res = classifyLocation(input);
+    assert.equal(res.outcome, "manual_review", `Expected manual_review for input: "${input}"`);
+    assert.ok(res.area, `Expected area to be populated for input: "${input}"`);
+    if (expectedWillingness) {
+      assert.equal(res.travelWillingness, expectedWillingness, `Expected travelWillingness "${expectedWillingness}" for input: "${input}"`);
+    }
+  }
+});
+
+test("Stage 1 Assessment Integrity: Invalid A1 inputs do NOT advance question or corrupt state", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  const invalidAnswer = "My favourite colour is blue.";
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: invalidAnswer,
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.clarificationRequired, true);
+  assert.equal(res.body.question.id, "A1");
+  assert.notEqual(res.body.question.id, "A1_TRAVEL_CLARIFICATION");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.answers.some((a) => a.questionId === "A1"), false, "A1 answer must not be saved on invalid attempt");
+  assert.equal(session.invalidAttempts["A1"], 1, "invalidAttempts should be 1");
+  assert.equal(session.currentQuestionIndex, 2, "Question index must remain at A1");
+});
+
+test("Stage 1 Assessment Integrity: 3 consecutive invalid attempts on A1 terminate the session", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Attempt 1
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "My favourite colour is blue.",
+  });
+  assert.equal(res1.body.clarificationRequired, true);
+  assert.equal(res1.body.question.id, "A1");
+
+  // Attempt 2
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Hello hello.",
+  });
+  assert.equal(res2.body.clarificationRequired, true);
+  assert.equal(res2.body.question.id, "A1");
+  assert.equal(res2.body.warning, true);
+
+  // Attempt 3: Termination
+  const res3 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "I like eating pizza.",
+  });
+  assert.equal(res3.body.completed, true);
+  assert.equal(res3.body.sessionStatus, "terminated");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.status, "terminated");
+  assert.equal(session.answers.some((a) => a.questionId === "A1"), false, "A1 answer must not be saved on terminated session");
+});
+
+test("Stage 1 Assessment Integrity: Valid A1 input with willingness 'Bellandur; haan, door bhi jaungi' advances cleanly", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  const res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Bellandur; haan, door bhi jaungi",
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.question.id, "A1_MOVE_TIMELINE");
+
+  const session = getSessionForPersistence(started.sessionId);
+  const a1Record = session.answers.find((a) => a.questionId === "A1");
+  assert.ok(a1Record, "A1 answer must be saved");
+  assert.equal(a1Record.travelWillingness, "yes");
+  assert.equal(session.invalidAttempts["A1"], undefined, "invalidAttempts should be reset");
+
+  const moveRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1_MOVE_TIMELINE",
+    answer: "1 hafte mein shift ho sakti hoon",
+  });
+  assert.equal(moveRes.status, 200);
+  assert.equal(moveRes.body.question.id, "A2");
+});
+
+test("Stage 1 Assessment Integrity: Irrelevant answers to contextual follow-up probes do not advance question", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Kavita" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1", answer: "Whitefield, travel kar sakti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 hafte mein" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2", answer: "25" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A3", answer: "Mera beta aur pati" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A4", answer: "Haan pura support hai" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A5", answer: "Haan shaadi ho chuki hai" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A6", answer: "10th pass" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A7", answer: "Main theek se padh leti hoon" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A8", answer: "Haan smartphone hai" });
+
+  // A9 triggers contextual probe on vehicle concern
+  const a9Res = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9",
+    answer: "Mere paas scooty nahi hai",
+  });
+  assert.equal(a9Res.body.followUpRequired, true);
+  assert.equal(a9Res.body.question.id, "A9_FOLLOW_UP");
+
+  // Follow-up answered with irrelevant response
+  const followUpRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A9_FOLLOW_UP",
+    answer: "My favourite colour is blue.",
+  });
+
+  assert.equal(followUpRes.status, 200);
+  assert.equal(followUpRes.body.clarificationRequired, true);
+  assert.equal(followUpRes.body.question.id, "A9_FOLLOW_UP");
+
+  const session = getSessionForPersistence(started.sessionId);
+  assert.equal(session.answers.some((a) => a.questionId === "A9_FOLLOW_UP"), false, "Irrelevant probe answer must not be saved");
+  assert.equal(session.invalidAttempts["A9_FOLLOW_UP"], 1);
+});
+
+test("A1 Sequencing: Invalid A1 answer generates strictly ONE clarification response without concatenating question.text", async () => {
+  const started = startInterview();
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+
+  // Attempt 1: Irrelevant answer
+  const res1 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "My favourite colour is blue.",
+  });
+
+  assert.equal(res1.status, 200);
+  assert.equal(res1.body.clarificationRequired, true);
+  assert.equal(res1.body.warningLevel, 1);
+  assert.equal(res1.body.warning, false);
+  assert.equal(res1.body.question.id, "A1");
+  // Strictly ONE single clarification response
+  assert.equal(
+    res1.body.message,
+    "Maaf kijiye, screening ke liye humein aapka ilaka jaanna zaroori hai. Kripya apne sheher ya area ka naam batayein.",
+  );
+  // Must NOT concatenate question.text ("Aap Bangalore mein kis area mein rehti hain...")
+  assert.equal(res1.body.message.includes("Aap Bangalore mein kis area mein rehti hain"), false);
+  assert.equal(res1.body.repeatedQuestionText.includes("Aap Bangalore mein kis area mein rehti hain"), false);
+
+  // Attempt 2: Another irrelevant answer
+  const res2 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Hello hello.",
+  });
+
+  assert.equal(res2.status, 200);
+  assert.equal(res2.body.clarificationRequired, true);
+  assert.equal(res2.body.warningLevel, 2);
+  assert.equal(res2.body.warning, true);
+  assert.equal(res2.body.question.id, "A1");
+  // Strictly ONE single final warning response
+  assert.equal(
+    res2.body.message,
+    "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apne sheher aur local area ka naam spasht batayein.",
+  );
+  // Must NOT concatenate question.text
+  assert.equal(res2.body.message.includes("Aap Bangalore mein kis area mein rehti hain"), false);
+  assert.equal(res2.body.repeatedQuestionText.includes("Aap Bangalore mein kis area mein rehti hain"), false);
+
+  // Now candidate answers after clarification with "Whitefield, Bangalore"
+  const res3 = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Whitefield, Bangalore",
+  });
+
+  assert.equal(res3.status, 200);
+  // Location accepted, moves to travel clarification
+  assert.equal(res3.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  assert.match(res3.body.question.text, /travel kar sakti hain ya zarurat padne par shift/i);
+  assert.equal((res3.body.message || res3.body.question?.text || "").includes("Aap Bangalore mein kis area mein rehti hain"), false);
+});
+
+test("A1 Sequencing: Candidates answering with various valid locations after clarification are handled cleanly", async () => {
+  // Test Whitefield alone
+  const s1 = startInterview();
+  await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A1", answer: "biryani" }); // invalid
+  const ansWhitefield = await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A1", answer: "Whitefield" });
+  assert.equal(ansWhitefield.body.question.id, "A1_TRAVEL_CLARIFICATION");
+
+  // Test Non-Bangalore location (Noida)
+  const s2 = startInterview();
+  await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A2_NAME", answer: "Aarti" });
+  await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A1", answer: "weather is nice" }); // invalid
+  const ansNoida = await submitAnswer({ sessionId: s2.sessionId, expectedQuestionId: "A1", answer: "Noida sector 62" });
+  assert.equal(ansNoida.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  const s2Record = getSessionForPersistence(s2.sessionId).answers.find((a) => a.questionId === "A1");
+  assert.equal(s2Record.location, "Noida sector 62");
+
+  // Test Non-Bangalore location (Delhi)
+  const s3 = startInterview();
+  await submitAnswer({ sessionId: s3.sessionId, expectedQuestionId: "A2_NAME", answer: "Kiran" });
+  await submitAnswer({ sessionId: s3.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: s3.sessionId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: s3.sessionId, expectedQuestionId: "A1", answer: "random words" }); // invalid
+  const ansDelhi = await submitAnswer({ sessionId: s3.sessionId, expectedQuestionId: "A1", answer: "Delhi" });
+  assert.equal(ansDelhi.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  const s3Record = getSessionForPersistence(s3.sessionId).answers.find((a) => a.questionId === "A1");
+  assert.equal(s3Record.location, "Delhi");
+});
+
+test("Regression: Candidate clarifications on A1 travel/relocation do not advance assessment or save answers", async () => {
+  const started = startInterview({ candidateName: "Sunita" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Sunita Sharma" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan sahi hai" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Haan main taiyaar hoon, Hindi mein" });
+  const rA1 = await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Main Whitefield Bangalore mein rehti hoon" });
+  assert.equal(rA1.body.question.id, "A1_TRAVEL_CLARIFICATION");
+
+  const answersBeforeClarification = getSessionForPersistence(sId).answers.length;
+
+  // 1. Candidate asks "Where would I need to travel or relocate?"
+  const rClar1 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Where would I need to travel or relocate?",
+  });
+  assert.equal(rClar1.status, 200);
+  assert.equal(rClar1.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  assert.equal(rClar1.body.counterQuestionHandled, true);
+  assert.match(rClar1.body.message, /local area|customer ke ghar|onboarding team/i);
+  // Assessment state must NOT advance
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeClarification);
+
+  // 2. Candidate asks "How far?"
+  const rClar2 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "How far?",
+  });
+  assert.equal(rClar2.status, 200);
+  assert.equal(rClar2.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  assert.equal(rClar2.body.counterQuestionHandled, true);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeClarification);
+
+  // 3. Ambiguous response "It depends" triggers probing and does NOT advance
+  const rAmbiguous = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "It depends",
+  });
+  assert.equal(rAmbiguous.status, 200);
+  assert.equal(rAmbiguous.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  assert.match(rAmbiguous.body.message, /conveyance|timing/i);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeClarification);
+
+  // 4. Irrelevant text "My favourite colour is blue" triggers warning, does NOT advance
+  const rIrrelevant = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "My favourite colour is blue",
+  });
+  assert.equal(rIrrelevant.status, 200);
+  assert.equal(rIrrelevant.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  assert.equal(rIrrelevant.body.clarificationRequired, true);
+  assert.equal(rIrrelevant.body.warningLevel, 1);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeClarification);
+
+  // 5. Clear affirmative "Yes, I can travel" advances to A1_MOVE_TIMELINE
+  const rYes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Yes, I can travel",
+  });
+  assert.equal(rYes.status, 200);
+  assert.equal(rYes.body.question.id, "A1_MOVE_TIMELINE");
+
+  // 6. On A1_MOVE_TIMELINE, candidate asks "Where would I need to relocate?"
+  const rTimelineClar = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_MOVE_TIMELINE",
+    answer: "Where would I need to relocate?",
+  });
+  assert.equal(rTimelineClar.status, 200);
+  assert.equal(rTimelineClar.body.question.id, "A1_MOVE_TIMELINE");
+  assert.equal(rTimelineClar.body.counterQuestionHandled, true);
+  assert.notEqual(rTimelineClar.body.question.id, "A2");
+
+  // 7. On A1_MOVE_TIMELINE, candidate gives irrelevant text "pizza"
+  const rTimelineIrr = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_MOVE_TIMELINE",
+    answer: "pizza",
+  });
+  assert.equal(rTimelineIrr.status, 200);
+  assert.equal(rTimelineIrr.body.question.id, "A1_MOVE_TIMELINE");
+  assert.equal(rTimelineIrr.body.warningLevel, 1);
+  assert.notEqual(rTimelineIrr.body.question.id, "A2");
+
+  // 8. On A1_MOVE_TIMELINE, candidate gives valid timeline "1-2 weeks mein"
+  const rTimelineValid = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_MOVE_TIMELINE",
+    answer: "1-2 weeks mein",
+  });
+  assert.equal(rTimelineValid.status, 200);
+  assert.equal(rTimelineValid.body.question.id, "A2");
+});
+
+test("Regression: Clear negative on A1 travel/relocation records travelWillingness: no and advances without move timeline", async () => {
+  const started = startInterview({ candidateName: "Priya" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Priya Sharma" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "HSR Layout" });
+
+  const rNeg = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "No, I cannot relocate",
+  });
+  assert.equal(rNeg.status, 200);
+  assert.equal(rNeg.body.question.id, "A2");
+  assert.equal(rNeg.body.travelWillingness, "no");
+  assert.equal(getSessionForPersistence(sId).travelWillingness, "no");
+});
+
+// =========================================================================
+// STAGE 2: UNIFIED CONVERSATION INTENT INTEGRATION TESTS
+// =========================================================================
+
+test("Stage 2 Integration: ACKNOWLEDGEMENT ('Theek hai' / 'Okay.') re-prompts pending question without advancing or incrementing warnings", async () => {
+  const started = startInterview({ candidateName: "Pooja" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2", answer: "24" });
+
+  const answersBefore = getSessionForPersistence(sId).answers.length;
+
+  // On A3: candidate says "Theek hai" (pure acknowledgement without answering)
+  const ackRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Theek hai",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "ACKNOWLEDGEMENT",
+      unifiedIntent: "ACKNOWLEDGEMENT",
+      answerStatus: "acknowledgement",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+      responseText: "Theek hai. Kripya is sawal ka apna jawab batayein:",
+    }),
+  });
+
+  assert.equal(ackRes.status, 200);
+  assert.equal(ackRes.body.clarificationRequired, true);
+  assert.equal(ackRes.body.question.id, "A3");
+  assert.match(ackRes.body.message, /jawab batayein/i);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBefore, "Must not store answer or advance question");
+  assert.equal(getSessionForPersistence(sId).invalidAttempts["A3"] || 0, 0, "Acknowledgement must never be penalized as invalid attempt");
+
+  // Candidate now provides actual answer to A3
+  const validRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Ghar mein main aur meri dadi rehte hain, koi bachche nahi hain",
+  });
+  assert.equal(validRes.status, 200);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBefore + 1);
+});
+
+test("Stage 2 Integration: CONTINUE_INTERVIEW ('Aage badhiye' / 'Continue') resumes pending question cleanly without penalty", async () => {
+  const started = startInterview({ candidateName: "Rekha" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Rekha" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2", answer: "28" });
+
+  const answersBefore = getSessionForPersistence(sId).answers.length;
+
+  // On A3: candidate says "Aage badhiye"
+  const contRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Aage badhiye",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "CONTINUE_INTERVIEW",
+      unifiedIntent: "CONTINUE_INTERVIEW",
+      answerStatus: "continue",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+      responseText: "Ji, chaliye sawal par aage badhte hain:",
+    }),
+  });
+
+  assert.equal(contRes.status, 200);
+  assert.equal(contRes.body.clarificationRequired, true);
+  assert.equal(contRes.body.question.id, "A3");
+  assert.match(contRes.body.message, /aage badhte hain/i);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBefore);
+  assert.equal(getSessionForPersistence(sId).invalidAttempts["A3"] || 0, 0);
+});
+
+test("Stage 2 Integration: Candidate question 'Where would I need to travel?' on A9 travel question is recognized as CANDIDATE_QUESTION and does not advance", async () => {
+  const started = startInterview({ candidateName: "Sunita" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan travel kar sakti hoon" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A3", answer: "Ghar mein main aur pati hain, koi bachche nahi hain" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A7", answer: "2 saal salon experience" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A8", answer: "Waxing and facial" });
+
+  const answersBefore = getSessionForPersistence(sId).answers.length;
+
+  // On A9 travel question: candidate asks "Where would I need to travel?"
+  const qRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A9",
+    answer: "Where would I need to travel?",
+  });
+
+  assert.equal(qRes.status, 200);
+  assert.equal(qRes.body.question.id, "A9");
+  assert.equal(qRes.body.counterQuestionHandled, true);
+  assert.match(qRes.body.message, /local area|customer ke ghar|onboarding team/i);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBefore, "Candidate question must not advance question or store answer");
+
+  // Candidate now answers A9 with valid travel mode
+  const travelAns = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A9",
+    answer: "Main bike se travel kar sakti hoon",
+  });
+
+  assert.equal(travelAns.status, 200);
+  assert.equal(travelAns.body.question.id, "A10");
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBefore + 1);
+});
+
+// =========================================================================
+// STAGE 2 ACCEPTANCE GAP CLOSURE TESTS
+// =========================================================================
+
+test("Stage 2 Gap 1: Complete candidate-question flow with permission request on A7 work experience", async () => {
+  const started = startInterview({ candidateName: "Anita" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Anita" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A3", answer: "Ghar mein pati hain, koi bachche nahi hain" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" });
+
+  const answersBeforeA7 = getSessionForPersistence(sId).answers.length;
+
+  // 1. Candidate asks permission: "Mujhe ek sawal poochna hai"
+  const permRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Mujhe ek sawal poochna hai",
+  });
+  assert.equal(permRes.status, 200);
+  assert.equal(permRes.body.counterQuestionHandled, true);
+  assert.equal(permRes.body.question.id, "A7");
+  assert.match(permRes.body.message, /bilkul poochiye|ask your question/i);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7);
+  assert.equal(getSessionForPersistence(sId).invalidAttempts["A7"] || 0, 0);
+
+  // 2. Candidate asks actual doubt: "Screening clear hone ke baad training kahan hogi?"
+  const doubtRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Screening clear hone ke baad training kahan hogi?",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      topic: "training",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+      responseText: "Urban Company training centers aur digital modules ke through training provide karti hai.",
+      counterQuestionAnswer: "Urban Company training centers aur digital modules ke through training provide karti hai.",
+    }),
+  });
+  assert.equal(doubtRes.status, 200);
+  assert.equal(doubtRes.body.counterQuestionHandled, true);
+  assert.equal(doubtRes.body.question.id, "A7");
+  assert.match(doubtRes.body.message, /training/i);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7);
+
+  // 3. Candidate acknowledges: "Theek hai, samajh gayi"
+  const ackRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Theek hai, samajh gayi",
+  });
+  assert.equal(ackRes.status, 200);
+  assert.equal(ackRes.body.question.id, "A7");
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7);
+
+  // 4. Candidate now provides substantive assessment answer for A7
+  const ansRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Main 2 saal se ek local salon mein beautician hoon",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "INTERVIEW_ANSWER",
+      unifiedIntent: "ASSESSMENT_ANSWER",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      understanding: "Candidate has 2 years of salon beautician experience.",
+    }),
+  });
+  assert.equal(ansRes.status, 200);
+  assert.equal(ansRes.body.question.id, "A8");
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7 + 1);
+});
+
+test("Stage 2 Gap 2: Multiple inquiry follow-ups and topic changes on A3 family question", async () => {
+  const started = startInterview({ candidateName: "Pooja" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2", answer: "27" });
+
+  const answersBeforeA3 = getSessionForPersistence(sId).answers.length;
+
+  // Turn 1: First question (Topic: training)
+  const q1 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Kya screening ke baad training milti hai?",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      topic: "training",
+      responseText: "Ji haan, screening ke baad Urban Company poori service training provide karti hai.",
+      counterQuestionAnswer: "Ji haan, screening ke baad Urban Company poori service training provide karti hai.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(q1.status, 200);
+  assert.equal(q1.body.counterQuestionHandled, true);
+  assert.equal(q1.body.question.id, "A3");
+  let inq = getActiveInquiry(sId);
+  assert.ok(inq, "Active inquiry must be created");
+  assert.equal(inq.turnCount, 1);
+  assert.equal(inq.rootTopic, "training");
+
+  // Turn 2: Follow-up 1 on same topic (training duration / details)
+  const q2 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Training kitne din ki hoti hai?",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      topic: "training",
+      responseText: "Training modules partner center aur app par hote hain, exact duration onboarding team batayegi.",
+      counterQuestionAnswer: "Training modules partner center aur app par hote hain, exact duration onboarding team batayegi.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(q2.status, 200);
+  assert.equal(q2.body.question.id, "A3");
+  inq = getActiveInquiry(sId);
+  assert.equal(inq.turnCount, 2);
+
+  // Turn 3: Change of topic! (Topic: earnings)
+  const q3 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Aage jaake earnings aur payout kaise milega?",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      topic: "earnings",
+      responseText: "Earnings aur payout slabs ki jaankari onboarding team share karegi.",
+      counterQuestionAnswer: "Earnings aur payout slabs ki jaankari onboarding team share karegi.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(q3.status, 200);
+  assert.equal(q3.body.question.id, "A3");
+  inq = getActiveInquiry(sId);
+  assert.equal(inq.turnCount, 3);
+  assert.equal(inq.currentTopic, "unavailable_info");
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA3, "Inquiries must not add to answers");
+
+  // Turn 4: Candidate indicates they want to continue: "Theek hai, aage badhiye"
+  const qCont = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Theek hai, aage badhiye",
+  });
+  assert.equal(qCont.status, 200);
+  assert.equal(qCont.body.question.id, "A3");
+  assert.match(qCont.body.message, /sawal par wapas aate hain/i);
+  assert.equal(getActiveInquiry(sId), null, "Inquiry resolved after continue request");
+
+  // Turn 5: Exact pending assessment question A3 is resumed and answered
+  const qAns = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Ghar mein main aur mere pati hain, koi bachche nahi hain",
+  });
+  assert.equal(qAns.status, 200);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA3 + 1);
+});
+
+test("Stage 2 Gap 3: Pending assessment preservation during pending follow-up (A1_TRAVEL_CLARIFICATION)", async () => {
+  const started = startInterview({ candidateName: "Kavita" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Kavita" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  const rA1 = await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Indiranagar" });
+  assert.equal(rA1.body.question.id, "A1_TRAVEL_CLARIFICATION");
+
+  const answersBefore = getSessionForPersistence(sId).answers.length;
+  const qIndexBefore = getSessionForPersistence(sId).currentQuestionIndex;
+
+  // Candidate asks question during pending travel clarification
+  const inqRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Where would I need to travel?",
+  });
+  assert.equal(inqRes.status, 200);
+  assert.equal(inqRes.body.counterQuestionHandled, true);
+  assert.equal(inqRes.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBefore);
+  assert.equal(getSessionForPersistence(sId).currentQuestionIndex, qIndexBefore);
+  assert.equal(getSessionForPersistence(sId).invalidAttempts["A1_TRAVEL_CLARIFICATION"] || 0, 0);
+
+  // Candidate asks follow-up
+  const followUpRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "How far from my house?",
+  });
+  assert.equal(followUpRes.status, 200);
+  assert.equal(followUpRes.body.question.id, "A1_TRAVEL_CLARIFICATION");
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBefore);
+
+  // Candidate continues and provides affirmative answer
+  const ansRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A1_TRAVEL_CLARIFICATION",
+    answer: "Haan, main travel kar sakti hoon",
+  });
+  assert.equal(ansRes.status, 200);
+  assert.equal(ansRes.body.question.id, "A1_MOVE_TIMELINE");
+  assert.equal(getSessionForPersistence(sId).travelWillingness, "yes");
+});
+
+test("Stage 2 Gap 5: Broader regression coverage across multiple stages with all 7 unified intents", async () => {
+  const started = startInterview({ candidateName: "Sunita" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2", answer: "25" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A3", answer: "Main aur pati hain, koi bachche nahi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A6", answer: "Koi plan nahi hai" });
+
+  // Now at A7 (salon experience question)
+  // 1. CLARIFICATION_REQUEST
+  const clarRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Aap kis type ke experience ke baare mein pooch rahe hain?",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "CLARIFICATION_REQUEST",
+      unifiedIntent: "CLARIFICATION_REQUEST",
+      responseText: "Hum salon ya parlor mein aapke beautician kaam ke baare mein pooch rahe hain.",
+      answerStatus: "clarification",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(clarRes.status, 200);
+  assert.equal(clarRes.body.question.id, "A7");
+
+  // 2. CANDIDATE_QUESTION
+  const cqRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Kya freshers ko bhi training milti hai?",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      topic: "training",
+      responseText: "Ji haan, screening clear karne par sabhi selected candidates ko training di jaati hai.",
+      counterQuestionAnswer: "Ji haan, screening clear karne par sabhi selected candidates ko training di jaati hai.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(cqRes.status, 200);
+  assert.equal(cqRes.body.counterQuestionHandled, true);
+  assert.equal(cqRes.body.question.id, "A7");
+
+  // 3. ACKNOWLEDGEMENT
+  const ackRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Theek hai",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "ACKNOWLEDGEMENT",
+      unifiedIntent: "ACKNOWLEDGEMENT",
+      answerStatus: "acknowledgement",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(ackRes.status, 200);
+  assert.equal(ackRes.body.question.id, "A7");
+
+  // 4. CONTINUE_INTERVIEW
+  const contRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Aage badhiye",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "CONTINUE_INTERVIEW",
+      unifiedIntent: "CONTINUE_INTERVIEW",
+      answerStatus: "continue",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(contRes.status, 200);
+  assert.equal(contRes.body.question.id, "A7");
+
+  // 5. AMBIGUOUS_RESPONSE (triggers contextual follow-up probe)
+  const ambRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Thoda experience hai",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "PARTIAL_OR_AMBIGUOUS_ANSWER",
+      unifiedIntent: "AMBIGUOUS_RESPONSE",
+      answerStatus: "partial",
+      needsClarification: true,
+      clarificationQuestion: "Kripya batayein ki kitne saal ya mahine ka anubhav hai?",
+    }),
+  });
+  assert.equal(ambRes.status, 200);
+  assert.equal(ambRes.body.followUpRequired, true);
+  assert.equal(ambRes.body.question.id, "A7_FOLLOW_UP");
+
+  // 6. IRRELEVANT_RESPONSE on contextual probe (issues warning 1, does NOT advance)
+  const irrRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7_FOLLOW_UP",
+    answer: "Mera favourite rang neela hai",
+  });
+  assert.equal(irrRes.status, 200);
+  assert.equal(irrRes.body.question.id, "A7_FOLLOW_UP");
+  assert.equal(irrRes.body.warningLevel, 1);
+
+  // 7. ASSESSMENT_ANSWER on contextual probe (advances to A8)
+  const ansRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7_FOLLOW_UP",
+    answer: "2 saal local salon mein kaam kiya hai",
+  });
+  assert.equal(ansRes.status, 200);
+  assert.equal(ansRes.body.question.id, "A8");
+});
+
+test("Stage 2 Review Fix 2: resolveInquiryReply falls back from inquiryObj.topic to session.activeInquiry.currentTopic to general_inquiry", async () => {
+  const started = startInterview({ candidateName: "Sunita" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Delhi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2", answer: "28" });
+
+  const capturedTopics = [];
+  const inquirySpy = async (params) => {
+    capturedTopics.push(params.activeInquiryTopic);
+    return {
+      topic: params.activeInquiryTopic,
+      replyText: "Sample inquiry reply from AI.",
+      probeQuestion: "",
+      suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+    };
+  };
+
+  // Case 1: Initial inquiry turn with inquiryObj.topic present ("training")
+  const r1 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Training kaise milegi?",
+  }, {
+    generateInquiryResponseImpl: inquirySpy,
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      topic: "training",
+      responseText: "Training screening ke baad milti hai.",
+      counterQuestionAnswer: "Training screening ke baad milti hai.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(r1.status, 200);
+  assert.equal(capturedTopics[0], "training", "Turn 1 must use inquiryObj.topic");
+
+  const session = getSessionForPersistence(sId);
+  assert.ok(session.activeInquiry);
+  assert.equal(session.activeInquiry.currentTopic, "training");
+
+  // Case 2: Follow-up inquiry turn with inquiryObj.topic omitted -> falls back to session.activeInquiry.currentTopic ("training")
+  const r2 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Aur kuch training ke baare mein?",
+  }, {
+    generateInquiryResponseImpl: inquirySpy,
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      // topic deliberately omitted
+      responseText: "Training ke bare mein details.",
+      counterQuestionAnswer: "Training ke bare mein details.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(r2.status, 200);
+  assert.equal(capturedTopics[1], "training", "Turn 2 must fall back to session.activeInquiry.currentTopic");
+
+  // Case 3: Follow-up inquiry turn with a new inquiryObj.topic ("verification_docs") -> uses new inquiryObj.topic over session.activeInquiry.currentTopic
+  const r3 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A3",
+    answer: "Kya documents submit karne honge?",
+  }, {
+    generateInquiryResponseImpl: inquirySpy,
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      topic: "verification_docs",
+      responseText: "Valid photo ID aur basic qualification chahiye hoti hai.",
+      counterQuestionAnswer: "Valid photo ID aur basic qualification chahiye hoti hai.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(r3.status, 200);
+  assert.equal(capturedTopics[2], "verification_docs", "Turn 3 must prioritize inquiryObj.topic when present");
+
+  // Case 4: Fresh inquiry where neither inquiryObj.topic nor activeInquiry exists -> defaults to general_inquiry
+  const fresh = startInterview({ candidateName: "Anita" });
+  const freshId = fresh.sessionId;
+  await submitAnswer({ sessionId: freshId, expectedQuestionId: "A2_NAME", answer: "Anita" });
+  await submitAnswer({ sessionId: freshId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: freshId, expectedQuestionId: "A0", answer: "Hindi" });
+
+  const r4 = await submitAnswer({
+    sessionId: freshId,
+    expectedQuestionId: "A1",
+    answer: "Mujhe ek aam sawal poochna hai",
+  }, {
+    generateInquiryResponseImpl: inquirySpy,
+    interpretAnswerImpl: async () => ({
+      intent: "RELEVANT_COUNTER_QUESTION",
+      unifiedIntent: "CANDIDATE_QUESTION",
+      // no topic, no activeInquiry
+      responseText: "Ji batayein.",
+      counterQuestionAnswer: "Ji batayein.",
+      answerStatus: "counter_question",
+      needsClarification: true,
+      shouldRepeatPendingQuestion: true,
+    }),
+  });
+  assert.equal(r4.status, 200);
+  assert.equal(capturedTopics[3], "general_inquiry", "Must default to general_inquiry when neither is available");
+});
+
+test("Stage 3 Integration: Multi-turn contextual answering, topic transition, and strict assessment state protection", async () => {
+  const started = startInterview({ candidateName: "Reena" });
+  const sId = started.sessionId;
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Reena" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1", answer: "Whitefield" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_TRAVEL_CLARIFICATION", answer: "Haan" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A1_MOVE_TIMELINE", answer: "1 mahina" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2", answer: "26" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A3", answer: "Ghar mein main aur pati hain, koi bachche nahi hain" });
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A6", answer: "Koi plan nahi" });
+
+  const sessionBeforeA7 = getSessionForPersistence(sId);
+  const answersBeforeA7 = sessionBeforeA7.answers.length;
+
+  // Turn 1: Candidate asks general practice question on A7: "Customer angry ho toh kya karna chahiye?"
+  const t1 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Customer angry ho toh kya karna chahiye?",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "customer_handling",
+      replyText: "Grahak ki baat shanti se sunkar unhe polite tareeqe se solution dena chahiye.",
+      probeQuestion: "",
+      suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+    }),
+  });
+  assert.equal(t1.status, 200);
+  assert.equal(t1.body.counterQuestionHandled, true);
+  assert.equal(t1.body.question.id, "A7");
+  let inq = getActiveInquiry(sId);
+  assert.ok(inq);
+  assert.equal(inq.turnCount, 1);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7, "Turn 1 must not store answer");
+  assert.equal(getSessionForPersistence(sId).invalidAttempts["A7"] || 0, 0, "Turn 1 must not increment invalidAttempts");
+
+  // Turn 2: Candidate asks to explain the question simply: "Iska matlab simple language mein samjhao."
+  const t2 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Iska matlab simple language mein samjhao.",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "question_clarification",
+      replyText: "Hum aasaan shabdon mein jaanna chahte hain ki aapko salon mein kaam karne ka kitna anubhav hai.",
+      probeQuestion: "",
+      suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+    }),
+  });
+  assert.equal(t2.status, 200);
+  assert.equal(t2.body.question.id, "A7");
+  inq = getActiveInquiry(sId);
+  assert.equal(inq.turnCount, 2);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7);
+
+  // Turn 3: Topic change within inquiry: "Screening ke baad training kaise hogi?"
+  const t3 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Screening ke baad training kaise hogi?",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "training",
+      replyText: "Urban Company partner training centers aur digital app modules ke zariye proper training deti hai.",
+      probeQuestion: "",
+      suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+    }),
+  });
+  assert.equal(t3.status, 200);
+  assert.equal(t3.body.question.id, "A7");
+  inq = getActiveInquiry(sId);
+  assert.equal(inq.turnCount, 3);
+  assert.equal(inq.currentTopic, "training", "Topic must update to training");
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7);
+
+  // Turn 4: Contextual follow-up with duration ellipsis: "Kitne din ki hoti hai?"
+  const t4 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Kitne din ki hoti hai?",
+  }, {
+    generateInquiryResponseImpl: async () => ({
+      topic: "training",
+      replyText: "Training module ke hisaab se hoti hai, exact din onboarding team share karegi.",
+      probeQuestion: "",
+      suggestedNextAction: "DEFER_TO_ONBOARDING",
+    }),
+  });
+  assert.equal(t4.status, 200);
+  assert.equal(t4.body.question.id, "A7");
+  inq = getActiveInquiry(sId);
+  assert.equal(inq.turnCount, 4);
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7);
+
+  // Turn 5: Candidate explicitly resumes interview: "Theek hai, continue karte hain."
+  const t5 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Theek hai, continue karte hain.",
+  });
+  assert.equal(t5.status, 200);
+  assert.equal(t5.body.question.id, "A7");
+  assert.equal(getActiveInquiry(sId), null, "Inquiry must be closed on continue");
+  assert.equal(getSessionForPersistence(sId).answers.length, answersBeforeA7);
+
+  // Turn 6: Candidate provides actual assessment answer for A7
+  const t6 = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A7",
+    answer: "Main 3 saal se local salon mein beautician hoon.",
+  }, {
+    interpretAnswerImpl: async () => ({
+      intent: "INTERVIEW_ANSWER",
+      unifiedIntent: "ASSESSMENT_ANSWER",
+      answerStatus: "sufficient",
+      needsClarification: false,
+      understanding: "Candidate has 3 years beautician experience.",
+    }),
+  });
+  assert.equal(t6.status, 200);
+  assert.equal(t6.body.question.id, "A8", "Assessment must advance to A8");
+  const finalSession = getSessionForPersistence(sId);
+  assert.equal(finalSession.answers.length, answersBeforeA7 + 1);
+
+  // Assert NO inquiry utterances were ever saved into answers
+  const storedTexts = finalSession.answers.map((a) => a.answer);
+  assert.ok(!storedTexts.includes("Customer angry ho toh kya karna chahiye?"));
+  assert.ok(!storedTexts.includes("Iska matlab simple language mein samjhao."));
+  assert.ok(!storedTexts.includes("Screening ke baad training kaise hogi?"));
+  assert.ok(!storedTexts.includes("Kitne din ki hoti hai?"));
+  assert.ok(!storedTexts.includes("Theek hai, continue karte hain."));
 });
 

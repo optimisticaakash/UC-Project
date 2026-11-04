@@ -88,6 +88,7 @@ export const AI_CAPTION_STATES = {
   LOADING: "loading",
   SPEAKING: "speaking",
   COMPLETED: "completed",
+  INTERRUPTED: "interrupted",
 };
 
 export const AI_CAPTION_LOADING_TEXT = "Preparing your next question...";
@@ -150,6 +151,19 @@ export function resolveAiCaptionModel({
       isLoading: false,
       isSpeaking: false,
       isCompleted: true,
+    };
+  }
+
+  if (state === "interrupted") {
+    return {
+      state: "interrupted",
+      badgeText: "Interrupted",
+      badgeClass: "text-amber-800 bg-amber-100/80",
+      indicatorClass: "bg-amber-500",
+      captionText: captionText || "...",
+      isLoading: false,
+      isSpeaking: false,
+      isCompleted: false,
     };
   }
 

@@ -4,8 +4,23 @@ const path = require("path");
 const { classifyConsent, classifyLanguage } = require("./rules/consentRules");
 const { evaluateAge } = require("./rules/ageRules");
 const { classifyLocation } = require("./rules/locationRules");
-const { interpretAnswer, extractFallbackFacts } = require("./geminiService");
-const { detectCounterQuestion } = require("./counterQuestions");
+const {
+  interpretAnswer,
+  extractFallbackFacts,
+  generateInquiryResponse,
+  isUnsupportedPolicyClaim,
+  UNIFIED_INTENTS,
+  normalizeIntent,
+} = require("./geminiService");
+const {
+  detectCounterQuestion,
+  isSubDialogueResolution,
+  isGenericAcknowledgement,
+  isExplicitContinueRequest,
+  isRepetitiveInquiry,
+  isAnsweringInquiryProbe,
+  separateProbeAndAssessmentAnswer,
+} = require("./counterQuestions");
 
 const bankPath = path.join(__dirname, "../data/questionBank.json");
 const bank = require(bankPath);
@@ -101,6 +116,7 @@ function createShortTermMemory() {
 }
 
 const INTERVIEW_SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+const MAX_ADAPTIVE_INQUIRY_TURNS = 5;
 
 const TERMINAL_STATUSES = new Set([
   "completed",
@@ -108,11 +124,71 @@ const TERMINAL_STATUSES = new Set([
   "manual_review",
   "incomplete",
   "terminated",
+  "cancelled",
 ]);
 
 function clearShortTermMemory(session) {
   if (!session) return;
   session.shortTermMemory = createShortTermMemory();
+  session.activeInquiry = null;
+}
+
+function clearActiveInquiry(session) {
+  if (!session) return;
+  session.activeInquiry = null;
+}
+
+function createActiveInquiry({
+  originalQuestionId,
+  originalQuestionIndex,
+  rootTopic = null,
+  candidateConcern = null,
+  initialCandidateTurn = null,
+  initialInterviewerReply = null,
+}) {
+  const turns = [];
+  if (initialCandidateTurn) {
+    turns.push({
+      role: "candidate",
+      text: initialCandidateTurn,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  if (initialInterviewerReply) {
+    turns.push({
+      role: "interviewer",
+      text: initialInterviewerReply,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return {
+    status: "in_progress",
+    originalQuestionId,
+    originalQuestionIndex,
+    rootTopic,
+    currentTopic: rootTopic,
+    candidateConcern,
+    turns,
+    turnCount: initialCandidateTurn ? 1 : 0,
+    startedAt: new Date().toISOString(),
+  };
+}
+
+function startActiveInquiry(session, question, cleanAnswer, inquiry, replyText) {
+  if (!session || !question) return;
+  session.activeInquiry = createActiveInquiry({
+    originalQuestionId: question.id,
+    originalQuestionIndex: session.currentQuestionIndex,
+    rootTopic: inquiry?.topic || "general_inquiry",
+    candidateConcern: cleanAnswer,
+    initialCandidateTurn: cleanAnswer,
+    initialInterviewerReply: replyText,
+  });
+}
+
+function getActiveInquiry(sessionId) {
+  const session = sessions.get(sessionId);
+  return session?.activeInquiry ? structuredClone(session.activeInquiry) : null;
 }
 
 function isSessionExpired(session, maxAgeMs = INTERVIEW_SESSION_TTL_MS, currentTime = Date.now()) {
@@ -240,6 +316,7 @@ function startInterview({ candidateId, profileName } = {}) {
     currentQuestionIndex: 0,
     answers: [],
     shortTermMemory: createShortTermMemory(),
+    activeInquiry: null,
     status: "in_progress",
     manualReviewRequired: false,
     manualReviewPaused: false,
@@ -275,8 +352,12 @@ function restoreSessionSnapshot(sessionId, snapshot) {
     if (!clone.shortTermMemory || typeof clone.shortTermMemory !== "object") {
       clone.shortTermMemory = createShortTermMemory();
     }
+    if (clone.activeInquiry === undefined) {
+      clone.activeInquiry = null;
+    }
     if (TERMINAL_STATUSES.has(clone.status)) {
       clearShortTermMemory(clone);
+      clone.activeInquiry = null;
     }
     sessions.set(sessionId, clone);
   } else {
@@ -291,8 +372,12 @@ function restoreSessions(restoredSessions) {
       if (!session.shortTermMemory || typeof session.shortTermMemory !== "object") {
         session.shortTermMemory = createShortTermMemory();
       }
+      if (session.activeInquiry === undefined) {
+        session.activeInquiry = null;
+      }
       if (TERMINAL_STATUSES.has(session.status)) {
         clearShortTermMemory(session);
+        session.activeInquiry = null;
       }
       sessions.set(session.sessionId, session);
     }
@@ -801,26 +886,70 @@ function getNaturalAcknowledgement(question, session, candidateAnswer = "") {
 
   // 6. A3 to A8: Family background, salon experience, salon setup
   if (["A3", "A4", "A5", "A6", "A7", "A8"].includes(question.id)) {
-    return isEnglish ? "Thank you for sharing that." : "Achha, samajh gayi.";
+    if (isEnglish) {
+      const enMap = {
+        A3: "Thank you for sharing that.",
+        A4: "Understood.",
+        A5: "Noted, thank you.",
+        A6: "That's clear.",
+        A7: "Got it.",
+        A8: "Thank you for explaining.",
+      };
+      return enMap[question.id] || "Thank you for sharing that.";
+    }
+    const hiMap = {
+      A3: "Theek hai.",
+      A4: "Ji, samajh gayi.",
+      A5: "Theek hai, noted.",
+      A6: "Sahi hai.",
+      A7: "Achha, samajh gayi.",
+      A8: "Achha, theek hai.",
+    };
+    return hiMap[question.id] || "Theek hai.";
   }
 
   // 7. A9 to A11: Travel readiness, conveyance, language fluency
   if (["A9", "A10", "A11"].includes(question.id)) {
-    return isEnglish ? "Understood, thank you." : "Theek hai, samajh gayi.";
+    if (isEnglish) {
+      const enMap = {
+        A9: "Understood, thank you.",
+        A10: "Great, noted.",
+        A11: "Thank you, that's helpful.",
+      };
+      return enMap[question.id] || "Understood, thank you.";
+    }
+    const hiMap = {
+      A9: "Theek hai.",
+      A10: "Bahut badhiya.",
+      A11: "Theek hai, noted.",
+    };
+    return hiMap[question.id] || "Theek hai.";
   }
 
   // 8. Stage B: Technical skill evaluation (waxing, facial, threading, manicure, etc.)
   if (question.id.startsWith("B")) {
-    return isEnglish ? "Thank you for sharing that." : "Achha, theek hai.";
+    if (isEnglish) {
+      return question.id.endsWith("2") || question.id.endsWith("3")
+        ? "Understood."
+        : "Thank you for sharing that.";
+    }
+    const bOptions = ["Theek hai.", "Sahi hai.", "Ji, samajh gayi.", "Bahut badhiya."];
+    const idx = (question.id.charCodeAt(question.id.length - 1) || 0) % bOptions.length;
+    return bOptions[idx];
   }
 
   // 9. Stage C: Customer handling scenarios & salon ethics
   if (question.id.startsWith("C")) {
-    return isEnglish ? "Understood, thank you for explaining." : "Achha, samajh gayi.";
+    if (isEnglish) {
+      return "Understood, thank you for explaining.";
+    }
+    const cOptions = ["Theek hai, samajh gayi.", "Bilkul sahi.", "Theek hai."];
+    const idx = (question.id.charCodeAt(question.id.length - 1) || 0) % cOptions.length;
+    return cOptions[idx];
   }
 
   // Fallback:
-  return isEnglish ? "Thank you." : "Theek hai, samajh gayi.";
+  return isEnglish ? "Thank you." : "Theek hai.";
 }
 
 async function submitAnswer({
@@ -830,7 +959,7 @@ async function submitAnswer({
   diagnosticRequestId,
   diagnosticPromptTurn,
   diagnosticSessionGeneration,
-}, { interpretAnswerImpl = interpretAnswer } = {}) {
+}, { interpretAnswerImpl = interpretAnswer, generateInquiryResponseImpl = generateInquiryResponse } = {}) {
   let interpretation = null;
   const session = sessions.get(sessionId);
 
@@ -998,6 +1127,12 @@ async function submitAnswer({
       recordShortTermMemoryTurn(session, nameRecord);
       session.pendingNameConfirmation = null;
       session.currentQuestionIndex += 1;
+    } else if (session.pendingFollowUp?.questionId === "A0" && requestQuestionId === "A1") {
+      session.pendingFollowUp = null;
+      session.language = session.language || "Hindi";
+      session.currentQuestionIndex += 1;
+    } else if (session.pendingFollowUp?.questionId === requestQuestionId) {
+      // Allowed: Request matches parent question ID of the active pending follow-up
     } else {
       console.info("[UC Interview Diagnostics] stale_answer_ignored", {
         requestId: safeRequestId,
@@ -1024,11 +1159,28 @@ async function submitAnswer({
     };
   }
 
-  const cleanAnswer = typeof answer === "string" ? answer.trim() : "";
+  let cleanAnswer = typeof answer === "string" ? answer.trim() : "";
 
   async function checkCandidateInquiry(qText = question?.text, qId = question?.id) {
     if (!cleanAnswer || /^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(cleanAnswer)) {
       return null;
+    }
+
+    const cq = detectCounterQuestion(
+      cleanAnswer,
+      { text: qText, id: qId, Step: qId },
+      { language: session.language, activeInquiry: session.activeInquiry },
+    );
+    if (cq.isCounterQuestion) {
+      return {
+        responseText: cq.reply,
+        counterQuestionAnswer: cq.reply,
+        intent: cq.intent || "RELEVANT_COUNTER_QUESTION",
+        subIntent: cq.subIntent || null,
+        topic: cq.topic || "counter_question",
+        isEnglish: Boolean(cq.isEnglish),
+        answerStatus: "counter_question",
+      };
     }
 
     let inquiry = null;
@@ -1039,6 +1191,7 @@ async function submitAnswer({
         questionId: qId,
         language: session.language,
         sessionMemory: session.shortTermMemory,
+        activeInquiry: session.activeInquiry,
         diagnosticRequestId: safeRequestId,
         diagnosticPromptTurn: safePromptTurn,
         diagnosticSessionGeneration: safeSessionGeneration,
@@ -1048,6 +1201,11 @@ async function submitAnswer({
         interp &&
         (interp.intent === "RELEVANT_COUNTER_QUESTION" ||
           interp.intent === "CLARIFICATION_REQUEST" ||
+          interp.intent === "QUESTION_RATIONALE_INQUIRY" ||
+          interp.intent === "CANDIDATE_CONSTRAINT_OR_HESITATION" ||
+          interp.intent === "CANDIDATE_QUESTION" ||
+          interp.unifiedIntent === UNIFIED_INTENTS.CANDIDATE_QUESTION ||
+          interp.unifiedIntent === UNIFIED_INTENTS.CLARIFICATION_REQUEST ||
           interp.answerStatus === "counter_question")
       ) {
         inquiry = interp;
@@ -1056,23 +1214,410 @@ async function submitAnswer({
       // Gemini offline, rate limited, or errored
     }
 
-    if (!inquiry) {
-      const cq = detectCounterQuestion(
+    return inquiry;
+  }
+
+  async function resolveInquiryReply({
+    targetQuestion,
+    inquiryObj,
+    defaultReply,
+    turns = [],
+  }) {
+    let replyText = (defaultReply || "").trim();
+    let probeQuestion = "";
+    let topic = inquiryObj?.topic || session?.activeInquiry?.currentTopic || "general_inquiry";
+    let suggestedNextAction = "RESOLVE_AND_PROMPT_QUESTION";
+
+    const isEnglish = session?.language === "English";
+    const isSensitivePolicyQuery =
+      topic === "earnings" ||
+      topic === "working_hours" ||
+      /\b(?:salary|earnings?|paisa|kamai|kit\b|toolkit|payout|incentive|fees?|charges?|ghante|schedule|shift)\b/i.test(cleanAnswer);
+
+    const onboardingDeferral = isEnglish
+      ? "I am the screening assistant, so exact earnings, payout structures, toolkit costs, and schedules will be confirmed by the Urban Company partner and onboarding team."
+      : "Main screening assistant hoon, isliye earnings, payout slabs, toolkit aur scheduling ki poori jaankari Urban Company partner team aur onboarding team share karegi.";
+
+    if (typeof generateInquiryResponseImpl === "function") {
+      try {
+        const aiRes = await generateInquiryResponseImpl({
+          candidateUtterance: cleanAnswer,
+          currentQuestion: {
+            id: targetQuestion?.id,
+            text: targetQuestion?.text,
+            category: targetQuestion?.category || targetQuestion?.Block,
+            stage: targetQuestion?.stage || targetQuestion?.Type,
+          },
+          activeInquiryTopic: topic,
+          activeInquiryTurns: turns,
+          sessionMemory: session?.shortTermMemory,
+          language: session?.language || "Hindi",
+        });
+
+        const hasPolicyViolation =
+          aiRes && (isUnsupportedPolicyClaim(aiRes.replyText) || isUnsupportedPolicyClaim(aiRes.probeQuestion));
+
+        if (aiRes && typeof aiRes.replyText === "string" && aiRes.replyText.trim().length >= 3 && !hasPolicyViolation) {
+          replyText = aiRes.replyText.trim();
+          probeQuestion = typeof aiRes.probeQuestion === "string" ? aiRes.probeQuestion.trim() : "";
+          if (aiRes.topic) topic = aiRes.topic;
+          if (aiRes.suggestedNextAction) suggestedNextAction = aiRes.suggestedNextAction;
+        } else if (hasPolicyViolation) {
+          replyText = isSensitivePolicyQuery ? onboardingDeferral : (defaultReply || onboardingDeferral);
+          probeQuestion = "";
+          suggestedNextAction = "DEFER_TO_ONBOARDING";
+        }
+      } catch (err) {
+        console.info("[UC Interview] Contextual inquiry response generation failed, using deterministic fallback:", err?.message || err);
+        if (err?.code === "AI_UNSUPPORTED_POLICY_CLAIM" || isSensitivePolicyQuery) {
+          replyText = onboardingDeferral;
+          probeQuestion = "";
+          suggestedNextAction = "DEFER_TO_ONBOARDING";
+        }
+      }
+    }
+
+    return {
+      replyText,
+      probeQuestion,
+      topic,
+      suggestedNextAction,
+    };
+  }
+
+  async function respondWithInquiry({
+    targetQuestion,
+    inquiryObj,
+    deterministicReply,
+    isNameConfirmation = false,
+  }) {
+    const { replyText, probeQuestion } = await resolveInquiryReply({
+      targetQuestion,
+      inquiryObj,
+      defaultReply: deterministicReply,
+      turns: [],
+    });
+    const effectiveReply = probeQuestion && !replyText.includes(probeQuestion)
+      ? `${replyText} ${probeQuestion}`
+      : replyText;
+    const isRepeat = inquiryObj?.topic === "repeat_question";
+    let combinedMessage;
+    const isIdentityOrPurpose = inquiryObj?.topic === "identity" || inquiryObj?.topic === "screening_purpose";
+    if (targetQuestion.id === "A0" && isIdentityOrPurpose) {
+      session.pendingConsentOnly = true;
+      const isEnglish = session.language === "English" || Boolean(inquiryObj?.isEnglish) || classifyLanguage(cleanAnswer) === "English";
+      session.lastInquiryEnglish = isEnglish;
+      const consentPrompt = isEnglish ? "Shall we start?" : "Kya hum shuru karein?";
+      if (isRepeat) {
+        combinedMessage = `${effectiveReply} ${consentPrompt}`.trim();
+      } else {
+        const cleanReply = effectiveReply
+          .replace(/\b(?:Aap\s+Hindi\s+mein\s+baat\s+karengi?\s+ya\s+English\s+mein\??|Would\s+you\s+like\s+to\s+speak\s+in\s+Hindi\s+or\s+English\??)\b/gi, "")
+          .replace(/\b(?:Shuru\s+karein\??|Shall\s+we\s+start\??|Kya\s+hum\s+shuru\s+karein\??)\b/gi, "")
+          .replace(/(?:Chaliye\s+aage\s+badhte\s+hain|Let's\s+continue\s+with\s+this\s+question)[:\s]*$/i, "")
+          .replace(/\s{2,}/g, " ")
+          .trim();
+        combinedMessage = cleanReply.toLowerCase().includes(consentPrompt.toLowerCase())
+          ? cleanReply
+          : `${cleanReply} ${consentPrompt}`.trim();
+      }
+    } else {
+      const isLocationRequirement = inquiryObj?.topic === "location_requirement";
+      combinedMessage = isRepeat
+        ? `${effectiveReply} ${targetQuestion.text}`
+        : (probeQuestion || isLocationRequirement)
+          ? effectiveReply
+          : effectiveReply.toLowerCase().includes(targetQuestion.text.toLowerCase().trim()) || targetQuestion.id === "A2"
+            ? effectiveReply
+            : `${effectiveReply} ${targetQuestion.text}`;
+    }
+
+    startActiveInquiry(session, targetQuestion, cleanAnswer, inquiryObj, effectiveReply);
+    const hasFollowUp = Boolean(session.pendingFollowUp);
+    return {
+      status: 200,
+      body: {
+        success: true,
+        completed: false,
+        ...(isNameConfirmation ? { nameConfirmationRequired: true } : { clarificationRequired: true }),
+        counterQuestionHandled: true,
+        ...(hasFollowUp ? { followUpRequired: true, followUp: session.pendingFollowUp } : {}),
+        message: combinedMessage,
+        questionNumber: session.currentQuestionIndex + 1,
+        totalQuestions: questions.length,
+        question: targetQuestion,
+      },
+    };
+  }
+
+  // ==========================================
+  // ACTIVE INQUIRY SUB-DIALOGUE ROUTING
+  // ==========================================
+  if (session.activeInquiry && session.activeInquiry.status === "in_progress") {
+    const isEnglish = session.language === "English";
+    const currentActiveInquiry = session.activeInquiry;
+    const activeQuestion = getCurrentQuestionForSession(session) || question;
+    const activeQuestionText = activeQuestion.id === "A0"
+      ? (isEnglish ? "Shall we start?" : "Kya hum shuru karein?")
+      : activeQuestion.text;
+
+    // Flow 5: Candidate explicitly asks to return/continue interview (e.g. "aage badhiye", "continue")
+    if (isExplicitContinueRequest(cleanAnswer)) {
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: cleanAnswer,
+        timestamp: new Date().toISOString(),
+      });
+      session.activeInquiry = null;
+      const pivotText = isEnglish
+        ? `Sure! Let's return to our question: ${activeQuestionText}`
+        : `Ji bilkul! Chaliye humare sawal par wapas aate hain: ${activeQuestionText}`;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          counterQuestionHandled: true,
+          message: pivotText,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: getCurrentQuestionForSession(session),
+        },
+      };
+    }
+
+    // Flow 1: Candidate asks another question, follow-up, or constraint
+    const followUpInquiry = await checkCandidateInquiry(activeQuestionText, activeQuestion.id);
+    if (followUpInquiry) {
+      currentActiveInquiry.turnCount += 1;
+      if (followUpInquiry.topic) {
+        currentActiveInquiry.currentTopic = followUpInquiry.topic;
+      }
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: cleanAnswer,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Repeat question inquiry request during active inquiry
+      if (followUpInquiry.topic === "repeat_question") {
+        session.activeInquiry = null;
+        const repeatReply = isEnglish
+          ? `Sure, let's return to our question: ${activeQuestionText}`
+          : `Ji bilkul, chaliye humare sawal par wapas aate hain: ${activeQuestionText}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: repeatReply,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: getCurrentQuestionForSession(session),
+          },
+        };
+      }
+
+      // Check repetitive inquiry loop
+      const isRepetitive = isRepetitiveInquiry(cleanAnswer, currentActiveInquiry.turns.slice(0, -1));
+      if (isRepetitive) {
+        session.activeInquiry = null;
+        const loopReply = isEnglish
+          ? `As mentioned earlier, Urban Company service bookings are in nearby local areas and full training is provided. Let's return to our question: ${activeQuestionText}`
+          : `Jaise maine pehle bataya, Urban Company mein kaam aapke paas ke local area mein hi hota hai aur poori training milti hai. Chaliye ab sawal par wapas aate hain: ${activeQuestionText}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: loopReply,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: getCurrentQuestionForSession(session),
+          },
+        };
+      }
+
+      const deterministicReply = (
+        followUpInquiry.counterQuestionAnswer ||
+        followUpInquiry.responseText ||
+        followUpInquiry.clarificationQuestion ||
+        ""
+      ).trim();
+
+      const { replyText, probeQuestion } = await resolveInquiryReply({
+        targetQuestion: activeQuestion,
+        inquiryObj: followUpInquiry,
+        defaultReply: deterministicReply,
+        turns: currentActiveInquiry.turns.slice(0, -1),
+      });
+
+      const effectiveInterviewerReply = probeQuestion && !replyText.includes(probeQuestion)
+        ? `${replyText} ${probeQuestion}`
+        : replyText;
+
+      currentActiveInquiry.turns.push({
+        role: "interviewer",
+        text: effectiveInterviewerReply,
+        timestamp: new Date().toISOString(),
+      });
+      if (currentActiveInquiry.turns.length > 12) {
+        currentActiveInquiry.turns = currentActiveInquiry.turns.slice(-12);
+      }
+
+      // Configurable safety boundary to prevent infinite cross-questioning
+      if (currentActiveInquiry.turnCount >= MAX_ADAPTIVE_INQUIRY_TURNS) {
+        session.activeInquiry = null;
+        const pivotText = isEnglish
+          ? "We have covered this in detail. Let's now return to our question:"
+          : "Humne is baare mein vistaar se baat kar li hai. Chaliye ab humare sawal par wapas aate hain:";
+        const combinedMessage = `${effectiveInterviewerReply} ${pivotText} ${activeQuestionText}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: getCurrentQuestionForSession(session),
+          },
+        };
+      }
+
+      // Adaptive depth: Inquiry remains in progress; candidate is exploring doubts
+      // Answer the candidate's doubt naturally without repeatedly re-appending the pending question on every follow-up turn
+      const combinedMessage = effectiveInterviewerReply;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          counterQuestionHandled: true,
+          message: combinedMessage,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: getCurrentQuestionForSession(session),
+        },
+      };
+    }
+
+    // Flow 2: Candidate answering an AI conversational follow-up/probe
+    if (isAnsweringInquiryProbe(cleanAnswer, currentActiveInquiry.turns)) {
+      const { isComposite, probePart, assessmentPart } = separateProbeAndAssessmentAnswer(
         cleanAnswer,
-        { text: qText, id: qId, Step: qId },
-        { language: session.language },
+        currentActiveInquiry.turns,
+        activeQuestion,
       );
-      if (cq.isCounterQuestion) {
-        inquiry = {
-          responseText: cq.reply,
-          counterQuestionAnswer: cq.reply,
-          intent: "RELEVANT_COUNTER_QUESTION",
-          answerStatus: "counter_question",
+
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: probePart,
+        timestamp: new Date().toISOString(),
+      });
+      const interviewerAck = isEnglish
+        ? `Understood!`
+        : `Bahut accha, samajh gayi!`;
+      currentActiveInquiry.turns.push({
+        role: "interviewer",
+        text: interviewerAck,
+        timestamp: new Date().toISOString(),
+      });
+      session.activeInquiry = null;
+
+      if (isComposite && assessmentPart) {
+        // Safe composite handling: Proceed to the question's standard validation pipeline
+        // with the extracted assessment answer part.
+        cleanAnswer = assessmentPart;
+      } else {
+        const resumeMessage = isEnglish
+          ? `Understood! Let's return to our question: ${activeQuestionText}`
+          : `Bahut accha, samajh gayi! Chaliye ab humare sawal par wapas aate hain: ${activeQuestionText}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            message: resumeMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: getCurrentQuestionForSession(session),
+          },
         };
       }
     }
 
-    return inquiry;
+    // Sub-dialogue resolution signal (doubt cleared / understood)
+    if (isSubDialogueResolution(cleanAnswer)) {
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: cleanAnswer,
+        timestamp: new Date().toISOString(),
+      });
+      session.activeInquiry = null;
+      const resumeMessage = isEnglish
+        ? `Great! Let's return to our question: ${activeQuestionText}`
+        : `Bahut badhiya! Chaliye ab humare sawal par wapas aate hain: ${activeQuestionText}`;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          counterQuestionHandled: true,
+          message: resumeMessage,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: getCurrentQuestionForSession(session),
+        },
+      };
+    }
+
+    // Flow 4: Short generic affirmative / acknowledgement ("theek hai", "okay", "haan")
+    // For non-binary questions (like A1 location, A2 age, A9 cluster), "theek hai" / "okay" is an
+    // acknowledgement to the interviewer's explanation, NOT an answer to the assessment question.
+    const isBinaryConfirmationQuestion = question.id === "A0" || Boolean(session.pendingNameConfirmation);
+    if (
+      !isBinaryConfirmationQuestion &&
+      (isGenericAcknowledgement(cleanAnswer) || /^(?:haan|han|yes|yeah|ji|accha|achha|acha)[.!?।\s]*$/i.test(cleanAnswer))
+    ) {
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: cleanAnswer,
+        timestamp: new Date().toISOString(),
+      });
+      session.activeInquiry = null;
+      const resumeMessage = isEnglish
+        ? `Understood. If you have no further questions, let's return to our question: ${activeQuestionText}`
+        : `Theek hai. Agar koi aur sawal nahi hai, toh chaliye humare sawal par wapas aate hain: ${activeQuestionText}`;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          counterQuestionHandled: true,
+          message: resumeMessage,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: getCurrentQuestionForSession(session),
+        },
+      };
+    }
+
+    // Flow 3: Candidate provided an actual answer (or invalid answer attempt).
+    // Close active inquiry safely and fall through to standard question validation.
+    session.activeInquiry = null;
   }
 
   if (session.pendingNameConfirmation) {
@@ -1140,27 +1685,17 @@ async function submitAnswer({
           cq.reply ||
           ""
         ).trim();
-        const combinedMessage = replyText.toLowerCase().includes(confirmPrompt.toLowerCase().trim())
-          ? replyText
-          : `${replyText} ${confirmPrompt}`;
-        return {
-          status: 200,
-          body: {
-            success: true,
-            completed: false,
-            nameConfirmationRequired: true,
-            counterQuestionHandled: true,
-            message: combinedMessage,
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: questions.length,
-            question: {
-              id: "A2_NAME_CONFIRM",
-              Step: "A2_NAME_CONFIRM",
-              text: confirmPrompt,
-              category: "Introduction",
-            },
+        return respondWithInquiry({
+          targetQuestion: {
+            id: "A2_NAME_CONFIRM",
+            Step: "A2_NAME_CONFIRM",
+            text: confirmPrompt,
+            category: "Introduction",
           },
-        };
+          inquiryObj: inquiry || cq,
+          deterministicReply: replyText,
+          isNameConfirmation: true,
+        });
       }
     }
 
@@ -1655,20 +2190,122 @@ async function submitAnswer({
       };
     }
 
+    if (/^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(followUpAnswer)) {
+      session.invalidAttempts = {};
+      const isEnglish = session.language === "English";
+      const reprompt = isEnglish
+        ? "I couldn't hear you clearly. Could you please repeat or type your answer?"
+        : "Maaf kijiye, mujhe aapki aawaz theek se nahi aayi. Kripya dobara batayein ya neeche type karein.";
+      return askAgain(`${reprompt} ${pending.prompt}`);
+    }
+
+    const currentPendingQ = getCurrentQuestionForSession(session) || {
+      id: `${pending.questionId}_${pending.type.toUpperCase()}`,
+      Step: `${pending.questionId}_${pending.type.toUpperCase()}`,
+      text: pending.prompt,
+      category: pending.category || "Location & movement",
+    };
+
+    const cq = detectCounterQuestion(
+      followUpAnswer,
+      currentPendingQ,
+      { language: session.language },
+    );
+    const isExplicitCandidateQuestion =
+      cq.isCounterQuestion ||
+      /[?]|(?:^|\b)(?:where|kahan|kidhar|why|kyun|kyu|how\s+far|kitn[aie]\s+door|kitna\s+distance|kaise|what\s+if|agar|compulsory|zaroori\s+hai|zaruri\s+hai|relocate\s+karna\s+hoga|shift\s+hona\s+hoga)\b/i.test(
+        followUpAnswer,
+      );
+
+    if (isExplicitCandidateQuestion) {
+      const inquiry = await checkCandidateInquiry(pending.prompt, currentPendingQ.id);
+      if (inquiry || cq.isCounterQuestion) {
+        const replyText = (
+          inquiry?.counterQuestionAnswer ||
+          inquiry?.responseText ||
+          inquiry?.clarificationQuestion ||
+          cq.reply ||
+          ""
+        ).trim();
+        const activeInquiryObj = inquiry || cq || null;
+        return respondWithInquiry({
+          targetQuestion: currentPendingQ,
+          inquiryObj: activeInquiryObj,
+          deterministicReply: replyText,
+        });
+      }
+    }
+
+    if (pending.type === "language_preference") {
+      const detectedLang = classifyLanguage(followUpAnswer);
+      if (detectedLang) {
+        session.invalidAttempts = {};
+        session.language = detectedLang;
+        mergeShortTermMemoryFacts(session, { preferredLanguage: detectedLang });
+        session.answers.push({
+          questionId: "A0_LANGUAGE_PREFERENCE",
+          questionText: pending.prompt,
+          category: "Setup",
+          answer: followUpAnswer,
+          answeredAt: new Date().toISOString(),
+          language: detectedLang,
+        });
+        session.pendingFollowUp = null;
+        session.currentQuestionIndex += 1;
+        const nextQ = questions[session.currentQuestionIndex];
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            acknowledgement: getNaturalAcknowledgement(nextQ, session),
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            consentOutcome: session.consentOutcome || "accepted",
+            language: session.language,
+            question: nextQ,
+          },
+        };
+      }
+
+      const isEnglish = session.language === "English";
+      const reprompt = isEnglish
+        ? "Please let me know: would you like to speak in Hindi or English?"
+        : "Kripya batayein, aap Hindi mein baat karengi ya English mein?";
+      return askAgain(reprompt);
+    }
 
     if (pending.type === "travel_clarification") {
+      if (isExplicitContinueRequest(followUpAnswer)) {
+        const isEnglish = session.language === "English";
+        const reprompt = isEnglish
+          ? "Sure, let's continue with our question:"
+          : "Ji, chaliye sawal par aage badhte hain:";
+        return askAgain(`${reprompt} ${pending.prompt}`);
+      }
+
+      if (isGenericAcknowledgement(followUpAnswer)) {
+        const isEnglish = session.language === "English";
+        const reprompt = isEnglish
+          ? "Understood. Please let me know: are you comfortable travelling to nearby service areas?"
+          : "Theek hai. Kripya batayein: kya aap aas-paas ke service areas mein travel karne ke liye comfortable hain?";
+        return askAgain(reprompt);
+      }
+
       const locationClassification = classifyLocation(followUpAnswer);
 
       const isWhereToTravel =
-        /\b(?:where\s+(?:would\s+i|do\s+i|to|should\s+i)\s+(?:need\s+to\s+travel|have\s+to\s+go|travel|go)|kahan\s+(?:travel\s+karna|jana)\s+(?:hoga|padega|hai)|kidhar\s+(?:travel\s+karna|jana)\s+(?:hoga|padega|hai)|kitna\s+door\s+(?:jana|travel)|which\s+area.*(?:visit|go|travel)|kahan\s+hoga\s+kaam)\b/i.test(
+        /\b(?:where\s+(?:would\s+i|do\s+i|to|should\s+i|can\s+i)?\s*(?:need\s+to\s+travel|have\s+to\s+go|need\s+to\s+relocate|have\s+to\s+relocate|need\s+to\s+shift|have\s+to\s+shift|travel|relocate|shift|go)|kahan\s+(?:travel\s+karna|jana|jaana|shift\s+hona|relocate\s+karna)\s+(?:hoga|padega|hai)|kidhar\s+(?:travel\s+karna|jana|jaana|shift\s+hona|relocate\s+karna)\s+(?:hoga|padega|hai)|kitn[aie]\s+door\s+(?:jana|jaana|travel|shift)|which\s+area.*(?:visit|go|travel|relocate|shift)|kahan\s+hoga\s+kaam|have\s+to\s+(?:relocate|shift|move)|need\s+to\s+(?:relocate|shift|move)|shift\s+cities|relocate\s+cities|move\s+cities|doosre\s+sheher|dusre\s+sheher)\b/i.test(
           normalized,
         ) ||
-        (/\b(?:where|kahan|kidhar)\b/i.test(normalized) &&
-          /\b(?:travel|jana|visit|go|location|distance|ghar)\b/i.test(normalized));
+        /^(?:how\s+far(?:\s+is\s+it)?|kitn[aie]\s+door|kitna\s+distance|how\s+much\s+distance)[.!?\s]*$/i.test(normalized) ||
+        (/\b(?:where|kahan|kidhar|which\s+area|how\s+far|does\s+this\s+mean)\b/i.test(normalized) &&
+          /\b(?:travel|relocate|shift|jana|jaana|visit|go|location|distance|ghar|area|cities|city)\b/i.test(normalized));
 
       const isCrossQuestion =
         isWhereToTravel ||
-        /\b(?:kyun|kyu|why|reason|zaruri\s+kyun|kyun\s+jana|door\s+kyun|kyun\s+zaruri)\b/i.test(
+        cq.isCounterQuestion ||
+        /\b(?:kyun|kyu|why|reason|zaruri\s+kyun|kyun\s+jana|door\s+kyun|kyun\s+zaruri|relocate\s+kyun|shift\s+kyun|compulsory|zaroori\s+hai|zaruri\s+hai)\b/i.test(
           normalized,
         );
 
@@ -1678,23 +2315,25 @@ async function submitAnswer({
         );
 
       const isReluctantOrUnsure =
-        /\b(?:difficult|mushkil|hard|problem|dikkat|issue|not\s+sure|unsure|pata\s+nahi|pata\s+nahin|pakka\s+nahi|doubt|shayad|no\s+idea|kuch\s+nahi\s+keh\s+sakti)\b/i.test(
+        /\b(?:difficult|mushkil|hard|problem|dikkat|issue|not\s+sure|unsure|pata\s+nahi|pata\s+nahin|pakka\s+nahi|doubt|shayad|no\s+idea|kuch\s+nahi\s+keh\s+sakti|depend|depends|depending|dekhna\s+padega|condition)\b/i.test(
           normalized,
         ) ||
-        /^(?:maybe|shayad|not\s+sure|unsure|pata\s+nahi)[.!?\s]*$/i.test(normalized);
+        /^(?:it\s+depends|depends|maybe|shayad|not\s+sure|unsure|pata\s+nahi)[.!?\s]*$/i.test(normalized);
 
       const conflicting =
         (/\b(haan|yes)\b/i.test(normalized) || /हाँ|हां/.test(followUpAnswer)) &&
         (/\b(nahi|no)\b/i.test(normalized) || /नहीं|नही/.test(followUpAnswer));
 
       const positive =
+        !isCrossQuestion &&
+        !isConveyanceConcern &&
         !isReluctantOrUnsure &&
         (/\b(haan|han|yes|yeah|yep|ready|bilkul|theek\s+hai|thik\s+hai)\b|(?<!not\s+)\bsure\b|\bwilling\b/i.test(
           normalized,
         ) ||
           locationClassification.travelWillingness === "yes" ||
           /हाँ|हां/.test(followUpAnswer) ||
-          /travel kar sakti|travel kar sakta|shift ho sakti|shift ho sakta|move kar sakti|move kar sakta|can travel|can relocate|manage kar lungi|manage kar lunga|travel kar lungi/i.test(
+          /travel kar sakti|travel kar sakta|shift ho sakti|shift ho sakta|move kar sakti|move kar sakta|can travel|can relocate|can shift|ready to travel|ready to relocate|willing to travel|willing to relocate|manage kar lungi|manage kar lunga|travel kar lungi/i.test(
             normalized,
           ));
 
@@ -1702,10 +2341,11 @@ async function submitAnswer({
         !isCrossQuestion &&
         !isConveyanceConcern &&
         !isReluctantOrUnsure &&
-        (/\b(sirf\s+apne\s+area|travel\s+nahi|shift\s+nahi|move\s+nahi|door\s+nahi|nahi\s+kar\s+sakti|nahi\s+ja\s+sakti|cannot\s+travel|can't\s+travel|not\s+willing|possible\s+nahi|nahi\s+ho\s+payega)\b/i.test(
+        (/\b(sirf\s+apne\s+area|travel\s+nahi|shift\s+nahi|move\s+nahi|door\s+nahi|nahi\s+kar\s+sakti|nahi\s+ja\s+sakti|cannot\s+travel|can't\s+travel|cannot\s+relocate|can't\s+relocate|cannot\s+shift|can't\s+shift|not\s+willing|won't\s+travel|won't\s+relocate|won't\s+shift|possible\s+nahi|nahi\s+ho\s+payega)\b/i.test(
           normalized,
         ) ||
           /^(?:nahi|nahin|nhi|no|never|नहीं|नही)[.!?।\s]*$/iu.test(normalized) ||
+          /^(?:no|nahi|nahin)[,.:\s]+(?:i\s+)?(?:cannot|can't|won't|will\s+not)\s+(?:travel|relocate|shift|move)[.!?\s]*$/i.test(normalized) ||
           /नहीं.*(जा|कर|शिफ्ट|ट्रैवल|यात्रा|रिलोकेट)|नही.*(जा|कर|शिफ्ट|ट्रैवल|यात्रा|रिलोकेट)/.test(
             followUpAnswer,
           ));
@@ -1876,14 +2516,114 @@ async function submitAnswer({
     }
 
     if (pending.type === "move_timeline") {
-      const unclear =
-        /^(pata nahi|pata nahin|not sure|don't know|dont know|unsure|maybe|shayad)[.!?\s]*$/i.test(
-          normalized,
+      if (isExplicitContinueRequest(followUpAnswer)) {
+        return askAgain(
+          "Ji, kripya batayein: agar shift hona pade, to aap kab tak shift ho sakti hain?",
         );
+      }
 
-      if (unclear) {
+      if (isGenericAcknowledgement(followUpAnswer)) {
+        return askAgain(
+          "Theek hai. Agar aapko shift hona pade, toh aap kab tak shift ho sakti hain?",
+        );
+      }
+
+      const isTimelineQuestion =
+        cq.isCounterQuestion ||
+        /\b(?:where|kahan|kidhar|why|kyun|kyu|how\s+far|kitn[aie]\s+door|compulsory|zaroori|zaruri)\b/i.test(normalized) ||
+        /[?]$/.test(normalized);
+
+      if (isTimelineQuestion) {
+        const targetQ = {
+          id: "A1_MOVE_TIMELINE",
+          Step: "A1_MOVE_TIMELINE",
+          text: pending.prompt,
+          category: "Location & movement",
+        };
+        const reply = session.language === "English"
+          ? "Urban Company appointments are at client homes in a 3-4 km cluster of your area. Relocation is only considered if there is strong customer demand in nearby clusters. If you had to shift, how soon could you do so?"
+          : "Urban Company salon-at-home service mein bookings aapke area ke 3-4 km cluster mein hoti hain. Agar aage chalkar zaroorat pade, to aap kab tak shift ho sakti hain?";
+        return respondWithInquiry({
+          targetQuestion: targetQ,
+          inquiryObj: { topic: "travel", isCounterQuestion: true },
+          deterministicReply: reply,
+        });
+      }
+
+      const isUnclearTimeline =
+        /^(?:pata\s+nahi|pata\s+nahin|not\s+sure|don't\s+know|dont\s+know|unsure|maybe|shayad|depend|depends|dekhna\s+padega)[.!?\s]*$/i.test(
+          normalized,
+        ) ||
+        /\b(?:depend|depends|not\s+sure|pakka\s+nahi|pata\s+nahi|shayad)\b/i.test(normalized);
+
+      if (isUnclearTimeline && !pending.probeGiven) {
+        pending.probeGiven = true;
         return askAgain(
           "Aap kab tak shift ho sakti hain? Agar abhi pakka nahi hai, toh approximate time batayein.",
+        );
+      }
+
+      const isUnwillingShift =
+        /\b(?:shift\s+nahi|relocate\s+nahi|move\s+nahi|nahi\s+ho\s+sakti|nahi\s+ho\s+sakta|cannot\s+shift|can't\s+shift|cannot\s+relocate|can't\s+relocate|won't\s+shift|won't\s+relocate|not\s+possible|nahi\s+ho\s+payega)\b/i.test(
+          normalized,
+        ) ||
+        /^(?:nahi|nahin|nhi|no|never)[.!?।\s]*$/iu.test(normalized);
+
+      if (isUnwillingShift) {
+        session.invalidAttempts = {};
+        session.travelWillingness = "no";
+        saveFollowUp();
+        if (lastCheck) {
+          lastCheck.moveTimelineAnswer = followUpAnswer;
+          lastCheck.travelWillingness = "no";
+        }
+        session.pendingFollowUp = null;
+        advanceToNextApplicableQuestion(session);
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: session.currentQuestionIndex >= questions.length,
+            acknowledgement: getNaturalAcknowledgement(question, session),
+            manualReviewRequired: true,
+            followUpCaptured: true,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: questions[session.currentQuestionIndex],
+          },
+        };
+      }
+
+      const isValidTimeline =
+        /\b(?:immediate(?:ly)?|turant|abhi|kisi\s+bhi\s+samay|anytime|jaldi|asap|as\s+soon\s+as\s+possible|ready|willing|within\s+a\s+(?:week|month|few\s+days)|next\s+(?:week|month)|agale\s+mahine|agli\s+week)\b/i.test(
+          normalized,
+        ) ||
+        /\b\d+\s*(?:din|day|days|haft[ae]|week|weeks|mahina|mahine|month|months|saal|year|years)\b/i.test(
+          normalized,
+        ) ||
+        /\b(?:ek|do|teen|char|paanch|chhe|one|two|three|four|five|six)\s+(?:din|haft[ae]|week|weeks|mahina|mahine|month|months)\b/i.test(
+          normalized,
+        ) ||
+        /\b(?:notice\s+period|kuch\s+din|few\s+days|couple\s+of\s+weeks|thode\s+din|samay\s+lagega)\b/i.test(
+          normalized,
+        ) ||
+        (isUnclearTimeline && pending.probeGiven);
+
+      if (!isValidTimeline) {
+        return handleInvalidAttempt(
+          session,
+          {
+            id: "A1_MOVE_TIMELINE",
+            text: pending.prompt,
+          },
+          {
+            clarificationPrefix:
+              "Maaf kijiye, mujhe samajh nahi aaya. Kripya batayein ki agar zaroorat pade to aap lagbhag kab tak shift ho sakti hain (jaise 1 hafta, 1 mahina, ya turant)",
+            warningPrefix:
+              "Aapka jawab is sawal se juda hua nahi hai. Ye aapka aakhri attempt hai. Kripya spasht timeline batayein",
+            repeatQuestionText: pending.prompt,
+            candidateAnswer: followUpAnswer,
+          },
         );
       }
 
@@ -1932,8 +2672,9 @@ async function submitAnswer({
 
     if (pending.type === "contextual_probe") {
       let inquiry = null;
+      let interp = null;
       try {
-        const interp = await interpretAnswerImpl({
+        interp = await interpretAnswerImpl({
           question: pending.prompt,
           answer: followUpAnswer,
           questionId: `${pending.questionId}_FOLLOW_UP`,
@@ -2048,8 +2789,73 @@ async function submitAnswer({
         };
       }
 
+      if (
+        (interp && (interp.intent === "CONTINUE_INTERVIEW" || interp.unifiedIntent === UNIFIED_INTENTS.CONTINUE_INTERVIEW)) ||
+        isExplicitContinueRequest(followUpAnswer)
+      ) {
+        const isEnglish = session.language === "English";
+        const reprompt = isEnglish
+          ? "Sure, let's continue with our question:"
+          : "Ji, chaliye sawal par aage badhte hain:";
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            followUpRequired: true,
+            followUp: pending,
+            message: `${reprompt} ${pending.prompt}`,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: {
+              id: `${pending.questionId}_FOLLOW_UP`,
+              Step: `${pending.questionId}_FOLLOW_UP`,
+              text: pending.prompt,
+              category: pending.category || "General",
+            },
+          },
+        };
+      }
+
+      if (
+        (interp && (interp.intent === "ACKNOWLEDGEMENT" || interp.unifiedIntent === UNIFIED_INTENTS.ACKNOWLEDGEMENT)) ||
+        isGenericAcknowledgement(followUpAnswer)
+      ) {
+        const isEnglish = session.language === "English";
+        const reprompt = isEnglish
+          ? "Understood. Please share your answer to the question:"
+          : "Theek hai. Kripya is sawal ka apna jawab batayein:";
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            followUpRequired: true,
+            followUp: pending,
+            message: `${reprompt} ${pending.prompt}`,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: {
+              id: `${pending.questionId}_FOLLOW_UP`,
+              Step: `${pending.questionId}_FOLLOW_UP`,
+              text: pending.prompt,
+              category: pending.category || "General",
+            },
+          },
+        };
+      }
+
       const isIrrelevantFollowUp =
-        /\b(?:biryani|pizza|burger|maggi|cricket|football|movie|movies|cinema|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|blah\s+blah|asdf|qwerty|chair|table|desk|bottle|cat|dog|billi|kutta)\b/i.test(
+        (interp &&
+          (interp.intent === "IRRELEVANT_OR_NONRESPONSIVE" ||
+            interp.answerStatus === "irrelevant")) ||
+        /\b(?:biryani|pizza|burger|maggi|cricket|football|movie|movies|cinema|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|blah\s+blah|asdf|qwerty|chair|table|desk|bottle|cat|dog|billi|kutta|weather|mausam|barish|rain|politics|election|favourite|favorite|colour|color|blue|red|green|yellow|eating)\b/i.test(
+          normalized,
+        ) ||
+        isOffTopicQuestionUtterance(followUpAnswer) ||
+        /^(?:(?:namaste|namaskar|hello|hi|hey|good\s*morning|good\s*evening|good\s*afternoon)[.!?\s]*){2,}$/iu.test(
           normalized,
         ) ||
         /^(?:noise|<no speech>|<empty>|\.{2,}|uh+|um+|hmm+)$/i.test(normalized) ||
@@ -2215,25 +3021,12 @@ async function submitAnswer({
           cq.reply ||
           ""
         ).trim();
-        const isRepeat = interpretation?.topic === "repeat_question";
-        const combinedMessage = isRepeat
-          ? `${replyText} ${question.text}`
-          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
-            ? replyText
-            : `${replyText} ${question.text}`;
-        return {
-          status: 200,
-          body: {
-            success: true,
-            completed: false,
-            clarificationRequired: true,
-            counterQuestionHandled: true,
-            message: combinedMessage,
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: questions.length,
-            question,
-          },
-        };
+        const activeInquiryObj = inquiry || cq || interpretation || null;
+        return respondWithInquiry({
+          targetQuestion: question,
+          inquiryObj: activeInquiryObj,
+          deterministicReply: replyText,
+        });
       }
 
       if (consentOutcome === "unclear") {
@@ -2277,11 +3070,49 @@ async function submitAnswer({
       };
     }
 
-    const detectedLanguage = classifyLanguage(cleanAnswer) || "Hindi";
+    const detectedLanguage = classifyLanguage(cleanAnswer) || (session.pendingConsentOnly ? null : session.language);
+    if (session.pendingConsentOnly && !detectedLanguage) {
+      session.pendingConsentOnly = false;
+      session.consentOutcome = "accepted";
+      const isEnglish = session.language === "English" || Boolean(session.lastInquiryEnglish);
+      const languagePrompt = isEnglish
+        ? "Would you like to speak in Hindi or English?"
+        : "Aap Hindi mein baat karengi ya English mein?";
+      session.pendingFollowUp = {
+        questionId: "A0",
+        type: "language_preference",
+        prompt: languagePrompt,
+        category: "Setup",
+      };
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          followUpRequired: true,
+          followUp: session.pendingFollowUp,
+          consentOutcome: "accepted",
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          message: languagePrompt,
+          question: {
+            id: "A0_LANGUAGE_PREFERENCE",
+            Step: "A0_LANGUAGE_PREFERENCE",
+            text: languagePrompt,
+            category: "Setup",
+          },
+        },
+      };
+    }
+
+    session.pendingConsentOnly = false;
+    const finalLanguage = detectedLanguage || "Hindi";
     session.consentOutcome = "accepted";
-    session.language = detectedLanguage;
-    mergeShortTermMemoryFacts(session, { preferredLanguage: detectedLanguage });
-    answerRecord.language = detectedLanguage;
+    session.language = finalLanguage;
+    mergeShortTermMemoryFacts(session, { preferredLanguage: finalLanguage });
+    answerRecord.language = finalLanguage;
     session.currentQuestionIndex += 1;
 
     return {
@@ -2309,44 +3140,66 @@ async function submitAnswer({
       );
     const result = classifyLocation(cleanAnswer);
 
-    if (isCandidateQuestion || (result.outcome === "clarification" && !result.area)) {
+    if (isCandidateQuestion || result.outcome === "clarification" || !result.area) {
       const inquiry = await checkCandidateInquiry(question.text, question.id);
-      if (inquiry) {
+      if (inquiry || cq.isCounterQuestion) {
+        const locFacts = extractFallbackFacts(cleanAnswer);
+        if (locFacts && Object.keys(locFacts).length > 0) {
+          mergeShortTermMemoryFacts(session, locFacts);
+          if (locFacts.currentCity) {
+            session.candidateCity = locFacts.currentCity;
+          }
+        }
         const replyText = (
-          inquiry.counterQuestionAnswer ||
-          inquiry.responseText ||
-          inquiry.clarificationQuestion ||
+          inquiry?.counterQuestionAnswer ||
+          inquiry?.responseText ||
+          inquiry?.clarificationQuestion ||
           cq.reply ||
           ""
         ).trim();
-        const isRepeat = interpretation?.topic === "repeat_question";
-        const combinedMessage = isRepeat
-          ? `${replyText} ${question.text}`
-          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
-            ? replyText
-            : `${replyText} ${question.text}`;
-        return {
-          status: 200,
-          body: {
-            success: true,
-            completed: false,
-            clarificationRequired: true,
-            counterQuestionHandled: true,
-            message: combinedMessage,
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: questions.length,
-            question,
-          },
-        };
+        const activeInquiryObj = inquiry || cq || interpretation || null;
+        return respondWithInquiry({
+          targetQuestion: question,
+          inquiryObj: activeInquiryObj,
+          deterministicReply: replyText,
+        });
       }
 
-      if (result.outcome === "clarification" && !result.area) {
+      if (result.outcome === "clarification" || !result.area) {
+        const isEnglish = session.language === "English";
+        const isOffTopic = isOffTopicQuestionUtterance(cleanAnswer);
+        const currentAttempts =
+          ((session.invalidAttempts && session.invalidAttempts["A1"]) || 0) + 1;
+
+        let clarMsg;
+        if (currentAttempts === 1) {
+          if (isOffTopic) {
+            clarMsg = isEnglish
+              ? "I cannot answer questions unrelated to the interview. Let's focus on the screening. Please tell us your city or local area name."
+              : "Maaf kijiye, main interview se alag sawalon ke jawab nahi de sakti. Chaliye screening par dhyan dete hain. Kripya apne sheher ya area ka naam batayein.";
+          } else {
+            clarMsg = isEnglish
+              ? "We need to know your city and local area for screening. Please tell us the name of your city or local area."
+              : "Maaf kijiye, screening ke liye humein aapka ilaka jaanna zaroori hai. Kripya apne sheher ya area ka naam batayein.";
+          }
+        } else {
+          if (isOffTopic) {
+            clarMsg = isEnglish
+              ? "Your previous responses were not related to the interview. This is your final attempt. Please clearly state your city and local area name."
+              : "Aapke pehle ke jawab interview se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apne sheher aur local area ka naam spasht batayein.";
+          } else {
+            clarMsg = isEnglish
+              ? "Your previous answers were not related to this question. This is your final attempt. Please clearly state your city and local area name."
+              : "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apne sheher aur local area ka naam spasht batayein.";
+          }
+        }
+
         return handleInvalidAttempt(session, question, {
-          clarificationPrefix:
-            "Maaf kijiye, screening ke liye humein aapka ilaka jaanna zaroori hai. Kripya apne sheher ya area ka naam batayein",
-          warningPrefix:
-            "Aapke pehle ke jawab is sawal se jude hue nahi the. Ye aapka aakhri attempt hai. Kripya apne sheher aur local area ka naam spasht batayein",
-          repeatQuestionText: question.text,
+          clarificationPrefix: clarMsg,
+          warningPrefix: clarMsg,
+          firstAttemptMessage: clarMsg,
+          secondAttemptMessage: clarMsg,
+          repeatQuestionText: clarMsg,
           candidateAnswer: cleanAnswer,
         });
       }
@@ -2463,7 +3316,7 @@ async function submitAnswer({
         status: 200,
         body: {
           success: true,
-          completed: true,
+          completed: false,
           clarificationRequired: true,
           message: `${reprompt} ${question.text}`,
           questionNumber: session.currentQuestionIndex + 1,
@@ -2486,25 +3339,12 @@ async function submitAnswer({
           cq.reply ||
           ""
         ).trim();
-        const isRepeat = interpretation?.topic === "repeat_question";
-        const combinedMessage = isRepeat
-          ? `${replyText} ${question.text}`
-          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
-            ? replyText
-            : `${replyText} ${question.text}`;
-        return {
-          status: 200,
-          body: {
-            success: true,
-            completed: false,
-            clarificationRequired: true,
-            counterQuestionHandled: true,
-            message: combinedMessage,
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: questions.length,
-            question,
-          },
-        };
+        const activeInquiryObj = inquiry || cq || interpretation || null;
+        return respondWithInquiry({
+          targetQuestion: question,
+          inquiryObj: activeInquiryObj,
+          deterministicReply: replyText,
+        });
       }
 
       if (result.outcome === "clarification") {
@@ -2624,25 +3464,12 @@ async function submitAnswer({
           inquiry.clarificationQuestion ||
           ""
         ).trim();
-        const isRepeat = interpretation?.topic === "repeat_question";
-        const combinedMessage = isRepeat
-          ? `${replyText} ${question.text}`
-          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
-            ? replyText
-            : `${replyText} ${question.text}`;
-        return {
-          status: 200,
-          body: {
-            success: true,
-            completed: false,
-            clarificationRequired: true,
-            counterQuestionHandled: true,
-            message: combinedMessage,
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: questions.length,
-            question,
-          },
-        };
+        const activeInquiryObj = inquiry || interpretation || null;
+        return respondWithInquiry({
+          targetQuestion: question,
+          inquiryObj: activeInquiryObj,
+          deterministicReply: replyText,
+        });
       }
 
       if (session.profileName) {
@@ -2862,25 +3689,12 @@ async function submitAnswer({
           cq.reply ||
           ""
         ).trim();
-        const isRepeat = interpretation?.topic === "repeat_question";
-        const combinedMessage = isRepeat
-          ? `${replyText} ${question.text}`
-          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
-            ? replyText
-            : `${replyText} ${question.text}`;
-        return {
-          status: 200,
-          body: {
-            success: true,
-            completed: false,
-            clarificationRequired: true,
-            counterQuestionHandled: true,
-            message: combinedMessage,
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: questions.length,
-            question,
-          },
-        };
+        const activeInquiryObj = inquiry || cq || interpretation || null;
+        return respondWithInquiry({
+          targetQuestion: question,
+          inquiryObj: activeInquiryObj,
+          deterministicReply: replyText,
+        });
       }
     }
 
@@ -3119,6 +3933,97 @@ async function submitAnswer({
 
   interpretation = null;
   if (!isSpecialQuestion) {
+    const cq = detectCounterQuestion(cleanAnswer, question, { language: session.language });
+    const isExplicitCandidateQuestion =
+      cq.isCounterQuestion ||
+      /[?]|(?:^|\b)(?:where|kahan|kidhar|why|kyun|kyu|how\s+far|kitn[aie]\s+door|kitna\s+distance|kaise|what\s+if|agar\s+mujhe|compulsory|zaroori\s+hai|zaruri\s+hai|batao|explain)\b/i.test(
+        cleanAnswer,
+      );
+
+    if (isExplicitCandidateQuestion) {
+      const inquiry = await checkCandidateInquiry(question.text, question.id);
+      if (inquiry || cq.isCounterQuestion) {
+        const replyText = (
+          inquiry?.counterQuestionAnswer ||
+          inquiry?.responseText ||
+          inquiry?.clarificationQuestion ||
+          cq.reply ||
+          ""
+        ).trim();
+        const activeInquiryObj = inquiry || cq || null;
+        return respondWithInquiry({
+          targetQuestion: question,
+          inquiryObj: activeInquiryObj,
+          deterministicReply: replyText,
+        });
+      }
+    }
+
+    const isIrrelevantUtterance =
+      /\b(?:biryani|pizza|burger|maggi|cricket|football|movie|movies|cinema|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|blah\s+blah|asdf|qwerty|cat|dog|billi|kutta|weather|mausam|barish|rain|favourite\s+colou?r|favorite\s+colou?r)\b/i.test(
+        cleanAnswer,
+      ) ||
+      isOffTopicQuestionUtterance(cleanAnswer) ||
+      /^(?:(?:namaste|namaskar|hello|hi|hey|good\s*morning|good\s*evening|good\s*afternoon)[.!?\s]*){2,}$/iu.test(
+        cleanAnswer,
+      );
+
+    if (isIrrelevantUtterance) {
+      return handleInvalidAttempt(session, question, {
+        clarificationPrefix:
+          "Maaf kijiye, ye jawab is sawal se juda hua nahi hai. Kripya seedha jawab dein",
+        warningPrefix:
+          "Aapka jawab is sawal se juda hua nahi hai. Ye aapka aakhri attempt hai. Kripya spasht jawab dein",
+        repeatQuestionText: question.text,
+        candidateAnswer: cleanAnswer,
+      });
+    }
+
+    const isAmbiguousOrUncertain =
+      /^(?:it\s+depends|depends|maybe|shayad|not\s+sure|unsure|pata\s+nahi|pata\s+nahin|don't\s+know|dont\s+know|no\s+idea|samajh\s+nahi\s+aaya|dekhna\s+padega)[.!?\s]*$/i.test(
+        cleanAnswer,
+      );
+
+    const alreadyProbedThisQuestion = Boolean(session.followUpsGiven?.[question.id]);
+    if (isAmbiguousOrUncertain && !alreadyProbedThisQuestion) {
+      session.followUpsGiven = session.followUpsGiven || {};
+      session.followUpsGiven[question.id] = true;
+      session.invalidAttempts = {};
+      const bankQ = questions[session.currentQuestionIndex];
+      const probeText =
+        bankQ && bankQ["Follow-up probe"] && bankQ["Follow-up probe"] !== "—"
+          ? bankQ["Follow-up probe"]
+          : (session.language === "English"
+              ? "Could you please elaborate on that in a little more detail?"
+              : "Aap is baare mein thoda aur spasht batayein.");
+      session.pendingFollowUp = {
+        questionId: question.id,
+        type: "contextual_probe",
+        prompt: probeText,
+        originalAnswer: cleanAnswer,
+        category: question.category,
+      };
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          followUpRequired: true,
+          followUp: session.pendingFollowUp,
+          message: probeText,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: {
+            id: `${question.id}_FOLLOW_UP`,
+            Step: `${question.id}_FOLLOW_UP`,
+            text: probeText,
+            category: question.category,
+          },
+        },
+      };
+    }
+
     const interpretationQuestionIndex = session.currentQuestionIndex;
     try {
       interpretation = await interpretAnswerImpl({
@@ -3166,9 +4071,18 @@ async function submitAnswer({
         mergeShortTermMemoryFacts(session, interpretation.extractedFacts);
       }
 
+      const unifiedIntent =
+        interpretation.unifiedIntent ||
+        normalizeIntent(interpretation.intent, interpretation.answerStatus);
+
       if (
+        unifiedIntent === UNIFIED_INTENTS.CANDIDATE_QUESTION ||
+        unifiedIntent === UNIFIED_INTENTS.CLARIFICATION_REQUEST ||
         interpretation.intent === "RELEVANT_COUNTER_QUESTION" ||
         interpretation.intent === "CLARIFICATION_REQUEST" ||
+        interpretation.intent === "QUESTION_RATIONALE_INQUIRY" ||
+        interpretation.intent === "CANDIDATE_CONSTRAINT_OR_HESITATION" ||
+        interpretation.intent === "CANDIDATE_QUESTION" ||
         interpretation.answerStatus === "counter_question"
       ) {
         const isEnglish = session.language === "English";
@@ -3177,22 +4091,36 @@ async function submitAnswer({
           interpretation.responseText ||
           interpretation.clarificationQuestion ||
           (isEnglish
-            ? "Urban Company is a salon-at-home service where bookings are at customer homes within a 3-4 km cluster of your area."
-            : "Urban Company salon-at-home service hai jahan kaam aapke area ke 3-4 km cluster mein customer ke ghar par hota hai.");
+            ? "Urban Company is a salon-at-home service where bookings are arranged at customer homes in nearby local areas."
+            : "Urban Company salon-at-home service hai jahan kaam aapke paas ke local area mein customer ke ghar par hota hai.");
         const replyText = reply.trim();
-        const isRepeat = interpretation?.topic === "repeat_question";
-        const combinedMessage = isRepeat
-          ? `${replyText} ${question.text}`
-          : replyText.toLowerCase().includes(question.text.toLowerCase().trim()) || question.id === "A2"
-            ? replyText
-            : `${replyText} ${question.text}`;
+        const activeInquiryObj = interpretation || null;
+        return respondWithInquiry({
+          targetQuestion: question,
+          inquiryObj: activeInquiryObj,
+          deterministicReply: replyText,
+        });
+      }
+
+      if (
+        unifiedIntent === UNIFIED_INTENTS.CONTINUE_INTERVIEW ||
+        interpretation.intent === "CONTINUE_INTERVIEW" ||
+        isExplicitContinueRequest(cleanAnswer)
+      ) {
+        session.invalidAttempts = {};
+        const isEnglish = session.language === "English";
+        const reprompt =
+          interpretation.responseText ||
+          (isEnglish
+            ? "Sure, let's continue with our question:"
+            : "Ji, chaliye sawal par aage badhte hain:");
+        const combinedMessage = `${reprompt} ${question.text}`;
         return {
           status: 200,
           body: {
             success: true,
             completed: false,
             clarificationRequired: true,
-            counterQuestionHandled: true,
             message: combinedMessage,
             questionNumber: session.currentQuestionIndex + 1,
             totalQuestions: questions.length,
@@ -3201,7 +4129,37 @@ async function submitAnswer({
         };
       }
 
-      if (interpretation.intent === "UNINTELLIGIBLE_OR_NO_INPUT") {
+      if (
+        unifiedIntent === UNIFIED_INTENTS.ACKNOWLEDGEMENT ||
+        interpretation.intent === "ACKNOWLEDGEMENT" ||
+        isGenericAcknowledgement(cleanAnswer)
+      ) {
+        session.invalidAttempts = {};
+        const isEnglish = session.language === "English";
+        const reprompt =
+          interpretation.responseText ||
+          (isEnglish
+            ? "Understood. Please share your answer to the question:"
+            : "Theek hai. Kripya is sawal ka apna jawab batayein:");
+        const combinedMessage = `${reprompt} ${question.text}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            message: combinedMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question,
+          },
+        };
+      }
+
+      if (
+        unifiedIntent === UNIFIED_INTENTS.UNINTELLIGIBLE_OR_NO_INPUT ||
+        interpretation.intent === "UNINTELLIGIBLE_OR_NO_INPUT"
+      ) {
         session.invalidAttempts = {};
         const isEnglish = session.language === "English";
         const reprompt =
@@ -3225,7 +4183,9 @@ async function submitAnswer({
       }
 
       if (
+        unifiedIntent === UNIFIED_INTENTS.AMBIGUOUS_RESPONSE ||
         interpretation.intent === "PARTIAL_OR_AMBIGUOUS_ANSWER" ||
+        interpretation.intent === "AMBIGUOUS_RESPONSE" ||
         interpretation.needsClarification
       ) {
         const isUncertainOrSkipped =
@@ -3772,7 +4732,12 @@ module.exports = {
   mergeShortTermMemoryFacts,
   recordShortTermMemoryTurn,
   clearShortTermMemory,
+  createActiveInquiry,
+  startActiveInquiry,
+  clearActiveInquiry,
+  getActiveInquiry,
   isSessionExpired,
   cleanupExpiredSessions,
   INTERVIEW_SESSION_TTL_MS,
+  MAX_ADAPTIVE_INQUIRY_TURNS,
 };

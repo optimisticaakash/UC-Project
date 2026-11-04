@@ -131,7 +131,7 @@ export function createLiveInputTurn() {
 
       // Requirement 1: While AI question playback is actively playing through speakers,
       // do not treat microphone input as the candidate's answer unless model turn was explicitly interrupted.
-      if (content.interrupted && phase === "model") {
+      if (content.interrupted && (phase === "model" || isPlaybackActive)) {
         pendingModelInterruption = false;
         modelTurnInterrupted = true;
         interruptionAwaitingTranscript = true;
@@ -171,6 +171,9 @@ export function createLiveInputTurn() {
           transcriptFinalized = false;
           answerIssued = false;
           latestInterimText = interim;
+          if (phase === "model" && modelTurnInterrupted) {
+            phase = "candidate";
+          }
         }
       }
 
@@ -204,7 +207,7 @@ export function createLiveInputTurn() {
         if (input.finished !== false) {
           candidateInterimActivity = false;
           latestInterimText = "";
-          if (phase === "listening") {
+          if (phase === "listening" || (phase === "model" && modelTurnInterrupted)) {
             phase = "candidate";
           }
           if (phase === "model" || phase === "candidate") {

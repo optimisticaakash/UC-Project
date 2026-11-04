@@ -134,6 +134,9 @@ export function createProgressiveCaptionsController() {
     },
 
     markPlaybackComplete() {
+      if (isInterrupted) {
+        return lastRevealedText;
+      }
       isPlaybackCompleted = true;
       const fullText = getCleanSourceText();
       lastRevealedText = fullText;
@@ -144,6 +147,10 @@ export function createProgressiveCaptionsController() {
       isInterrupted = true;
       // Freeze revealed text at current point
       return lastRevealedText;
+    },
+
+    isInterrupted() {
+      return isInterrupted;
     },
 
     handlePause() {
