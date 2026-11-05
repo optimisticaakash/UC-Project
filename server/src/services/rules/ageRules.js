@@ -1,14 +1,15 @@
 function evaluateAge(answer) {
   const input = answer.trim();
   let age = null;
+  const normalized = input.replace(/[०-९]/g, (d) => "०१२३४५६७८९".indexOf(d));
 
   // Accept an age phrase only when the whole answer matches, so unrelated
   // numbers in a sentence are not treated as the candidate's age.
   // Supports Hindi (Devanagari & Romanized) and English age formats.
-  const prefix = String.raw`(?:(?:मैं|मेरी\s+उम्र|मेरी\s+उमर|मेरी\s+आयु|उम्र|उमर|meri\s+age|meri\s+umar|meri\s+umr|umar|umr|age|my\s+age\s+is|my\s+age|i\s+am|i'm)\s*(?:is|hai|है)?\s*)?`;
+  const prefix = String.raw`(?:(?:main|mein|मैं|hum|meri\s+age|meri\s+umar|meri\s+umr|umar|umr|age|मेरी\s+उम्र|मेरी\s+उमर|मेरी\s+आयु|उम्र|उमर|my\s+age\s+is|my\s+age|i\s+am|i'm)\s*(?:is|hai|है)?\s*)?`;
   const unit = String.raw`(?:\s*(?:साल|वर्ष|saal|sal|varsh|years?(?:\s+old)?|yrs?)(?:\s*(?:का|की|के|ka|ki|ke))?)?`;
-  const suffix = String.raw`(?:\s*(?:है|हैं|हूँ|हूं|hai|hain|hoon|hun|ki\s+hoon|ka\s+hoon|की\s+हूँ))?`;
-  const ageMatch = input.match(
+  const suffix = String.raw`(?:\s*(?:है|हैं|हूँ|हूं|hai|hain|hoon|hun|ki\s+hoon|ka\s+hoon|ki\s+hu|ka\s+hu|की\s+हूँ|ki|ka))?`;
+  const ageMatch = normalized.match(
     new RegExp(String.raw`^${prefix}(\d{1,3})${unit}${suffix}[.!?।]*$`, "iu"),
   );
 
@@ -21,11 +22,11 @@ function evaluateAge(answer) {
     let year;
     let match;
 
-   if ((match = input.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/))) {
+   if ((match = normalized.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/))) {
      day = Number(match[1]);
      month = Number(match[2]);
      year = Number(match[3]);
-   } else if ((match = input.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) {
+   } else if ((match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) {
      year = Number(match[1]);
      month = Number(match[2]);
      day = Number(match[3]);

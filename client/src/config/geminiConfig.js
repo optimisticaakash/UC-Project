@@ -23,7 +23,7 @@ export const BACKEND_WAIT_ANNOUNCEMENT_MS = Math.max(
   Number(
     (typeof import.meta !== "undefined" &&
       import.meta.env?.VITE_BACKEND_WAIT_ANNOUNCEMENT_MS) ||
-      1400,
+      3000,
   ),
 );
 

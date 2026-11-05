@@ -76,7 +76,13 @@ export async function waitForPlaybackAndPause({
 
     // Only pause if audio sources were actually active and drained.
     // If the queue was already idle, do not impose an unconditional 1000ms delay.
-    if (wasActive || playbackQueue.sourceStartRevision !== startRevision) {
+    // When playback was cancelled early because a real response is ready, skip the
+    // 1000ms pause so the ready question or speech is not blocked.
+    const wasCancelledEarly = playbackOutcome === "response_ready";
+    if (
+      (wasActive || playbackQueue.sourceStartRevision !== startRevision) &&
+      !wasCancelledEarly
+    ) {
       await pause(1000);
       if (!isCurrent()) return { ready: false, playbackOutcome };
     }

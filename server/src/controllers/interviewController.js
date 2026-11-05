@@ -182,8 +182,28 @@ async function startInterview(req, res) {
   let started;
   try {
     const candidateId = req.candidate?.candidateId;
+    if (candidateId && persistence.isConnected()) {
+      try {
+        const storedSessions = await persistence.listSessionsByCandidate(candidateId);
+        for (const stored of storedSessions) {
+          if (stored.status === "in_progress" || stored.status === "paused") {
+            stored.status = "incomplete";
+            stored.endedAt = new Date().toISOString();
+            await persistence.saveSession(stored);
+          }
+        }
+      } catch (err) {
+        console.warn("[UC Interview] Could not archive prior candidate sessions:", err?.name || "Error");
+      }
+    }
     started = interviewService.startInterview({
       candidateId,
+      profileName: req.candidate?.name,
+    });
+    console.info("[UC Interview Diagnostics] interview_start_identity", {
+      candidateId,
+      profileName: req.candidate?.name || null,
+      sessionId: started.sessionId,
     });
     try {
       await persistence.saveSession(interviewService.getSessionForPersistence(started.sessionId));
@@ -222,6 +242,15 @@ async function submitAnswerUnlocked(req, res) {
       if (!ownedSession || ownedSession.candidateId !== req.candidate.candidateId) {
         return res.status(404).json({ success: false, message: "Interview session not found." });
       }
+      if (!ownedSession.profileName && req.candidate.name) {
+        ownedSession.profileName = req.candidate.name;
+      }
+      console.info("[UC Interview Diagnostics] answer_request_identity", {
+        candidateId: req.candidate.candidateId,
+        candidateProfileName: req.candidate.name,
+        sessionProfileName: ownedSession.profileName,
+        submittedAnswer: typeof submittedAnswer === "string" ? submittedAnswer : null,
+      });
     }
     console.info("[UC Interview Diagnostics] answer_request_received", {
       requestId:
@@ -347,6 +376,16 @@ async function submitAnswerUnlocked(req, res) {
       await generateAndPersistReportPdf(sessionId).catch((error) => {
         console.error("Final report PDF generation failed:", error?.name || "Error", error?.code || null);
       });
+    }
+
+    if (result.body && typeof result.body === "object") {
+      result.body.timing = {
+        serviceElapsedMs: Number(
+          (Number(process.hrtime.bigint() - requestStartedAt) / 1e6).toFixed(1),
+        ),
+        interpretationElapsedMs: result.body.interpretationElapsedMs || null,
+        modelCallElapsedMs: result.body.modelCallElapsedMs || null,
+      };
     }
 
     return res.status(result.status).json(result.body);
@@ -822,6 +861,35 @@ async function getResponses(req, res) {
   }
 }
 
+async function updateCandidateName(req, res) {
+  const sessionId = req.body?.sessionId;
+  const name = req.body?.name;
+  if (!sessionId || !name || typeof name !== "string") {
+    return res.status(400).json({ success: false, message: "Session ID and candidate name are required." });
+  }
+  if (req.candidate) {
+    const ownedSession = interviewService.getSessionForPersistence(sessionId);
+    if (!ownedSession || ownedSession.candidateId !== req.candidate.candidateId) {
+      return res.status(404).json({ success: false, message: "Interview session not found." });
+    }
+  }
+  return serializeSessionWrite(sessionId, async () => {
+    const result = interviewService.updateCandidateName(sessionId, name);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    const sessionDoc = interviewService.getSessionForPersistence(sessionId);
+    try {
+      if (persistence.isConnected()) {
+        await persistence.saveSession(sessionDoc);
+      }
+    } catch (saveError) {
+      console.warn("Failed to persist updated candidate name:", saveError?.message);
+    }
+    return res.status(200).json(result);
+  });
+}
+
 module.exports = {
   startInterview,
   submitAnswer,
@@ -839,4 +907,5 @@ module.exports = {
   interpretCandidateAnswer,
   flagManualReview,
   getResponses,
+  updateCandidateName,
 };

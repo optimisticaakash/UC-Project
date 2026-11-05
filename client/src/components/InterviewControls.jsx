@@ -16,36 +16,38 @@ export default function InterviewControls({
         flexWrap: "wrap",
         alignItems: "center",
         justifyContent: "center",
-        gap: 12,
-        margin: "0 auto",
+        gap: 14,
+        margin: "24px auto 0",
       }}
     >
       {isPaused ? (
         <button
+          type="button"
           className="uc-action uc-primary"
           onClick={resume}
           disabled={lifecycleBusy}
         >
           <svg
-            width="19"
-            height="19"
+            width="18"
+            height="18"
             viewBox="0 0 24 24"
             fill="currentColor"
             aria-hidden="true"
           >
             <polygon points="6 4 20 12 6 20 6 4" />
           </svg>
-          Resume Interview
+          <span>Resume Interview</span>
         </button>
       ) : (
         <button
+          type="button"
           className="uc-action uc-primary"
           onClick={start}
           disabled={startingRef.current || lifecycleBusy || isInterviewActive}
         >
           <svg
-            width="19"
-            height="19"
+            width="18"
+            height="18"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -57,19 +59,20 @@ export default function InterviewControls({
             <rect x="9" y="2" width="6" height="13" rx="3" />
             <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" />
           </svg>
-          Start Interview
+          <span>Start Interview</span>
         </button>
       )}
 
       {isInterviewActive && !isPaused && typeof pause === "function" && (
         <button
+          type="button"
           className="uc-action uc-secondary"
           onClick={pause}
           disabled={lifecycleBusy}
         >
           <svg
-            width="17"
-            height="17"
+            width="18"
+            height="18"
             viewBox="0 0 24 24"
             fill="currentColor"
             aria-hidden="true"
@@ -77,25 +80,26 @@ export default function InterviewControls({
             <rect x="6" y="4" width="4" height="16" rx="1" />
             <rect x="14" y="4" width="4" height="16" rx="1" />
           </svg>
-          Pause Interview
+          <span>Pause Interview</span>
         </button>
       )}
 
       <button
+        type="button"
         className="uc-action uc-secondary"
         onClick={() => stop("user_requested")}
         disabled={(!isInterviewActive && !isPaused) || lifecycleBusy}
       >
         <svg
-          width="17"
-          height="17"
+          width="18"
+          height="18"
           viewBox="0 0 24 24"
           fill="currentColor"
           aria-hidden="true"
         >
           <rect x="5" y="5" width="14" height="14" rx="2" />
         </svg>
-        End Interview
+        <span>End Interview</span>
       </button>
     </div>
   );

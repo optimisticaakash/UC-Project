@@ -22,12 +22,16 @@ export function isInternalSpeechMarker(value) {
 }
 
 export function createLiveInputTurn() {
+
+  let interruptionAwaitingTranscript = false;
   let phase = "listening";
   let candidateActivity = false;
   let candidateInterimActivity = false;
   let modelTurnInterrupted = false;
+  let pendingModelInterruption = false;
   let candidateResponseComplete = false;
   let transcript = "";
+  let latestInterimText = "";
   let transcriptFinalized = false;
   let answerIssued = false;
   let seenTranscripts = new Set();
@@ -40,14 +44,22 @@ export function createLiveInputTurn() {
     candidateInterimActivity = false;
     modelTurnInterrupted = false;
     candidateResponseComplete = false;
+    pendingModelInterruption = false;
     transcript = "";
+    latestInterimText = "";
     transcriptFinalized = false;
     answerIssued = false;
+    interruptionAwaitingTranscript = false;
     seenTranscripts = new Set();
   }
 
   function result(answer = null) {
-    return { transcript, answer, activity: false };
+    return {
+      transcript,
+      answer,
+      activity: false,
+      interruptionConfirmed: false,
+    };
   }
 
   return {
@@ -64,17 +76,27 @@ export function createLiveInputTurn() {
 
     finishModelPlayback() {
       if (phase === "model") {
-        if (candidateActivity && candidateResponseComplete) {
-          phase = "candidate";
-        } else if (candidateActivity) {
+        if (
+          modelTurnInterrupted &&
+          (interruptionAwaitingTranscript ||
+            (candidateActivity && candidateResponseComplete))
+        ) {
           phase = "candidate";
         } else {
+          // Allow the same transcript to be processed again after playback.
+          for (const key of seenTranscripts) {
+            seenSessionTranscripts.delete(key);
+          }
+
           phase = "listening";
+          resetCandidate();
         }
       }
 
       let answer = null;
+
       const canEmitAnswer =
+        modelTurnInterrupted &&
         candidateActivity &&
         candidateResponseComplete &&
         transcriptFinalized &&
@@ -87,17 +109,57 @@ export function createLiveInputTurn() {
         answer = transcript;
       }
 
-      return { transcript, answer, activity: false };
+      return {
+        transcript: answer || "",
+        answer,
+        activity: false,
+        interruptionConfirmed: false,
+      };
+    },
+
+    interruptModelPlayback() {
+      if (phase === "model") {
+        candidateActivity = true;
+        modelTurnInterrupted = true;
+      }
     },
 
     handleServerContent(content, { isPlaybackActive = false } = {}) {
       if (!content) return result();
       let activity = false;
+      let interruptionConfirmed = false;
 
-      if (content.interrupted && phase === "model") {
-        candidateActivity = true;
+      // Requirement 1: While AI question playback is actively playing through speakers,
+      // do not treat microphone input as the candidate's answer unless model turn was explicitly interrupted.
+      if (content.interrupted && (phase === "model" || isPlaybackActive)) {
+        pendingModelInterruption = false;
         modelTurnInterrupted = true;
+        interruptionAwaitingTranscript = true;
+        interruptionConfirmed = true;
       }
+
+      const hasCandidateTranscript = Boolean(
+        content.interimInputTranscription?.text?.trim() ||
+        content.inputTranscription?.text?.trim()
+      );
+      if (
+        isPlaybackActive &&
+        !modelTurnInterrupted &&
+        !pendingModelInterruption &&
+        !hasCandidateTranscript &&
+        !content.turnComplete
+      ) {
+        return {
+          transcript: "",
+          answer: null,
+          activity: false,
+          interruptionConfirmed: false,
+        };
+      }
+
+
+
+
 
       if (content.interimInputTranscription?.text?.trim()) {
         const interim = content.interimInputTranscription.text.trim();
@@ -108,6 +170,10 @@ export function createLiveInputTurn() {
           candidateResponseComplete = false;
           transcriptFinalized = false;
           answerIssued = false;
+          latestInterimText = interim;
+          if (phase === "model" && modelTurnInterrupted) {
+            phase = "candidate";
+          }
         }
       }
 
@@ -140,13 +206,23 @@ export function createLiveInputTurn() {
         // assistant-only turn cannot become a candidate answer.
         if (input.finished !== false) {
           candidateInterimActivity = false;
-          if (phase === "listening") {
+          latestInterimText = "";
+          if (phase === "listening" || (phase === "model" && modelTurnInterrupted)) {
             phase = "candidate";
           }
           if (phase === "model" || phase === "candidate") {
             candidateResponseComplete = true;
           }
         }
+      }
+      if (
+        phase === "model" &&
+        candidateActivity &&
+        pendingModelInterruption
+      ) {
+        modelTurnInterrupted = true;
+        pendingModelInterruption = false;
+        interruptionConfirmed = true;
       }
 
       if (content.turnComplete && phase !== "submitted") {
@@ -185,16 +261,44 @@ export function createLiveInputTurn() {
         answerIssued = true;
       }
 
-      return { transcript, answer, activity };
+      return {
+        transcript,
+        answer,
+        activity,
+        interruptionConfirmed,
+      };
     },
 
     commitAnswer() {
-      if (answerIssued) phase = "submitted";
+      if (answerIssued || transcript) phase = "submitted";
     },
 
     retry() {
       phase = "listening";
       resetCandidate();
+    },
+
+    getTranscript() {
+      return (transcript || latestInterimText).trim();
+    },
+
+    isCandidateSpeaking() {
+      return candidateInterimActivity || (candidateActivity && !candidateResponseComplete);
+    },
+
+    hasCandidateSpoken() {
+      const best = (transcript || latestInterimText).trim();
+      return candidateActivity && Boolean(best && !isInternalSpeechMarker(best));
+    },
+
+    suppressSpuriousInterruption() {
+      modelTurnInterrupted = false;
+      interruptionAwaitingTranscript = false;
+      pendingModelInterruption = false;
+    },
+
+    phase() {
+      return phase;
     },
   };
 }

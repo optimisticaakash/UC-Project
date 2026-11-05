@@ -83,6 +83,103 @@ export function getInterviewUiModel({
 
 export const WAITING_STATUS = "Preparing next question...";
 
+export const AI_CAPTION_STATES = {
+  IDLE: "idle",
+  LOADING: "loading",
+  SPEAKING: "speaking",
+  COMPLETED: "completed",
+  INTERRUPTED: "interrupted",
+};
+
+export const AI_CAPTION_LOADING_TEXT = "Preparing your next question...";
+
+export function resolveAiCaptionModel({
+  aiCaptionState = null,
+  isAiSpeaking = false,
+  isPreparingResponse = false,
+  captionText = "",
+  currentQuestion = "",
+} = {}) {
+  let state = aiCaptionState;
+  if (!state) {
+    if (isAiSpeaking) {
+      state = "speaking";
+    } else if (isPreparingResponse) {
+      state = "loading";
+    } else if (captionText) {
+      state = "completed";
+    } else if (currentQuestion) {
+      state = "loading";
+    } else {
+      state = "idle";
+    }
+  }
+
+  if (state === "loading") {
+    return {
+      state: "loading",
+      badgeText: "Preparing...",
+      badgeClass: "text-amber-700 bg-amber-50 animate-pulse",
+      indicatorClass: "bg-amber-400 animate-pulse",
+      captionText: AI_CAPTION_LOADING_TEXT,
+      isLoading: true,
+      isSpeaking: false,
+      isCompleted: false,
+    };
+  }
+
+  if (state === "speaking") {
+    return {
+      state: "speaking",
+      badgeText: "Speaking...",
+      badgeClass: "text-blue-600 bg-blue-50",
+      indicatorClass: "bg-blue-600 animate-pulse",
+      captionText: captionText || "...",
+      isLoading: false,
+      isSpeaking: true,
+      isCompleted: false,
+    };
+  }
+
+  if (state === "completed") {
+    return {
+      state: "completed",
+      badgeText: "Completed",
+      badgeClass: "text-neutral-600 bg-neutral-100",
+      indicatorClass: "bg-neutral-400",
+      captionText: captionText || getCandidateVisibleQuestion(currentQuestion),
+      isLoading: false,
+      isSpeaking: false,
+      isCompleted: true,
+    };
+  }
+
+  if (state === "interrupted") {
+    return {
+      state: "interrupted",
+      badgeText: "Interrupted",
+      badgeClass: "text-amber-800 bg-amber-100/80",
+      indicatorClass: "bg-amber-500",
+      captionText: captionText || "...",
+      isLoading: false,
+      isSpeaking: false,
+      isCompleted: false,
+    };
+  }
+
+  // idle / initial
+  return {
+    state: "idle",
+    badgeText: null,
+    badgeClass: "",
+    indicatorClass: "bg-neutral-400",
+    captionText: "Preparing question...",
+    isLoading: false,
+    isSpeaking: false,
+    isCompleted: false,
+  };
+}
+
 export function canResumeSession(session) {
   return Boolean(
     session &&

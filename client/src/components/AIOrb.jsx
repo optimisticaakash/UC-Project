@@ -1,12 +1,22 @@
-import { getCandidateVisibleQuestion } from "../utils/interviewUiState.js";
+import { resolveAiCaptionModel } from "../utils/interviewUiState.js";
 
-export default function AIOrb({ isAiSpeaking, audioLevel, currentQuestion, captionText }) {
-  const visibleQuestion = isAiSpeaking
-    ? (captionText || "")
-    : (captionText || getCandidateVisibleQuestion(currentQuestion));
+export default function AIOrb({
+  isAiSpeaking,
+  audioLevel,
+  currentQuestion,
+  captionText,
+  candidateTranscript = "",
+  aiCaptionState = null,
+}) {
+  const captionModel = resolveAiCaptionModel({
+    aiCaptionState,
+    isAiSpeaking,
+    captionText,
+    currentQuestion,
+  });
 
   return (
-    <section aria-label="AI interviewer" aria-live="polite">
+    <section aria-label="AI interview session" aria-live="polite">
       <div className="uc-orb-stage">
         <div className={`uc-ripple ${isAiSpeaking ? "active" : ""}`} />
 
@@ -31,31 +41,76 @@ export default function AIOrb({ isAiSpeaking, audioLevel, currentQuestion, capti
         />
       </div>
 
-      <h2
-        style={{
-          margin: 0,
-          fontSize: 23,
-          fontWeight: 750,
-          letterSpacing: "-.8px",
-          color: "#111318",
-        }}
-      >
-        AI Interviewer
-      </h2>
+      {/* Two separate caption boxes: AI Interviewer and Candidate */}
+      <div className="mx-auto mt-4 w-full max-w-3xl grid grid-cols-1 md:grid-cols-2 gap-4 text-left px-2 sm:px-0">
+        {/* Box 1: AI Interviewer */}
+        <div
+          className="rounded-2xl border border-neutral-200/90 bg-white/95 p-4 sm:p-5 shadow-sm flex flex-col justify-between min-h-[130px]"
+          aria-label="AI Interviewer captions"
+        >
+          <div>
+            <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-neutral-100">
+              <span className="text-xs font-bold uppercase tracking-wider text-neutral-800 flex items-center gap-2">
+                <span
+                  className={`inline-block size-2 rounded-full ${captionModel.indicatorClass}`}
+                />
+                AI Interviewer
+              </span>
+              {captionModel.badgeText && (
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${captionModel.badgeClass}`}>
+                  {captionModel.badgeText}
+                </span>
+              )}
+            </div>
+            <p
+              className={`text-sm sm:text-base leading-relaxed whitespace-pre-wrap break-words ${
+                captionModel.isLoading ? "text-neutral-400 italic" : "text-neutral-900"
+              }`}
+            >
+              {captionModel.captionText}
+            </p>
+          </div>
+        </div>
 
-      <p
-        style={{
-          maxWidth: 680,
-          margin: "10px auto 18px",
-          color: "#252833",
-          fontSize: "clamp(14px, 1.6vw, 17px)",
-          lineHeight: 1.5,
-          whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere",
-        }}
-      >
-        {visibleQuestion}
-      </p>
+        {/* Box 2: Candidate */}
+        <div
+          className="rounded-2xl border border-neutral-200/90 bg-white/95 p-4 sm:p-5 shadow-sm flex flex-col justify-between min-h-[130px]"
+          aria-label="Candidate captions"
+        >
+          <div>
+            <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-neutral-100">
+              <span className="text-xs font-bold uppercase tracking-wider text-neutral-800 flex items-center gap-2">
+                <span
+                  className={`inline-block size-2 rounded-full ${
+                    candidateTranscript
+                      ? "bg-emerald-600"
+                      : isAiSpeaking
+                        ? "bg-neutral-300"
+                        : "bg-emerald-500 animate-pulse"
+                  }`}
+                />
+                Candidate
+              </span>
+              {!isAiSpeaking && (
+                <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                  {candidateTranscript ? "Recorded" : "Listening..."}
+                </span>
+              )}
+            </div>
+            {candidateTranscript ? (
+              <p className="text-sm sm:text-base text-neutral-900 leading-relaxed whitespace-pre-wrap break-words">
+                {candidateTranscript}
+              </p>
+            ) : (
+              <p className="text-sm text-neutral-400 italic leading-relaxed">
+                {isAiSpeaking
+                  ? "Listening begins when AI interviewer finishes speaking..."
+                  : "Listening... speak into your microphone"}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }

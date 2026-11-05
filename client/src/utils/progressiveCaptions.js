@@ -38,11 +38,11 @@ export function createProgressiveCaptionsController() {
   let lastRevealedText = "";
 
   function getCleanSourceText() {
-    const cleanTranscription = sanitizeTranscriptionText(accumulatedTranscription);
-    if (cleanTranscription) {
-      return cleanTranscription;
+    const cleanTarget = sanitizeTranscriptionText(targetQuestionText);
+    if (cleanTarget) {
+      return cleanTarget;
     }
-    return sanitizeTranscriptionText(targetQuestionText);
+    return sanitizeTranscriptionText(accumulatedTranscription);
   }
 
   return {
@@ -134,6 +134,9 @@ export function createProgressiveCaptionsController() {
     },
 
     markPlaybackComplete() {
+      if (isInterrupted) {
+        return lastRevealedText;
+      }
       isPlaybackCompleted = true;
       const fullText = getCleanSourceText();
       lastRevealedText = fullText;
@@ -144,6 +147,10 @@ export function createProgressiveCaptionsController() {
       isInterrupted = true;
       // Freeze revealed text at current point
       return lastRevealedText;
+    },
+
+    isInterrupted() {
+      return isInterrupted;
     },
 
     handlePause() {

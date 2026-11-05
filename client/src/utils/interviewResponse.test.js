@@ -112,6 +112,21 @@ test("stale 409 without an active question cannot trigger a prompt", () => {
   );
 });
 
+test("staleTurn 409 does not trigger prompt handoff or recovery", () => {
+  assert.equal(
+    resolvePromptHandoff(409, {
+      success: false,
+      staleTurn: true,
+      message: "This turn was superseded by a newer candidate utterance.",
+      question: {
+        id: "B1",
+        text: "Experience?",
+      },
+    }),
+    null,
+  );
+});
+
 test("missing prompt recovery performs one empty state-reconciliation request", async () => {
   const calls = [];
   const recovery = await recoverMissingPrompt({
@@ -303,4 +318,25 @@ test("resolvePromptHandoff preserves natural acknowledgement when provided by se
 
   assert.equal(handoff.acknowledgement, "Thank you, Priya ji!");
   assert.equal(handoff.questionId, "A0");
+});
+
+test("resolvePromptHandoff preserves identityMismatchWarning flag when provided by server", () => {
+  const handoff = resolvePromptHandoff(200, {
+    success: true,
+    completed: false,
+    identityMismatchWarning: true,
+    warningLevel: 1,
+    question: {
+      id: "A2_NAME",
+      text: "Ye interview Aakash ke naam par registered hai. Kripya apna registered naam dobara spasht batayein.",
+    },
+  });
+
+  assert.equal(handoff.identityMismatchWarning, true);
+  assert.equal(handoff.warningLevel, 1);
+  assert.equal(handoff.questionId, "A2_NAME");
+  assert.equal(
+    handoff.prompt,
+    "Ye interview Aakash ke naam par registered hai. Kripya apna registered naam dobara spasht batayein.",
+  );
 });

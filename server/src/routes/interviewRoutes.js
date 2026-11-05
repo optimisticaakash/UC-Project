@@ -11,6 +11,7 @@ router.post("/pause", candidateAuth.requireCandidate, interviewController.pauseI
 router.post("/resume", candidateAuth.requireCandidate, interviewController.resumeInterview);
 router.get("/active", candidateAuth.requireCandidate, interviewController.getActiveSession);
 router.post("/answer", candidateAuth.requireCandidate, interviewController.submitAnswer);
+router.post("/update-name", candidateAuth.requireCandidate, interviewController.updateCandidateName);
 router.post("/manual-review", adminAuth.requireAdmin, interviewController.flagManualReview);
 router.post("/interpret", adminAuth.requireAdmin, interviewController.interpretCandidateAnswer);
 router.get("/sessions", adminAuth.requireAdmin, interviewController.listReports);

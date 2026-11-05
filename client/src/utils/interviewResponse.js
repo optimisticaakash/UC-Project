@@ -24,6 +24,13 @@ export function resolvePromptHandoff(status, data) {
     staleRecovery,
   };
 
+  if (data.counterQuestionHandled !== undefined) {
+    handoff.counterQuestionHandled = Boolean(data.counterQuestionHandled);
+  }
+  if (data.inquiryState) {
+    handoff.inquiryState = data.inquiryState;
+  }
+
   if (data.warningLevel !== undefined && data.warningLevel !== null) {
     handoff.warningLevel = data.warningLevel;
   }
@@ -41,6 +48,9 @@ export function resolvePromptHandoff(status, data) {
   }
   if (data.acknowledgement) {
     handoff.acknowledgement = data.acknowledgement;
+  }
+  if (data.identityMismatchWarning !== undefined) {
+    handoff.identityMismatchWarning = Boolean(data.identityMismatchWarning);
   }
 
   return handoff;

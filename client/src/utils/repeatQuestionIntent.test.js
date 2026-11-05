@@ -5,6 +5,13 @@ import {
   createRepeatHandoffGuard,
   resolveRepeatQuestionRequest,
 } from "./repeatQuestionIntent.js";
+import {
+  isCandidateQuestionRequest,
+  isDoubtClearConfirmation,
+} from "./repeatQuestionIntent.js";
+import {
+  classifyCandidateQuestionInput,
+} from "./repeatQuestionIntent.js";
 
 const activeQuestion = {
   questionId: "A7",
@@ -119,4 +126,133 @@ test("repeat handoff guard suppresses concurrent duplicates but allows a later r
   assert.equal(guard.tryAcquire(3), true);
   guard.release(3);
   guard.release(4);
+});
+
+
+test("recognizes candidate question requests in English", () => {
+  for (const phrase of [
+    "I have a question.",
+    "I want to ask a question.",
+    "Can I ask something?",
+    "May I ask something?",
+    "I have one doubt.",
+  ]) {
+    assert.equal(isCandidateQuestionRequest(phrase), true, phrase);
+  }
+});
+
+test("recognizes candidate question requests in Hinglish", () => {
+  for (const phrase of [
+    "Mujhe ek question poochna hai.",
+    "Mujhe kuch question poochna hai.",
+    "Mera ek question hai.",
+    "Ek doubt hai.",
+    "Mujhe ek doubt hai.",
+  ]) {
+    assert.equal(isCandidateQuestionRequest(phrase), true, phrase);
+  }
+});
+
+test("recognizes candidate question requests in Hindi", () => {
+  for (const phrase of [
+    "मुझे एक सवाल पूछना है।",
+    "मेरा एक सवाल है।",
+    "एक प्रश्न है।",
+  ]) {
+    assert.equal(isCandidateQuestionRequest(phrase), true, phrase);
+  }
+});
+
+test("does not classify normal assessment answers as candidate questions", () => {
+  for (const phrase of [
+    "I have worked in a salon for two years.",
+    "I ask customers about their preferences.",
+    "Mujhe salon mein do saal ka experience hai.",
+    "Main customers ko service provide karti hoon.",
+  ]) {
+    assert.equal(isCandidateQuestionRequest(phrase), false, phrase);
+  }
+});
+
+test("recognizes clear confirmations", () => {
+  for (const phrase of [
+    "Yes.",
+    "Got it.",
+    "I understand.",
+    "Haan.",
+    "Samajh aa gaya.",
+    "Ab clear hai.",
+    "कोई संदेह नहीं।",
+  ]) {
+    assert.equal(isDoubtClearConfirmation(phrase), true, phrase);
+  }
+});
+
+test("does not treat unclear or negative responses as clear confirmation", () => {
+  for (const phrase of [
+    "No.",
+    "Nahi.",
+    "Nahi abhi bhi doubt hai.",
+    "I still don't understand.",
+    "It is not clear.",
+    "Mujhe abhi samajh nahi aaya.",
+  ]) {
+    assert.equal(isDoubtClearConfirmation(phrase), false, phrase);
+  }
+});
+
+test("candidate question request enters invitation mode", () => {
+  assert.deepEqual(
+    classifyCandidateQuestionInput(
+      "Mujhe ek question poochna hai.",
+      "inactive",
+    ),
+    { type: "invite_candidate_question" },
+  );
+});
+
+test("candidate question is handled outside assessment submission", () => {
+  assert.deepEqual(
+    classifyCandidateQuestionInput(
+      "Interview ka duration kitna hoga?",
+      "awaiting_question",
+    ),
+    {
+      type: "answer_candidate_question",
+      question: "Interview ka duration kitna hoga?",
+    },
+  );
+});
+
+test("unclear response stays in candidate question conversation", () => {
+  assert.deepEqual(
+    classifyCandidateQuestionInput(
+      "Mujhe abhi bhi doubt hai.",
+      "awaiting_confirmation",
+    ),
+    {
+      type: "candidate_question_follow_up",
+      question: "Mujhe abhi bhi doubt hai.",
+    },
+  );
+});
+
+test("clear confirmation resumes the pending assessment", () => {
+  assert.deepEqual(
+    classifyCandidateQuestionInput(
+      "Haan, samajh aa gaya.",
+      "awaiting_confirmation",
+    ),
+    { type: "resume_assessment" },
+  );
+});
+
+test("normal assessment answers are not captured as candidate questions", () => {
+  assert.equal(
+    classifyCandidateQuestionInput(
+      "I have worked in a salon for two years.",
+      "inactive",
+    ),
+    null,
+  );
 });

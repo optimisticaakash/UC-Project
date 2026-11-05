@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildClarificationPrompt,
+  buildIdentityWarningPrompt,
   buildInitialQuestionPrompt,
   buildInvalidWarningPrompt,
+  buildNameConfirmationPrompt,
   buildQuestionHandoffPrompt,
   buildRepeatPrompt,
   buildTerminationPrompt,
@@ -152,4 +154,40 @@ test("English question handoffs include natural brief English acknowledgement", 
   assert.match(prompt, /Conduct this question in English as requested by the candidate/i);
   assert.match(prompt, /First, say this brief natural acknowledgement: "Thank you, Priya\."/);
   assert.ok(prompt.endsWith(question));
+});
+
+test("name confirmation prompt instructs AI to ask confirmation without conflicting negative echo rules", () => {
+  const confirmQuestion = "Aapka naam Rajesh hai, sahi hai na?";
+  const prompt = buildNameConfirmationPrompt(confirmQuestion);
+
+  assert.ok(prompt.endsWith(confirmQuestion));
+  assert.match(prompt, /To verify the candidate's identity, ask the following authorized name confirmation question aloud exactly as written/i);
+  assert.doesNotMatch(prompt, /Do not repeat, echo, or acknowledge the candidate's previous answer/i);
+});
+
+test("English name confirmation prompt includes English language directive", () => {
+  const confirmQuestion = "Your name is Rajesh, right?";
+  const prompt = buildNameConfirmationPrompt(confirmQuestion, "English");
+
+  assert.ok(prompt.endsWith(confirmQuestion));
+  assert.match(prompt, /Conduct this question in English as requested by the candidate/i);
+  assert.match(prompt, /To verify the candidate's identity/i);
+});
+
+test("identity warning prompt instructs AI to speak official identity check without conflict with spoken name", () => {
+  const warningText = "Ye interview Aakash ke naam par registered hai. Kripya apna registered naam dobara spasht batayein.";
+  const prompt = buildIdentityWarningPrompt(warningText);
+
+  assert.ok(prompt.endsWith(warningText));
+  assert.match(prompt, /For this registered identity check, speak the following official message aloud to the candidate exactly as written/i);
+  assert.match(prompt, /even if it mentions the name they just spoke/i);
+});
+
+test("English identity warning prompt includes English language directive", () => {
+  const warningText = "This interview is registered under the name Aakash. Please state your registered name clearly again.";
+  const prompt = buildIdentityWarningPrompt(warningText, "English");
+
+  assert.ok(prompt.endsWith(warningText));
+  assert.match(prompt, /Conduct this in English as requested by the candidate/i);
+  assert.match(prompt, /For this registered identity check/i);
 });
