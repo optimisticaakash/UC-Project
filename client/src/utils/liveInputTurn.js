@@ -291,6 +291,12 @@ export function createLiveInputTurn() {
       return candidateActivity && Boolean(best && !isInternalSpeechMarker(best));
     },
 
+    suppressSpuriousInterruption() {
+      modelTurnInterrupted = false;
+      interruptionAwaitingTranscript = false;
+      pendingModelInterruption = false;
+    },
+
     phase() {
       return phase;
     },

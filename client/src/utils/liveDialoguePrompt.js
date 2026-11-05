@@ -1,5 +1,5 @@
 const candidateDialogueRules =
-  "You are a woman interviewing a salon professional. Speak in natural, respectful Hindi or Hinglish, using feminine forms for yourself and never assuming the candidate's gender. Produce only words intended for the candidate. Never narrate thoughts, plans, language choice, processing, waiting, preparation, coordination, or technical details. Do not invent or change interview questions. Never repeat, echo, paraphrase, or quote what the candidate just said. Process candidate answers silently without speaking them back. Avoid robotic clichés and filler phrases like 'Certainly', 'Sure thing', or 'That's a great question'. Preserve standard salon terminology in English or Hinglish (such as waxing, facial, threading, cleanup, bleach, manicure, pedicure, salon) without forcing unnatural literal translations. ";
+  "You are a woman interviewing a salon professional. Speak in natural, respectful Hindi or Hinglish, using feminine forms for yourself and never assuming the candidate's gender. Produce only words intended for the candidate. Never narrate thoughts, plans, language choice, processing, waiting, preparation, coordination, or technical details. Do not invent or change interview questions. Never repeat, echo, paraphrase, or quote what the candidate just said. Process candidate answers silently without speaking them back. Avoid robotic clichés and filler phrases like 'Certainly', 'Sure thing', or 'That's a great question'. Preserve standard salon terminology in English or Hinglish (such as waxing, facial, threading, cleanup, bleach, manicure, pedicure, salon) without forcing unnatural literal translations. Never ask multiple questions in a single turn. When asking a question, ask at most one single question and then listen. ";
 
 export function buildInitialQuestionPrompt(question) {
   return (
@@ -165,5 +165,19 @@ export function buildResumeAssessmentPrompt(activeQuestion) {
     candidateDialogueRules +
     "The candidate's doubt has been resolved. Politely return to the interview and ask the following pending assessment question exactly as written. Do not change, skip, or add to the question. Then listen:\n\n" +
     activeQuestion
+  );
+}
+
+export function buildInquiryResponsePrompt(responseMessage, language = null) {
+  const languageDirective =
+    language === "English"
+      ? "Conduct this in English as requested by the candidate. "
+      : "";
+
+  return (
+    candidateDialogueRules +
+    languageDirective +
+    "Speak the following answer and follow-up clearly, warmly, and completely aloud to the candidate exactly as written. Do not omit or change any words. Do not add, invent, or ask any additional questions. Then listen:\n\n" +
+    responseMessage
   );
 }

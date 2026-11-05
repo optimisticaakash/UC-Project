@@ -112,6 +112,21 @@ test("stale 409 without an active question cannot trigger a prompt", () => {
   );
 });
 
+test("staleTurn 409 does not trigger prompt handoff or recovery", () => {
+  assert.equal(
+    resolvePromptHandoff(409, {
+      success: false,
+      staleTurn: true,
+      message: "This turn was superseded by a newer candidate utterance.",
+      question: {
+        id: "B1",
+        text: "Experience?",
+      },
+    }),
+    null,
+  );
+});
+
 test("missing prompt recovery performs one empty state-reconciliation request", async () => {
   const calls = [];
   const recovery = await recoverMissingPrompt({

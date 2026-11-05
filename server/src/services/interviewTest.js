@@ -4079,14 +4079,33 @@ test("Generalization 6: Candidate gives short answers 'Do saal' and 'Waxing aur 
   assert.match(resA8.body.acknowledgement, /services|samajh|theek/i);
 });
 
-test("Generalization 7: Gemini offline or rate limited during screening falls back to detectCounterQuestion safely", async () => {
+test("Generalization 7: Gemini offline during screening falls back to detectCounterQuestion safely, while 429 handles quota exhaustion gracefully", async () => {
   const started = startInterview();
   await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME", answer: "Geeta" });
   await submitAnswer({ sessionId: started.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "yes" });
 
-  // During A0, candidate asks known counter question while Gemini throws RateLimitError
-  const res = await submitAnswer({
+  // 1. Non-quota offline error (503) falls back to deterministic detectCounterQuestion safely
+  const resOffline = await submitAnswer({
     sessionId: started.sessionId,
+    expectedQuestionId: "A0",
+    answer: "Salary kitni milegi aur payment kaise hoti hai?",
+  }, {
+    interpretAnswerImpl: async () => {
+      throw Object.assign(new Error("Service Unavailable"), { name: "APIError", status: 503 });
+    },
+  });
+
+  assert.equal(resOffline.status, 200);
+  assert.equal(resOffline.body.question.id, "A0", "Stays on A0 via counterQuestions fallback");
+  assert.match(resOffline.body.message, /partner onboarding team|earning/i);
+
+  // 2. HTTP 429 rate limit / quota exhaustion handles gracefully with safe technical message
+  const started2 = startInterview();
+  await submitAnswer({ sessionId: started2.sessionId, expectedQuestionId: "A2_NAME", answer: "Geeta" });
+  await submitAnswer({ sessionId: started2.sessionId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "yes" });
+
+  const res429 = await submitAnswer({
+    sessionId: started2.sessionId,
     expectedQuestionId: "A0",
     answer: "Salary kitni milegi aur payment kaise hoti hai?",
   }, {
@@ -4095,11 +4114,16 @@ test("Generalization 7: Gemini offline or rate limited during screening falls ba
     },
   });
 
-  assert.equal(res.status, 200);
-  assert.equal(res.body.question.id, "A0", "Stays on A0 via counterQuestions fallback");
-  assert.match(res.body.message, /partner onboarding team|earning/i);
-  const session = getSessionForPersistence(started.sessionId);
-  assert.equal(Object.keys(session.invalidAttempts || {}).length, 0, "No warning despite Gemini rate limit");
+  assert.equal(res429.status, 200);
+  assert.equal(res429.body.question.id, "A0", "Stays on A0 on quota exhaustion");
+  assert.equal(res429.body.quotaExhausted, true);
+  assert.equal(res429.body.code, "AI_RATE_LIMIT");
+  assert.equal(
+    res429.body.message,
+    "Maaf kijiye, abhi mujhe jawab dene mein technical dikkat aa rahi hai. Aapka interview question safe hai. Hum thodi der baad dobara koshish kar sakte hain."
+  );
+  const session2 = getSessionForPersistence(started2.sessionId);
+  assert.equal(Object.keys(session2.invalidAttempts || {}).length, 0, "No warning despite Gemini rate limit");
 });
 
 test("Name Confirmation Reliability 1: 'Haan, yahi naam hai' confirms original name without treating affirmation as name", async () => {
@@ -6885,7 +6909,16 @@ test("Phase 1 Inquiry 5: Candidate asks multiple relevant follow-up questions du
   });
 
   assert.equal(res4.status, 200);
-  assert.match(res4.body.message, /wapas aate hain/i);
+  assert.match(res4.body.message, /aage badhayein|continue/i);
+
+  // Turn 5 on A2: Candidate confirms proceeding: "Haan"
+  const resConfirm = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Haan",
+  });
+  assert.equal(resConfirm.status, 200);
+  assert.match(resConfirm.body.message, /wapas aate hain/i);
 
   // Inquiry is now safely closed
   inquiry = getActiveInquiry(started.sessionId);
@@ -7039,7 +7072,15 @@ test("Phase 1 Inquiry 10: A short 'haan' or 'okay' does not accidentally submit 
 
   assert.equal(res.status, 200);
   assert.equal(res.body.question.id, "A2");
-  assert.match(res.body.message, /wapas aate hain/i);
+  assert.match(res.body.message, /aage badhayein|continue/i);
+
+  const resConfirm = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A2",
+    answer: "Haan",
+  });
+  assert.equal(resConfirm.status, 200);
+  assert.match(resConfirm.body.message, /wapas aate hain/i);
 
   const session = getSessionForPersistence(started.sessionId);
   assert.equal(session.answers.some((a) => a.questionId === "A2"), false, "'Theek hai' must not be recorded as age");
@@ -7343,7 +7384,15 @@ test("Phase 1 Inquiry 19: Candidate acknowledges explanation ('theek hai') on no
   });
 
   assert.equal(ackRes.status, 200);
-  assert.match(ackRes.body.message, /wapas aate hain/i);
+  assert.match(ackRes.body.message, /aage badhayein|continue/i);
+
+  const confirmRes = await submitAnswer({
+    sessionId: started.sessionId,
+    expectedQuestionId: "A1",
+    answer: "Haan",
+  });
+  assert.equal(confirmRes.status, 200);
+  assert.match(confirmRes.body.message, /wapas aate hain/i);
   assert.equal(getActiveInquiry(started.sessionId), null);
 
   const session = getSessionForPersistence(started.sessionId);
@@ -7527,7 +7576,7 @@ test("Phase 1 Inquiry 24: Continued hesitation after explanation on A9 remains i
   assert.equal(session.answers.filter((a) => a.questionId === "A9").length, 0, "Concern not falsely marked resolved");
 });
 
-test("Phase 1 Inquiry 25: Explicit concern resolution vs generic acknowledgement distinct messaging", async () => {
+test("Phase 1 Inquiry 25: Explicit concern resolution vs generic acknowledgement ask whether to proceed before resuming", async () => {
   // 1. Explicit resolution
   const s1 = startInterview();
   await submitAnswer({ sessionId: s1.sessionId, expectedQuestionId: "A2_NAME", answer: "Pooja" });
@@ -7540,7 +7589,7 @@ test("Phase 1 Inquiry 25: Explicit concern resolution vs generic acknowledgement
     expectedQuestionId: "A1",
     answer: "Theek hai, samajh aa gaya",
   });
-  assert.match(resExplicit.body.message, /bahut badhiya/i, "Explicit resolution gives affirmative acknowledgment");
+  assert.match(resExplicit.body.message, /aage badhayein|continue/i, "Explicit resolution asks whether to proceed");
 
   // 2. Generic acknowledgement
   const s2 = startInterview();
@@ -7554,7 +7603,7 @@ test("Phase 1 Inquiry 25: Explicit concern resolution vs generic acknowledgement
     expectedQuestionId: "A1",
     answer: "Theek hai",
   });
-  assert.match(resGeneric.body.message, /agar koi aur sawal nahi/i, "Generic acknowledgement checks if further questions exist");
+  assert.match(resGeneric.body.message, /aage badhayein|continue/i, "Generic acknowledgement asks whether to proceed");
 });
 
 test("Phase 1 Inquiry 26: Session cancellation and terminal status clear activeInquiry", async () => {
@@ -7706,7 +7755,8 @@ test("Phase 2.1 Inquiry 3: Unverified policy question receives polite onboarding
 
   assert.equal(res.status, 200);
   assert.match(res.body.message, /onboarding team share karegi/);
-  assert.ok(res.body.message.includes(res.body.question.text));
+  assert.match(res.body.message, /doubt clear|kuch aur poochna/i, "Delivers clarification check rather than assessment question");
+  assert.equal(res.body.message.includes(res.body.question.text), false, "Must not append assessment question to inquiry answer");
 });
 
 test("Phase 2.1 Inquiry 4: Fallbacks for Gemini errors (malformed JSON, empty, 429, 503, timeout)", async () => {
@@ -7769,10 +7819,16 @@ test("Phase 2.1 Inquiry 4: Fallbacks for Gemini errors (malformed JSON, empty, 4
       generateInquiryResponseImpl: mock,
     });
 
-    assert.equal(res.status, 200, `Scenario ${name} must succeed via fallback`);
-    assert.equal(res.body.counterQuestionHandled, true);
-    // Fallback deterministic response from detectCounterQuestion mentions local area/onboarding team
-    assert.match(res.body.message, /local area|customer ke ghar|onboarding team/i);
+    assert.equal(res.status, 200, `Scenario ${name} must succeed`);
+    if (name === "429 rate limit") {
+      assert.equal(res.body.quotaExhausted, true);
+      assert.equal(res.body.code, "AI_RATE_LIMIT");
+      assert.match(res.body.message, /technical dikkat|safe/i);
+      assert.notEqual(res.body.counterQuestionHandled, true);
+    } else {
+      assert.equal(res.body.counterQuestionHandled, true);
+      assert.match(res.body.message, /local area|customer ke ghar|onboarding team/i);
+    }
 
     const sessionAfter = getSessionForPersistence(started.sessionId);
     assert.equal(sessionAfter.currentQuestionIndex, qBefore, "Question index must not advance on fallback");
@@ -7838,7 +7894,8 @@ test("Phase 2.1.1 Inquiry: Invented earnings or kit claims trigger safe onboardi
   assert.doesNotMatch(res.body.message, /30,000/);
   // Must route to onboarding deferral
   assert.match(res.body.message, /onboarding team share karegi/i);
-  assert.ok(res.body.message.includes(res.body.question.text));
+  assert.match(res.body.message, /doubt clear|kuch aur poochna/i);
+  assert.equal(res.body.message.includes(res.body.question.text), false, "Must not append assessment question to inquiry answer");
 });
 
 test("Phase 2.1.1 Inquiry: Normal travel and training explanations remain natural and unblocked", async () => {
@@ -9008,5 +9065,150 @@ test("Stage 3 Integration: Multi-turn contextual answering, topic transition, an
   assert.ok(!storedTexts.includes("Screening ke baad training kaise hogi?"));
   assert.ok(!storedTexts.includes("Kitne din ki hoti hai?"));
   assert.ok(!storedTexts.includes("Theek hai, continue karte hain."));
+});
+
+test("A2_NAME_CONFIRM: Natural affirmative utterances advance immediately to A0 without warning or delay", async () => {
+  const variations = [
+    "Haan, ye sahi hai",
+    "Ye sahi hai",
+    "Haan, Aakash",
+    "Aakash",
+    "Aakash hai",
+    "Ji",
+    "Yes that is my name",
+    "Haan ji",
+    "Haaji",
+    "Yes, that's my name",
+  ];
+
+  for (const affirmativeAnswer of variations) {
+    const started = startInterview({ candidateName: "Aakash" });
+    const sId = started.sessionId;
+
+    // Step 1: Candidate provides name
+    const nameRes = await submitAnswer({
+      sessionId: sId,
+      expectedQuestionId: "A2_NAME",
+      answer: "Aakash",
+    });
+    assert.equal(nameRes.status, 200);
+    assert.equal(nameRes.body.question.id, "A2_NAME_CONFIRM");
+
+    // Step 2: Candidate confirms using natural affirmative phrasing
+    const confirmRes = await submitAnswer({
+      sessionId: sId,
+      expectedQuestionId: "A2_NAME_CONFIRM",
+      answer: affirmativeAnswer,
+    });
+
+    assert.equal(confirmRes.status, 200);
+    assert.equal(confirmRes.body.question.id, "A0", `Affirmation "${affirmativeAnswer}" must advance to A0`);
+    assert.equal(confirmRes.body.warningLevel, undefined, `Affirmation "${affirmativeAnswer}" must not trigger any warning`);
+    assert.equal(confirmRes.body.warningCount, undefined, `Affirmation "${affirmativeAnswer}" must have no warningCount`);
+
+    const session = getSessionForPersistence(sId);
+    assert.equal(session.invalidAttempts["A2_NAME_CONFIRM"] || 0, 0, `Affirmation "${affirmativeAnswer}" must not increment invalidAttempts`);
+    assert.equal(session.pendingNameConfirmation, null, `Affirmation "${affirmativeAnswer}" must clear pendingNameConfirmation`);
+  }
+});
+
+test("Sequencing 1: Providing a name on A2_NAME returns A2_NAME_CONFIRM, never a salon experience question (A7/B2)", async () => {
+  const started = startInterview();
+  const sId = started.sessionId;
+  assert.equal(started.question.id, "A2_NAME");
+  assert.match(started.question.text, /naam bataiye/i);
+
+  // Candidate provides their name
+  const nameRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Priya Sharma",
+  });
+
+  assert.equal(nameRes.status, 200);
+  assert.equal(nameRes.body.question.id, "A2_NAME_CONFIRM");
+  assert.match(nameRes.body.question.text, /Priya Sharma/i);
+  assert.doesNotMatch(nameRes.body.question.text, /experience|anubhav|salon|kaam/i);
+});
+
+test("Sequencing 2: Name confirmation must happen before A0, and a rejected name confirmation does not advance the interview", async () => {
+  const started = startInterview();
+  const sId = started.sessionId;
+
+  await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Pooja",
+  });
+
+  // Candidate rejects the name confirmation ("Nahi, galat hai")
+  const rejectRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A2_NAME_CONFIRM",
+    answer: "Nahi, galat hai",
+  });
+
+  assert.equal(rejectRes.status, 200);
+  assert.equal(rejectRes.body.question.id, "A2_NAME", "Rejection must return back to A2_NAME, never A0 or later");
+  assert.equal(rejectRes.body.nameCorrectionRequired, true);
+
+  const session = getSessionForPersistence(sId);
+  assert.equal(session.currentQuestionIndex, 0, "Index must remain 0 (A2_NAME)");
+  assert.equal(session.pendingNameConfirmation, null);
+});
+
+test("Sequencing 3: Consent and language preference (A0) must complete before later screening questions (A1, A2)", async () => {
+  const started = startInterview();
+  const sId = started.sessionId;
+
+  // Name step
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Sunita" });
+  // Name confirmation
+  const confirmRes = await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan, sahi hai" });
+  assert.equal(confirmRes.body.question.id, "A0", "Must arrive at A0 after name confirmation");
+  assert.match(confirmRes.body.question.text, /screening assistant|record hogi/i);
+
+  // Consent & language step
+  const consentRes = await submitAnswer({ sessionId: sId, expectedQuestionId: "A0", answer: "Hindi mein baat karungi" });
+  assert.equal(consentRes.body.question.id, "A1", "Must arrive at A1 only after A0 completes");
+  assert.match(consentRes.body.question.text, /Bangalore mein kis area/i);
+});
+
+test("Sequencing 4: Stale response or wrong expectedQuestionId returns 409 and does not jump or advance session state", async () => {
+  const started = startInterview();
+  const sId = started.sessionId;
+
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Anjali" });
+
+  // Stale request with A2_NAME while on A2_NAME_CONFIRM
+  const staleRes = await submitAnswer({
+    sessionId: sId,
+    expectedQuestionId: "A2_NAME",
+    answer: "Anjali",
+  });
+
+  assert.equal(staleRes.status, 409);
+  assert.equal(staleRes.body.staleQuestion, true);
+  assert.equal(staleRes.body.currentQuestionId, "A2_NAME_CONFIRM");
+
+  const session = getSessionForPersistence(sId);
+  assert.equal(session.currentQuestionIndex, 0, "Index must remain 0");
+});
+
+test("Sequencing 5: Duplicate answer submission cannot advance the question index twice", async () => {
+  const started = startInterview();
+  const sId = started.sessionId;
+
+  await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME", answer: "Ritu" });
+  const firstConfirm = await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  assert.equal(firstConfirm.body.question.id, "A0");
+
+  // Duplicate second confirm call arriving immediately after
+  const dupConfirm = await submitAnswer({ sessionId: sId, expectedQuestionId: "A2_NAME_CONFIRM", answer: "Haan" });
+  assert.equal(dupConfirm.status, 409, "Duplicate submission with stale ID must return 409");
+  assert.equal(dupConfirm.body.currentQuestionId, "A0");
+
+  const session = getSessionForPersistence(sId);
+  assert.equal(session.currentQuestionIndex, 1, "Index must remain at 1 (A0)");
 });
 

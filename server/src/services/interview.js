@@ -11,15 +11,26 @@ const {
   isUnsupportedPolicyClaim,
   UNIFIED_INTENTS,
   normalizeIntent,
+  INQUIRY_TIMEOUT_MS,
+  isQuotaExhaustedError,
+  isQuotaExhausted,
+  markQuotaExhausted,
+  resetQuotaExhaustion,
 } = require("./geminiService");
 const {
   detectCounterQuestion,
+  isRequestToAskQuestion,
+  isEnglishRequestToAsk,
+  isCandidateDecidingNotToAsk,
   isSubDialogueResolution,
+  isResumptionConfirmation,
+  isNotReadyToResume,
   isGenericAcknowledgement,
   isExplicitContinueRequest,
   isRepetitiveInquiry,
   isAnsweringInquiryProbe,
   separateProbeAndAssessmentAnswer,
+  separateLanguageAndInquiry,
 } = require("./counterQuestions");
 
 const bankPath = path.join(__dirname, "../data/questionBank.json");
@@ -145,6 +156,8 @@ function createActiveInquiry({
   candidateConcern = null,
   initialCandidateTurn = null,
   initialInterviewerReply = null,
+  initialSystemTurn = null,
+  state = "clarification_check",
 }) {
   const turns = [];
   if (initialCandidateTurn) {
@@ -154,28 +167,76 @@ function createActiveInquiry({
       timestamp: new Date().toISOString(),
     });
   }
-  if (initialInterviewerReply) {
+  const reply = initialInterviewerReply || initialSystemTurn;
+  if (reply) {
     turns.push({
       role: "interviewer",
-      text: initialInterviewerReply,
+      text: reply,
       timestamp: new Date().toISOString(),
     });
   }
   return {
     status: "in_progress",
+    state,
     originalQuestionId,
     originalQuestionIndex,
     rootTopic,
     currentTopic: rootTopic,
     candidateConcern,
     turns,
-    turnCount: initialCandidateTurn ? 1 : 0,
+    turnCount: state === "AWAITING_CANDIDATE_QUESTION" ? 0 : (initialCandidateTurn ? 1 : 0),
     startedAt: new Date().toISOString(),
+  };
+}
+
+function handleRequestToAskQuestion({
+  session,
+  targetQuestion,
+  cleanAnswer,
+  isEnglish = session.language === "English" || isEnglishRequestToAsk(cleanAnswer) || classifyLanguage(cleanAnswer) === "English",
+}) {
+  const isTargetEnglish = Boolean(isEnglish || isEnglishRequestToAsk(cleanAnswer) || classifyLanguage(cleanAnswer) === "English");
+  const inviteText = isTargetEnglish
+    ? "Sure, please go ahead and ask your question. I am here to help."
+    : "Ji haan, bilkul poochiye, aap apna question poochhiye. Main aapki madad karti hoon.";
+
+  session.activeInquiry = createActiveInquiry({
+    originalQuestionId: targetQuestion.id,
+    originalQuestionIndex: session.currentQuestionIndex,
+    rootTopic: "candidate_question_request",
+    candidateConcern: cleanAnswer,
+    initialCandidateTurn: cleanAnswer,
+    initialInterviewerReply: inviteText,
+    state: "AWAITING_CANDIDATE_QUESTION",
+  });
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      completed: false,
+      clarificationRequired: true,
+      counterQuestionHandled: true,
+      inquiryState: "AWAITING_CANDIDATE_QUESTION",
+      message: inviteText,
+      questionNumber: session.currentQuestionIndex + 1,
+      totalQuestions: questions.length,
+      question: {
+        id: targetQuestion.id,
+        text: targetQuestion.text,
+        category: targetQuestion.category || targetQuestion.Block || "General",
+        stage: targetQuestion.stage || targetQuestion.Type || "ASSESSMENT",
+      },
+    },
   };
 }
 
 function startActiveInquiry(session, question, cleanAnswer, inquiry, replyText) {
   if (!session || !question) return;
+  const extracted = extractFallbackFacts(cleanAnswer);
+  if (extracted && Object.keys(extracted).length > 0) {
+    mergeShortTermMemoryFacts(session, extracted);
+  }
   session.activeInquiry = createActiveInquiry({
     originalQuestionId: question.id,
     originalQuestionIndex: session.currentQuestionIndex,
@@ -595,6 +656,56 @@ function getCurrentQuestionForSession(session) {
   return questions[session.currentQuestionIndex] || null;
 }
 
+function isNameConfirmationAffirmative(cleanAnswer, pendingName, normalizedConfirmation) {
+  if (typeof cleanAnswer !== "string" || !cleanAnswer.trim()) return false;
+
+  const norm = (normalizedConfirmation || cleanAnswer)
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[,;.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // If there's an explicit negative, it is NOT affirmative
+  const hasNegative =
+    /\b(?:no|nope|nahi|nahin|nhi|galat|wrong|incorrect|not)\b/i.test(norm) ||
+    /(?:नहीं|नही|गलत)/u.test(norm);
+  if (hasNegative) return false;
+
+  // 1. Direct affirmation pattern (words and common affirmative phrases)
+  const affirmativePattern =
+    /^(?:(?:ji\s+)?(?:haan|han|haanji|hanji|haaji|haji|ha|haan\s+g|yes|yeah|yep|yup|sure|ok|okay)(?:\s+(?:ji|sir|madam))?(?:\s+(?:sahi(?:\s+hai)?|theek\s+hai|thik\s+hai|wahi\s+hai|yahi\s+hai|ye\s+sahi\s+hai|ye\s+theek\s+hai|ye\s+thik\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|bilkul(?:\s+sahi(?:\s+hai)?)?|bilkul(?:\s+theek(?:\s+hai)?)?|correct|right|thats\s+correct|that\s+is\s+correct|thats\s+right|that\s+is\s+right|thats\s+my\s+name|that\s+is\s+my\s+name|it\s+is|its\s+correct|its\s+right))?|(?:(?:जी\s+)?(?:हाँ|हां|हाँजी|हांजी))(?:\s+जी)?(?:\s+(?:सही(?:\s+hai)?|theek\s+hai|thik\s+hai|सही(?:\s+है)?|ठीक(?:\s+है)?|ये\s+सही\s+है|ये\s+ठीक\s+है|बिल्कुल(?:\s+सही(?:\s+है)?)?|बिल्कुल(?:\s+theek(?:\s+hai)?)?|वही\s+है|यही\s+है|यही\s+नाम\s+है|मेरा\s+(?:यही|वही)\s+नाम\s+है))?|ji|जी|sahi|sahi\s+hai|ye\s+sahi\s+hai|ye\s+theek\s+hai|theek\s+hai|thik\s+hai|correct|right|thats\s+correct|that\s+is\s+correct|thats\s+right|that\s+is\s+right|thats\s+my\s+name|that\s+is\s+my\s+name|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|bilkul|bilkul\s+sahi(?:\s+hai)?|bilkul\s+theek(?:\s+hai)?|bilkul\s+thik(?:\s+hai)?|ji\s+bilkul|ji\s+haan(?:\s+bilkul)?|हाँ|हां|जी\s+हाँ|जी\s+हां|बिल्कुल|बिल्कुल\s+सही(?:\s+है)?|सही|सही\s+है|ठीक\s+है|वही\s+है|यही\s+है)[.!?।\s]*$/iu;
+
+  if (affirmativePattern.test(norm)) return true;
+
+  // 2. Starts with affirmative prefix (haan/yes/ji/haaji/ha) followed by agreement words
+  if (/^(?:ji\s+)?(?:haan|han|haanji|hanji|haaji|haji|ha|yes|yeah|yep|ji)\b/i.test(norm)) {
+    if (/\b(?:sahi|theek|thik|correct|right|mera|naam|wahi|yahi|hai|ji|sir|madam)\b/i.test(norm)) {
+      return true;
+    }
+  }
+
+  // 3. Candidate confirms by stating or repeating their pending name (e.g. "haan Aakash", "Aakash hai", "Aakash", "mera naam Aakash hai")
+  if (pendingName && typeof pendingName === "string" && pendingName.trim()) {
+    const normPending = pendingName.toLowerCase().trim();
+    const pendingTokens = normPending.split(/\s+/).filter(Boolean);
+    const hasPendingToken = pendingTokens.some((t) => t.length >= 2 && norm.includes(t));
+
+    if (hasPendingToken) {
+      const escaped = normPending.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const nameAffirmationPattern = new RegExp(
+        `^(?:(?:ji\\s+)?(?:haan|han|haanji|hanji|haaji|haji|ha|yes|yeah|yep|ji)?\\s*)?(?:mera\\s+naam\\s+)?(?:main|mein)?\\s*${escaped}(?:\\s+hi)?(?:\\s+hai|\\s+hoon|\\s+hu)?(?:\\s+(?:sahi|theek|thik|hai|ji|sir|madam))*$`,
+        "i"
+      );
+      if (nameAffirmationPattern.test(norm) || norm === normPending) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function classifyNameAnswer(answer) {
   if (typeof answer !== "string") {
     return { clear: false, format: "non_string" };
@@ -619,6 +730,12 @@ function classifyNameAnswer(answer) {
     /^(?:(?:(?:mera naam|मेरा नाम|my name is)\s+)?(?:pata nahi|nahi pata|yaad nahi|nahi yaad|nahi maloom|kya hai|i don't know|i do not know|not sure|don't know|no idea|samajh nahi aaya)|hmm+|umm+|uh+|naam nahi pata|पता नहीं|याद नहीं|समझ नहीं आया)$/iu;
   if (uncertainty.test(working) || uncertainty.test(normalized)) {
     return { clear: false, format: "uncertainty" };
+  }
+
+  const isQuestionOrInquiry =
+    /[?]|(?:^|\b)(?:where|kahan|kidhar|why|kyun|kyu|kaise|kya|what|how|explain|batao)\b|\b(?:kya hai|kya hota hai|kya hoti hai|difference kya hai)\b/iu;
+  if (isQuestionOrInquiry.test(working) || isQuestionOrInquiry.test(normalized)) {
+    return { clear: false, format: "inquiry_or_question" };
   }
 
   const bareAffirmation =
@@ -1097,6 +1214,28 @@ async function submitAnswer({
     };
   }
 
+  session.activeTurnSequence = (session.activeTurnSequence || 0) + 1;
+  const currentTurnSequence = session.activeTurnSequence;
+
+  function isSupersededTurn() {
+    return session.activeTurnSequence !== currentTurnSequence;
+  }
+
+  function staleTurnResponse() {
+    const latestQuestion = getCurrentQuestionForSession(session);
+    return {
+      status: 409,
+      body: {
+        success: false,
+        staleTurn: true,
+        message: "This turn was superseded by a newer candidate utterance.",
+        questionNumber: session.currentQuestionIndex + 1,
+        totalQuestions: questions.length,
+        question: latestQuestion,
+      },
+    };
+  }
+
   if (expectedQuestionId && !requestQuestionId) {
     return {
       status: 400,
@@ -1161,13 +1300,99 @@ async function submitAnswer({
 
   let cleanAnswer = typeof answer === "string" ? answer.trim() : "";
 
-  async function checkCandidateInquiry(qText = question?.text, qId = question?.id) {
-    if (!cleanAnswer || /^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(cleanAnswer)) {
+  function buildQuotaExhaustedResponse({ session: s = session, currentQuestion, isEnglish = false }) {
+    const message = isEnglish
+      ? "I'm sorry, I am currently facing a technical issue with answering. Your interview question is safe. We can try again in a little while."
+      : "Maaf kijiye, abhi mujhe jawab dene mein technical dikkat aa rahi hai. Aapka interview question safe hai. Hum thodi der baad dobara koshish kar sakte hain.";
+
+    console.warn("[UC Diagnostics] GEMINI_FREE_TIER_QUOTA_EXHAUSTED", {
+      sessionKey: s?.id ? s.id.slice(-8) : null,
+      currentQuestionId: currentQuestion?.id || null,
+      currentQuestionIndex: s?.currentQuestionIndex,
+    });
+
+    return {
+      status: 200,
+      body: {
+        success: true,
+        completed: false,
+        clarificationRequired: true,
+        quotaExhausted: true,
+        interpretationUnavailable: true,
+        code: "AI_RATE_LIMIT",
+        message,
+        questionNumber: (s?.currentQuestionIndex ?? 0) + 1,
+        totalQuestions: questions.length,
+        question: currentQuestion,
+      },
+    };
+  }
+
+  async function checkCandidateInquiry(
+    qText = question?.text,
+    qId = question?.id,
+    candidateAnswer = cleanAnswer,
+  ) {
+    const textToCheck = typeof candidateAnswer === "string" ? candidateAnswer.trim() : cleanAnswer;
+    if (!textToCheck || /^(?:\.{2,}|(?:uh+|um+|hmm+)\.*|noise|<no speech>|<empty>)$/i.test(textToCheck)) {
       return null;
     }
 
+    let inquiry = null;
+    let quotaError = null;
+    try {
+      const interp = await interpretAnswerImpl({
+        question: qText,
+        answer: textToCheck,
+        questionId: qId,
+        language: session.language,
+        sessionMemory: session.shortTermMemory,
+        activeInquiry: session.activeInquiry,
+        diagnosticRequestId: safeRequestId,
+        diagnosticPromptTurn: safePromptTurn,
+        diagnosticSessionGeneration: safeSessionGeneration,
+      });
+
+      if (isSupersededTurn()) {
+        return null;
+      }
+
+      if (
+        interp &&
+        (interp.intent === "RELEVANT_COUNTER_QUESTION" ||
+          interp.intent === "CLARIFICATION_REQUEST" ||
+          interp.intent === "QUESTION_RATIONALE_INQUIRY" ||
+          interp.intent === "CANDIDATE_CONSTRAINT_OR_HESITATION" ||
+          interp.intent === "CANDIDATE_QUESTION" ||
+          interp.intent === "REQUEST_TO_ASK_QUESTION" ||
+          interp.unifiedIntent === UNIFIED_INTENTS.CANDIDATE_QUESTION ||
+          interp.unifiedIntent === UNIFIED_INTENTS.CLARIFICATION_REQUEST ||
+          interp.unifiedIntent === UNIFIED_INTENTS.REQUEST_TO_ASK_QUESTION ||
+          interp.answerStatus === "counter_question" ||
+          interp.answerStatus === "request_to_ask_question")
+      ) {
+        inquiry = interp;
+      }
+    } catch (err) {
+      if (isQuotaExhaustedError(err)) {
+        quotaError = err;
+      }
+    }
+
+    if (inquiry) {
+      return inquiry;
+    }
+
+    if (quotaError) {
+      return {
+        isQuotaExhausted: true,
+        code: "AI_RATE_LIMIT",
+        error: quotaError,
+      };
+    }
+
     const cq = detectCounterQuestion(
-      cleanAnswer,
+      textToCheck,
       { text: qText, id: qId, Step: qId },
       { language: session.language, activeInquiry: session.activeInquiry },
     );
@@ -1183,56 +1408,50 @@ async function submitAnswer({
       };
     }
 
-    let inquiry = null;
-    try {
-      const interp = await interpretAnswerImpl({
-        question: qText,
-        answer: cleanAnswer,
-        questionId: qId,
-        language: session.language,
-        sessionMemory: session.shortTermMemory,
-        activeInquiry: session.activeInquiry,
-        diagnosticRequestId: safeRequestId,
-        diagnosticPromptTurn: safePromptTurn,
-        diagnosticSessionGeneration: safeSessionGeneration,
-      });
-
-      if (
-        interp &&
-        (interp.intent === "RELEVANT_COUNTER_QUESTION" ||
-          interp.intent === "CLARIFICATION_REQUEST" ||
-          interp.intent === "QUESTION_RATIONALE_INQUIRY" ||
-          interp.intent === "CANDIDATE_CONSTRAINT_OR_HESITATION" ||
-          interp.intent === "CANDIDATE_QUESTION" ||
-          interp.unifiedIntent === UNIFIED_INTENTS.CANDIDATE_QUESTION ||
-          interp.unifiedIntent === UNIFIED_INTENTS.CLARIFICATION_REQUEST ||
-          interp.answerStatus === "counter_question")
-      ) {
-        inquiry = interp;
-      }
-    } catch {
-      // Gemini offline, rate limited, or errored
-    }
-
-    return inquiry;
+    return null;
   }
 
   async function resolveInquiryReply({
     targetQuestion,
     inquiryObj,
     defaultReply,
+    candidateUtterance = cleanAnswer,
     turns = [],
+    timeoutMs = INQUIRY_TIMEOUT_MS,
   }) {
+    if (isSupersededTurn()) {
+      return {
+        replyText: (defaultReply || "").trim(),
+        probeQuestion: "",
+        topic: inquiryObj?.topic || session?.activeInquiry?.currentTopic || "general_inquiry",
+        suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+      };
+    }
+
     let replyText = (defaultReply || "").trim();
     let probeQuestion = "";
     let topic = inquiryObj?.topic || session?.activeInquiry?.currentTopic || "general_inquiry";
     let suggestedNextAction = "RESOLVE_AND_PROMPT_QUESTION";
 
     const isEnglish = session?.language === "English";
+    const isGeneralOrProfessionalTopic =
+      topic === "location_requirement" ||
+      topic === "travel" ||
+      topic === "general_knowledge" ||
+      topic === "general_inquiry" ||
+      topic === "customer_handling" ||
+      topic === "communication" ||
+      topic === "service_quality" ||
+      topic === "interview_guidance" ||
+      topic === "term_clarification" ||
+      topic === "question_clarification";
+
+    const effectiveUtterance = candidateUtterance || cleanAnswer;
     const isSensitivePolicyQuery =
-      topic === "earnings" ||
+      !isGeneralOrProfessionalTopic &&
+      (topic === "earnings" ||
       topic === "working_hours" ||
-      /\b(?:salary|earnings?|paisa|kamai|kit\b|toolkit|payout|incentive|fees?|charges?|ghante|schedule|shift)\b/i.test(cleanAnswer);
+      /\b(?:salary|earnings?|kamai|payout|incentive|bonus\s+slab)\b/i.test(effectiveUtterance));
 
     const onboardingDeferral = isEnglish
       ? "I am the screening assistant, so exact earnings, payout structures, toolkit costs, and schedules will be confirmed by the Urban Company partner and onboarding team."
@@ -1241,7 +1460,7 @@ async function submitAnswer({
     if (typeof generateInquiryResponseImpl === "function") {
       try {
         const aiRes = await generateInquiryResponseImpl({
-          candidateUtterance: cleanAnswer,
+          candidateUtterance: effectiveUtterance,
           currentQuestion: {
             id: targetQuestion?.id,
             text: targetQuestion?.text,
@@ -1252,7 +1471,17 @@ async function submitAnswer({
           activeInquiryTurns: turns,
           sessionMemory: session?.shortTermMemory,
           language: session?.language || "Hindi",
+          timeoutMs,
         });
+
+        if (isSupersededTurn()) {
+          return {
+            replyText: (defaultReply || "").trim(),
+            probeQuestion: "",
+            topic,
+            suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+          };
+        }
 
         const hasPolicyViolation =
           aiRes && (isUnsupportedPolicyClaim(aiRes.replyText) || isUnsupportedPolicyClaim(aiRes.probeQuestion));
@@ -1263,11 +1492,25 @@ async function submitAnswer({
           if (aiRes.topic) topic = aiRes.topic;
           if (aiRes.suggestedNextAction) suggestedNextAction = aiRes.suggestedNextAction;
         } else if (hasPolicyViolation) {
-          replyText = isSensitivePolicyQuery ? onboardingDeferral : (defaultReply || onboardingDeferral);
+          replyText = onboardingDeferral;
           probeQuestion = "";
           suggestedNextAction = "DEFER_TO_ONBOARDING";
         }
       } catch (err) {
+        if (isQuotaExhaustedError(err)) {
+          console.warn("[UC Diagnostics] GEMINI_FREE_TIER_QUOTA_EXHAUSTED", {
+            action: "resolveInquiryReply_quota_exhausted",
+            error: err.message,
+          });
+          return {
+            isQuotaExhausted: true,
+            code: "AI_RATE_LIMIT",
+            replyText: "",
+            probeQuestion: "",
+            topic,
+            suggestedNextAction: "RESOLVE_AND_PROMPT_QUESTION",
+          };
+        }
         console.info("[UC Interview] Contextual inquiry response generation failed, using deterministic fallback:", err?.message || err);
         if (err?.code === "AI_UNSUPPORTED_POLICY_CLAIM" || isSensitivePolicyQuery) {
           replyText = onboardingDeferral;
@@ -1285,27 +1528,91 @@ async function submitAnswer({
     };
   }
 
+  function composeSingleQuestionInquiryResponse({
+    replyText = "",
+    probeQuestion = "",
+    isEnglish = false,
+  }) {
+    const cleanReply = (replyText || "").trim();
+    const cleanProbe = (probeQuestion || "").trim();
+
+    const clarificationCheck = isEnglish
+      ? "Does that clarify your doubt, or would you like to ask anything else?"
+      : "Kya aapka doubt clear ho gaya, ya aap kuch aur poochhna chahenge?";
+
+    if (cleanProbe) {
+      const base = cleanReply.replace(/\s*[?]\s*$/g, ".").trim();
+      return `${base} ${cleanProbe}`.trim();
+    }
+
+    const hasQuestion =
+      /[?]$/.test(cleanReply) ||
+      /doubt\s+clear|kuch\s+aur\s+poochna|clarify\s+your\s+doubt|anything\s+else/i.test(cleanReply);
+
+    if (hasQuestion) {
+      return cleanReply;
+    }
+
+    return `${cleanReply} ${clarificationCheck}`.trim();
+  }
+
   async function respondWithInquiry({
     targetQuestion,
     inquiryObj,
     deterministicReply,
     isNameConfirmation = false,
+    candidateUtterance = cleanAnswer,
   }) {
-    const { replyText, probeQuestion } = await resolveInquiryReply({
+    const effectiveUtterance = candidateUtterance || cleanAnswer;
+    const isEnglish = session.language === "English" || Boolean(inquiryObj?.isEnglish) || classifyLanguage(effectiveUtterance) === "English";
+
+    if (inquiryObj?.isQuotaExhausted) {
+      return buildQuotaExhaustedResponse({
+        session,
+        currentQuestion: targetQuestion,
+        isEnglish,
+      });
+    }
+
+    if (
+      inquiryObj?.intent === "REQUEST_TO_ASK_QUESTION" ||
+      inquiryObj?.unifiedIntent === UNIFIED_INTENTS.REQUEST_TO_ASK_QUESTION ||
+      isRequestToAskQuestion(effectiveUtterance, { language: session.language })
+    ) {
+      return handleRequestToAskQuestion({
+        session,
+        targetQuestion,
+        cleanAnswer: effectiveUtterance,
+        isEnglish,
+      });
+    }
+
+    const inquiryResolution = await resolveInquiryReply({
       targetQuestion,
       inquiryObj,
       defaultReply: deterministicReply,
+      candidateUtterance,
       turns: [],
     });
+
+    if (inquiryResolution?.isQuotaExhausted) {
+      return buildQuotaExhaustedResponse({
+        session,
+        currentQuestion: targetQuestion,
+        isEnglish,
+      });
+    }
+
+    const { replyText, probeQuestion, topic } = inquiryResolution;
     const effectiveReply = probeQuestion && !replyText.includes(probeQuestion)
       ? `${replyText} ${probeQuestion}`
       : replyText;
     const isRepeat = inquiryObj?.topic === "repeat_question";
+    const isQuestionClarification = inquiryObj?.topic === "question_clarification";
     let combinedMessage;
     const isIdentityOrPurpose = inquiryObj?.topic === "identity" || inquiryObj?.topic === "screening_purpose";
     if (targetQuestion.id === "A0" && isIdentityOrPurpose) {
       session.pendingConsentOnly = true;
-      const isEnglish = session.language === "English" || Boolean(inquiryObj?.isEnglish) || classifyLanguage(cleanAnswer) === "English";
       session.lastInquiryEnglish = isEnglish;
       const consentPrompt = isEnglish ? "Shall we start?" : "Kya hum shuru karein?";
       if (isRepeat) {
@@ -1321,18 +1628,27 @@ async function submitAnswer({
           ? cleanReply
           : `${cleanReply} ${consentPrompt}`.trim();
       }
+    } else if (isRepeat) {
+      combinedMessage = `${effectiveReply} ${targetQuestion.text}`.trim();
+    } else if (isQuestionClarification || isNameConfirmation || targetQuestion.id === "A2_NAME_CONFIRM") {
+      combinedMessage = effectiveReply;
     } else {
-      const isLocationRequirement = inquiryObj?.topic === "location_requirement";
-      combinedMessage = isRepeat
-        ? `${effectiveReply} ${targetQuestion.text}`
-        : (probeQuestion || isLocationRequirement)
-          ? effectiveReply
-          : effectiveReply.toLowerCase().includes(targetQuestion.text.toLowerCase().trim()) || targetQuestion.id === "A2"
-            ? effectiveReply
-            : `${effectiveReply} ${targetQuestion.text}`;
+      // Step 3 & Step 4: Answer delivery and Clarification check
+      // Do NOT append targetQuestion.text here! Enforce at most one question.
+      combinedMessage = composeSingleQuestionInquiryResponse({
+        replyText,
+        probeQuestion,
+        isEnglish,
+      });
     }
 
-    startActiveInquiry(session, targetQuestion, cleanAnswer, inquiryObj, effectiveReply);
+    if (isSupersededTurn()) {
+      return staleTurnResponse();
+    }
+
+    if (!isNameConfirmation && targetQuestion.id !== "A2_NAME_CONFIRM" && !(targetQuestion.id === "A0" && isIdentityOrPurpose)) {
+      startActiveInquiry(session, targetQuestion, effectiveUtterance, { ...inquiryObj, topic: topic || inquiryObj?.topic }, combinedMessage);
+    }
     const hasFollowUp = Boolean(session.pendingFollowUp);
     return {
       status: 200,
@@ -1341,6 +1657,8 @@ async function submitAnswer({
         completed: false,
         ...(isNameConfirmation ? { nameConfirmationRequired: true } : { clarificationRequired: true }),
         counterQuestionHandled: true,
+        inquiryState: "clarification_check",
+        language: session.language,
         ...(hasFollowUp ? { followUpRequired: true, followUp: session.pendingFollowUp } : {}),
         message: combinedMessage,
         questionNumber: session.currentQuestionIndex + 1,
@@ -1379,6 +1697,7 @@ async function submitAnswer({
           completed: false,
           clarificationRequired: true,
           counterQuestionHandled: true,
+          inquiryState: "resumed_assessment",
           message: pivotText,
           questionNumber: session.currentQuestionIndex + 1,
           totalQuestions: questions.length,
@@ -1387,12 +1706,433 @@ async function submitAnswer({
       };
     }
 
+    // Step 7: Candidate confirms resumption when AI previously asked "kya hum aage badhayein?"
+    if (currentActiveInquiry.state === "ready_to_resume") {
+      if (isResumptionConfirmation(cleanAnswer)) {
+        currentActiveInquiry.turns.push({
+          role: "candidate",
+          text: cleanAnswer,
+          timestamp: new Date().toISOString(),
+        });
+        session.activeInquiry = null;
+        const resumeText = isEnglish
+          ? `Great! Let's return to our question: ${activeQuestionText}`
+          : `Ji bilkul! Chaliye humare sawal par wapas aate hain: ${activeQuestionText}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            inquiryState: "resumed_assessment",
+            message: resumeText,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: getCurrentQuestionForSession(session),
+          },
+        };
+      }
+
+      if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+        currentActiveInquiry.state = "AWAITING_CANDIDATE_QUESTION";
+        const inviteText = isEnglish
+          ? "Sure, please go ahead and ask your question. I am here to help."
+          : "Ji haan, bilkul poochiye, aap apna question poochhiye. Main aapki madad karti hoon.";
+        currentActiveInquiry.turns.push({
+          role: "candidate",
+          text: cleanAnswer,
+          timestamp: new Date().toISOString(),
+        });
+        currentActiveInquiry.turns.push({
+          role: "interviewer",
+          text: inviteText,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            inquiryState: "AWAITING_CANDIDATE_QUESTION",
+            message: inviteText,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: getCurrentQuestionForSession(session),
+          },
+        };
+      }
+
+      if (isNotReadyToResume(cleanAnswer)) {
+        currentActiveInquiry.state = "inquiry_active";
+        const inviteText = isEnglish
+          ? "Sure, go ahead! What would you like to ask?"
+          : "Ji, poochhiye, aap kya poochna chahte hain?";
+        currentActiveInquiry.turns.push({
+          role: "candidate",
+          text: cleanAnswer,
+          timestamp: new Date().toISOString(),
+        });
+        currentActiveInquiry.turns.push({
+          role: "interviewer",
+          text: inviteText,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            inquiryState: "inquiry_active",
+            message: inviteText,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: getCurrentQuestionForSession(session),
+          },
+        };
+      }
+    }
+
+    // Sub-dialogue state: AWAITING_CANDIDATE_QUESTION
+    if (currentActiveInquiry.state === "AWAITING_CANDIDATE_QUESTION") {
+      // 1. Candidate decides not to ask anything
+      if (isCandidateDecidingNotToAsk(cleanAnswer)) {
+        currentActiveInquiry.turns.push({
+          role: "candidate",
+          text: cleanAnswer,
+          timestamp: new Date().toISOString(),
+        });
+        currentActiveInquiry.state = "ready_to_resume";
+        const resumeAsk = isEnglish
+          ? "Alright. Shall we continue with the interview?"
+          : "Theek hai. Kya ab hum interview aage badhayein?";
+        currentActiveInquiry.turns.push({
+          role: "interviewer",
+          text: resumeAsk,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            inquiryState: "ready_to_resume",
+            message: resumeAsk,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: activeQuestion,
+          },
+        };
+      }
+
+      // 2. Candidate repeats permission request
+      if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+        currentActiveInquiry.turns.push({
+          role: "candidate",
+          text: cleanAnswer,
+          timestamp: new Date().toISOString(),
+        });
+        const reInvite = isEnglish
+          ? "Sure, please go ahead and ask your question. I am here to help."
+          : "Ji haan, bilkul poochiye, aap apna question poochhiye. Main aapki madad karti hoon.";
+        currentActiveInquiry.turns.push({
+          role: "interviewer",
+          text: reInvite,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            inquiryState: "AWAITING_CANDIDATE_QUESTION",
+            message: reInvite,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: activeQuestion,
+          },
+        };
+      }
+
+      // 3. Process candidate's actual question
+      currentActiveInquiry.turnCount += 1;
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: cleanAnswer,
+        timestamp: new Date().toISOString(),
+      });
+
+      const cq = detectCounterQuestion(cleanAnswer, activeQuestion, {
+        language: session.language,
+        activeInquiry: currentActiveInquiry,
+      });
+
+      if (cq.isCounterQuestion && cq.topic) {
+        currentActiveInquiry.currentTopic = cq.topic;
+      }
+
+      const deterministicReply = (
+        cq.counterQuestionAnswer ||
+        cq.reply ||
+        ""
+      ).trim();
+
+      const inquiryResolution = await resolveInquiryReply({
+        targetQuestion: activeQuestion,
+        inquiryObj: cq.isCounterQuestion ? cq : { topic: currentActiveInquiry.currentTopic || "general_knowledge" },
+        defaultReply: deterministicReply,
+        candidateUtterance: cleanAnswer,
+        turns: currentActiveInquiry.turns.slice(0, -1),
+      });
+
+      if (inquiryResolution?.isQuotaExhausted) {
+        return buildQuotaExhaustedResponse({
+          session,
+          currentQuestion: activeQuestion,
+          isEnglish,
+        });
+      }
+
+      const { replyText, probeQuestion, topic } = inquiryResolution;
+
+      if (topic) {
+        currentActiveInquiry.currentTopic = topic;
+      }
+
+      const combinedMessage = composeSingleQuestionInquiryResponse({
+        replyText,
+        probeQuestion,
+        isEnglish,
+      });
+
+      if (isSupersededTurn()) {
+        return staleTurnResponse();
+      }
+
+      currentActiveInquiry.state = "clarification_check";
+      currentActiveInquiry.turns.push({
+        role: "interviewer",
+        text: combinedMessage,
+        timestamp: new Date().toISOString(),
+      });
+      if (currentActiveInquiry.turns.length > 12) {
+        currentActiveInquiry.turns = currentActiveInquiry.turns.slice(-12);
+      }
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          counterQuestionHandled: true,
+          inquiryState: "clarification_check",
+          message: combinedMessage,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: activeQuestion,
+        },
+      };
+    }
+
+
+    // Candidate requests to ask another question or states they have another doubt
+    if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+      currentActiveInquiry.state = "AWAITING_CANDIDATE_QUESTION";
+      const inviteText = isEnglish
+        ? "Sure, please go ahead and ask your question. I am here to help."
+        : "Ji haan, bilkul poochiye, aap apna question poochhiye. Main aapki madad karti hoon.";
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: cleanAnswer,
+        timestamp: new Date().toISOString(),
+      });
+      currentActiveInquiry.turns.push({
+        role: "interviewer",
+        text: inviteText,
+        timestamp: new Date().toISOString(),
+      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          counterQuestionHandled: true,
+          inquiryState: "AWAITING_CANDIDATE_QUESTION",
+          message: inviteText,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: getCurrentQuestionForSession(session),
+        },
+      };
+    }
+
+    // Candidate indicates they are not ready to resume (e.g. "abhi nahi", "ruko", "wait")
+    if (isNotReadyToResume(cleanAnswer)) {
+      currentActiveInquiry.state = "inquiry_active";
+      const inviteText = isEnglish
+        ? "Sure, go ahead! What would you like to ask?"
+        : "Ji, poochhiye, aap kya poochna chahte hain?";
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: cleanAnswer,
+        timestamp: new Date().toISOString(),
+      });
+      currentActiveInquiry.turns.push({
+        role: "interviewer",
+        text: inviteText,
+        timestamp: new Date().toISOString(),
+      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          counterQuestionHandled: true,
+          inquiryState: "inquiry_active",
+          message: inviteText,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: getCurrentQuestionForSession(session),
+        },
+      };
+    }
+
+    // Step 6: Candidate indicates doubt is cleared OR gives generic affirmative / acknowledgement
+    // Ask whether to continue with the interview, and wait for confirmation before resuming
+    if (
+      isSubDialogueResolution(cleanAnswer) ||
+      isGenericAcknowledgement(cleanAnswer) ||
+      /^(?:haan|ha|han|haanji|hanji|yes|yeah|ji|theek\s+hai|thik\s+hai|okay|ok|accha|achha|acha|all\s+clear|no\s+doubts?)[.!?।\s]*$/i.test(cleanAnswer)
+    ) {
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: cleanAnswer,
+        timestamp: new Date().toISOString(),
+      });
+      currentActiveInquiry.state = "ready_to_resume";
+      const proceedAsk = isEnglish
+        ? "Shall we continue with the interview?"
+        : "Achha, kya ab hum interview aage badhayein?";
+      currentActiveInquiry.turns.push({
+        role: "interviewer",
+        text: proceedAsk,
+        timestamp: new Date().toISOString(),
+      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          completed: false,
+          clarificationRequired: true,
+          counterQuestionHandled: true,
+          inquiryState: "ready_to_resume",
+          message: proceedAsk,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: questions.length,
+          question: getCurrentQuestionForSession(session),
+        },
+      };
+    }
+
+    // Flow 2: Candidate answering an AI conversational follow-up/probe
+    if (isAnsweringInquiryProbe(cleanAnswer, currentActiveInquiry.turns)) {
+      const { isComposite, probePart, assessmentPart } = separateProbeAndAssessmentAnswer(
+        cleanAnswer,
+        currentActiveInquiry.turns,
+        activeQuestion,
+      );
+
+      currentActiveInquiry.turns.push({
+        role: "candidate",
+        text: probePart,
+        timestamp: new Date().toISOString(),
+      });
+
+      const locFacts = extractFallbackFacts(probePart);
+      if (locFacts && Object.keys(locFacts).length > 0) {
+        mergeShortTermMemoryFacts(session, locFacts);
+      }
+
+      let interviewerAck;
+      if (locFacts?.cityPreference) {
+        interviewerAck = isEnglish
+          ? `Understood, noted your preference for ${locFacts.cityPreference}.`
+          : `Samajh gayi, aapka ${locFacts.cityPreference} mein kaam karne ka preference note kar liya hai.`;
+      } else if (locFacts?.travelWillingness === "yes" && locFacts?.relocationWillingness === "no") {
+        interviewerAck = isEnglish
+          ? `Understood, noted that you can travel locally but cannot relocate.`
+          : `Samajh gayi, aap local travel ke liye taiyaar hain lekin shift nahi hona chahte, ye note kar liya hai.`;
+      } else if (locFacts?.relocationCondition === "accommodation") {
+        interviewerAck = isEnglish
+          ? `Understood, your accommodation condition has been noted for the onboarding team.`
+          : `Samajh gayi, agar accommodation mile toh aap consider kar sakte hain, ye onboarding team ke liye note kar liya hai.`;
+      } else {
+        interviewerAck = isEnglish
+          ? `Understood!`
+          : `Bahut accha, samajh gayi!`;
+      }
+
+      currentActiveInquiry.turns.push({
+        role: "interviewer",
+        text: interviewerAck,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (isComposite && assessmentPart) {
+        // If candidate's composite part is asking another question, keep inquiry active!
+        const partIsQuestion = detectCounterQuestion(assessmentPart, activeQuestion, { language: session.language }).isCounterQuestion;
+        if (!partIsQuestion) {
+          session.activeInquiry = null;
+        }
+        cleanAnswer = assessmentPart;
+      } else {
+        session.activeInquiry = null;
+        const resumeMessage = isEnglish
+          ? `${interviewerAck} Let's return to our question: ${activeQuestionText}`
+          : `${interviewerAck} Chaliye ab humare sawal par wapas aate hain: ${activeQuestionText}`;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            clarificationRequired: true,
+            counterQuestionHandled: true,
+            inquiryState: "resumed_assessment",
+            message: resumeMessage,
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            question: getCurrentQuestionForSession(session),
+          },
+        };
+      }
+    }
+
     // Flow 1: Candidate asks another question, follow-up, or constraint
     const followUpInquiry = await checkCandidateInquiry(activeQuestionText, activeQuestion.id);
     if (followUpInquiry) {
+      if (followUpInquiry.isQuotaExhausted) {
+        return buildQuotaExhaustedResponse({
+          session,
+          currentQuestion: activeQuestion,
+          isEnglish,
+        });
+      }
+
       currentActiveInquiry.turnCount += 1;
       if (followUpInquiry.topic) {
-        currentActiveInquiry.currentTopic = followUpInquiry.topic;
+        currentActiveInquiry.currentTopic =
+          followUpInquiry.topic === "earnings" ? "unavailable_info" : followUpInquiry.topic;
       }
       currentActiveInquiry.turns.push({
         role: "candidate",
@@ -1413,6 +2153,7 @@ async function submitAnswer({
             completed: false,
             clarificationRequired: true,
             counterQuestionHandled: true,
+            inquiryState: "resumed_assessment",
             message: repeatReply,
             questionNumber: session.currentQuestionIndex + 1,
             totalQuestions: questions.length,
@@ -1435,6 +2176,7 @@ async function submitAnswer({
             completed: false,
             clarificationRequired: true,
             counterQuestionHandled: true,
+            inquiryState: "resumed_assessment",
             message: loopReply,
             questionNumber: session.currentQuestionIndex + 1,
             totalQuestions: questions.length,
@@ -1450,25 +2192,22 @@ async function submitAnswer({
         ""
       ).trim();
 
-      const { replyText, probeQuestion } = await resolveInquiryReply({
+      const inquiryResolution = await resolveInquiryReply({
         targetQuestion: activeQuestion,
         inquiryObj: followUpInquiry,
         defaultReply: deterministicReply,
         turns: currentActiveInquiry.turns.slice(0, -1),
       });
 
-      const effectiveInterviewerReply = probeQuestion && !replyText.includes(probeQuestion)
-        ? `${replyText} ${probeQuestion}`
-        : replyText;
-
-      currentActiveInquiry.turns.push({
-        role: "interviewer",
-        text: effectiveInterviewerReply,
-        timestamp: new Date().toISOString(),
-      });
-      if (currentActiveInquiry.turns.length > 12) {
-        currentActiveInquiry.turns = currentActiveInquiry.turns.slice(-12);
+      if (inquiryResolution?.isQuotaExhausted) {
+        return buildQuotaExhaustedResponse({
+          session,
+          currentQuestion: activeQuestion,
+          isEnglish,
+        });
       }
+
+      const { replyText, probeQuestion } = inquiryResolution;
 
       // Configurable safety boundary to prevent infinite cross-questioning
       if (currentActiveInquiry.turnCount >= MAX_ADAPTIVE_INQUIRY_TURNS) {
@@ -1476,7 +2215,8 @@ async function submitAnswer({
         const pivotText = isEnglish
           ? "We have covered this in detail. Let's now return to our question:"
           : "Humne is baare mein vistaar se baat kar li hai. Chaliye ab humare sawal par wapas aate hain:";
-        const combinedMessage = `${effectiveInterviewerReply} ${pivotText} ${activeQuestionText}`;
+        const replyClean = (replyText || "").replace(/\s*[?]\s*$/g, ".").trim();
+        const combinedMessage = `${replyClean} ${pivotText} ${activeQuestionText}`.trim();
         return {
           status: 200,
           body: {
@@ -1484,6 +2224,7 @@ async function submitAnswer({
             completed: false,
             clarificationRequired: true,
             counterQuestionHandled: true,
+            inquiryState: "resumed_assessment",
             message: combinedMessage,
             questionNumber: session.currentQuestionIndex + 1,
             totalQuestions: questions.length,
@@ -1492,9 +2233,27 @@ async function submitAnswer({
         };
       }
 
-      // Adaptive depth: Inquiry remains in progress; candidate is exploring doubts
-      // Answer the candidate's doubt naturally without repeatedly re-appending the pending question on every follow-up turn
-      const combinedMessage = effectiveInterviewerReply;
+      // Step 4 & 5: Adaptive depth - answer candidate's doubt and ask at most one clarification check
+      const combinedMessage = composeSingleQuestionInquiryResponse({
+        replyText,
+        probeQuestion,
+        isEnglish,
+      });
+
+      if (isSupersededTurn()) {
+        return staleTurnResponse();
+      }
+
+      currentActiveInquiry.state = "clarification_check";
+      currentActiveInquiry.turns.push({
+        role: "interviewer",
+        text: combinedMessage,
+        timestamp: new Date().toISOString(),
+      });
+      if (currentActiveInquiry.turns.length > 12) {
+        currentActiveInquiry.turns = currentActiveInquiry.turns.slice(-12);
+      }
+
       return {
         status: 200,
         body: {
@@ -1502,6 +2261,7 @@ async function submitAnswer({
           completed: false,
           clarificationRequired: true,
           counterQuestionHandled: true,
+          inquiryState: "clarification_check",
           message: combinedMessage,
           questionNumber: session.currentQuestionIndex + 1,
           totalQuestions: questions.length,
@@ -1510,110 +2270,6 @@ async function submitAnswer({
       };
     }
 
-    // Flow 2: Candidate answering an AI conversational follow-up/probe
-    if (isAnsweringInquiryProbe(cleanAnswer, currentActiveInquiry.turns)) {
-      const { isComposite, probePart, assessmentPart } = separateProbeAndAssessmentAnswer(
-        cleanAnswer,
-        currentActiveInquiry.turns,
-        activeQuestion,
-      );
-
-      currentActiveInquiry.turns.push({
-        role: "candidate",
-        text: probePart,
-        timestamp: new Date().toISOString(),
-      });
-      const interviewerAck = isEnglish
-        ? `Understood!`
-        : `Bahut accha, samajh gayi!`;
-      currentActiveInquiry.turns.push({
-        role: "interviewer",
-        text: interviewerAck,
-        timestamp: new Date().toISOString(),
-      });
-      session.activeInquiry = null;
-
-      if (isComposite && assessmentPart) {
-        // Safe composite handling: Proceed to the question's standard validation pipeline
-        // with the extracted assessment answer part.
-        cleanAnswer = assessmentPart;
-      } else {
-        const resumeMessage = isEnglish
-          ? `Understood! Let's return to our question: ${activeQuestionText}`
-          : `Bahut accha, samajh gayi! Chaliye ab humare sawal par wapas aate hain: ${activeQuestionText}`;
-        return {
-          status: 200,
-          body: {
-            success: true,
-            completed: false,
-            clarificationRequired: true,
-            counterQuestionHandled: true,
-            message: resumeMessage,
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: questions.length,
-            question: getCurrentQuestionForSession(session),
-          },
-        };
-      }
-    }
-
-    // Sub-dialogue resolution signal (doubt cleared / understood)
-    if (isSubDialogueResolution(cleanAnswer)) {
-      currentActiveInquiry.turns.push({
-        role: "candidate",
-        text: cleanAnswer,
-        timestamp: new Date().toISOString(),
-      });
-      session.activeInquiry = null;
-      const resumeMessage = isEnglish
-        ? `Great! Let's return to our question: ${activeQuestionText}`
-        : `Bahut badhiya! Chaliye ab humare sawal par wapas aate hain: ${activeQuestionText}`;
-      return {
-        status: 200,
-        body: {
-          success: true,
-          completed: false,
-          clarificationRequired: true,
-          counterQuestionHandled: true,
-          message: resumeMessage,
-          questionNumber: session.currentQuestionIndex + 1,
-          totalQuestions: questions.length,
-          question: getCurrentQuestionForSession(session),
-        },
-      };
-    }
-
-    // Flow 4: Short generic affirmative / acknowledgement ("theek hai", "okay", "haan")
-    // For non-binary questions (like A1 location, A2 age, A9 cluster), "theek hai" / "okay" is an
-    // acknowledgement to the interviewer's explanation, NOT an answer to the assessment question.
-    const isBinaryConfirmationQuestion = question.id === "A0" || Boolean(session.pendingNameConfirmation);
-    if (
-      !isBinaryConfirmationQuestion &&
-      (isGenericAcknowledgement(cleanAnswer) || /^(?:haan|han|yes|yeah|ji|accha|achha|acha)[.!?।\s]*$/i.test(cleanAnswer))
-    ) {
-      currentActiveInquiry.turns.push({
-        role: "candidate",
-        text: cleanAnswer,
-        timestamp: new Date().toISOString(),
-      });
-      session.activeInquiry = null;
-      const resumeMessage = isEnglish
-        ? `Understood. If you have no further questions, let's return to our question: ${activeQuestionText}`
-        : `Theek hai. Agar koi aur sawal nahi hai, toh chaliye humare sawal par wapas aate hain: ${activeQuestionText}`;
-      return {
-        status: 200,
-        body: {
-          success: true,
-          completed: false,
-          clarificationRequired: true,
-          counterQuestionHandled: true,
-          message: resumeMessage,
-          questionNumber: session.currentQuestionIndex + 1,
-          totalQuestions: questions.length,
-          question: getCurrentQuestionForSession(session),
-        },
-      };
-    }
 
     // Flow 3: Candidate provided an actual answer (or invalid answer attempt).
     // Close active inquiry safely and fall through to standard question validation.
@@ -1660,6 +2316,21 @@ async function submitAnswer({
       };
     }
 
+    if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+      return handleRequestToAskQuestion({
+        session,
+        targetQuestion: {
+          id: "A2_NAME_CONFIRM",
+          Step: "A2_NAME_CONFIRM",
+          text: confirmPrompt,
+          category: "Introduction",
+          stage: "SETUP",
+        },
+        cleanAnswer,
+        isEnglish,
+      });
+    }
+
     const normalizedConfirmation = cleanAnswer
       .toLowerCase()
       .replace(/[,;]+/g, " ")
@@ -1699,10 +2370,11 @@ async function submitAnswer({
       }
     }
 
-    let isAffirmative =
-      /^(?:(?:ji\s+)?(?:haan|han|haanji|hanji|yes|yeah|yep|ha)(?:\s+ji)?(?:\s+(?:sahi(?:\s+hai)?|theek\s+hai|thik\s+hai|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|(?:mera\s+)?(?:yahi|wahi)\s+naam\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|bilkul(?:\s+sahi(?:\s+hai)?)?|bilkul(?:\s+theek(?:\s+hai)?)?|correct|right|that's\s+correct|that's\s+right|that's\s+my\s+name))?|(?:(?:जी\s+)?(?:हाँ|हां|हाँजी|हांजी))(?:\s+जी)?(?:\s+(?:सही(?:\s+hai)?|theek\s+hai|thik\s+hai|सही(?:\s+है)?|ठीक(?:\s+है)?|बिल्कुल(?:\s+सही(?:\s+है)?)?|बिल्कुल(?:\s+theek(?:\s+hai)?)?|वही\s+है|यही\s+है|यही\s+नाम\s+है|मेरा\s+(?:यही|वही)\s+नाम\s+है))?|जी|sahi|sahi\s+hai|correct|right|that's\s+correct|that's\s+right|that's\s+my\s+name|wahi\s+hai|yahi\s+hai|wahi\s+naam\s+hai|yahi\s+naam\s+hai|mera\s+(?:yahi|wahi)\s+naam\s+hai|mera\s+naam\s+(?:yahi|wahi)\s+hai|(?:mera\s+)?naam\s+(?:yahi|wahi)\s+hai|theek\s+hai|thik\s+hai|bilkul|bilkul\s+sahi(?:\s+hai)?|bilkul\s+theek(?:\s+hai)?|bilkul\s+thik(?:\s+hai)?|ji\s+bilkul|ji\s+haan\s+bilkul|हाँ|हां|जी\s+हाँ|जी\s+हां|बिल्कुल|बिल्कुल\s+सही(?:\s+है)?|सही|सही\s+है|ठीक\s+है|वही\s+है|यही\s+है|यही\s+नाम\s+है|मेरा\s+(?:यही|वही)\s+नाम\s+है)[.!?।\s]*$/iu.test(
-        normalizedConfirmation,
-      );
+    let isAffirmative = isNameConfirmationAffirmative(
+      cleanAnswer,
+      pendingName,
+      normalizedConfirmation,
+    );
 
     let isNegative =
       /^(?:no|nope|nahi|nahin|nhi|galat|wrong(?:\s+name)?|incorrect|not\s+(?:correct|right|my\s+name)|(?:that|it|this|ye|that's)\s+(?:is\s+)?not\s+my\s+name|ye\s+mera\s+naam\s+nahi\s+hai|mera\s+naam\s+galat\s+hai|galat\s+naam\s+hai|galat\s+hai|naam\s+galat\s+hai|गलत|गलत\s+है|नहीं|नही|गलत\s+नाम\s+है|मेरा\s+नाम\s+गलत\s+है|(?:नहीं|नही)(?:\s+(?:गलत|गलत\s+है|ये\s+गलत\s+है|ये\s+मेरा\s+नाम\s+नहीं\s+है|मेरा\s+नाम\s+नहीं\s+है)))(?:\s+(?:hai|ji|sir|madam))?[.!?।\s]*$/iu.test(
@@ -2206,6 +2878,120 @@ async function submitAnswer({
       category: pending.category || "Location & movement",
     };
 
+    if (isRequestToAskQuestion(followUpAnswer, { language: session.language })) {
+      const isEnglish = session.language === "English";
+      return handleRequestToAskQuestion({
+        session,
+        targetQuestion: currentPendingQ,
+        cleanAnswer: followUpAnswer,
+        isEnglish,
+      });
+    }
+
+    if (pending.type === "language_preference") {
+      const sep = separateLanguageAndInquiry(followUpAnswer, {
+        question: currentPendingQ,
+        activeInquiry: session.activeInquiry,
+      });
+
+      if (sep.hasLanguagePreference && sep.detectedLanguage) {
+        session.invalidAttempts = {};
+        session.language = sep.detectedLanguage;
+        mergeShortTermMemoryFacts(session, { preferredLanguage: sep.detectedLanguage });
+        session.answers.push({
+          questionId: "A0_LANGUAGE_PREFERENCE",
+          questionText: pending.prompt,
+          category: "Setup",
+          answer: followUpAnswer,
+          answeredAt: new Date().toISOString(),
+          language: sep.detectedLanguage,
+        });
+        session.pendingFollowUp = null;
+        session.currentQuestionIndex += 1;
+        const nextQ = questions[session.currentQuestionIndex];
+
+        if (sep.hasInquiry) {
+          const inquiryCandidateUtterance = sep.cleanQuestion || sep.extractedQuestion || followUpAnswer;
+          if (isRequestToAskQuestion(inquiryCandidateUtterance, { language: sep.detectedLanguage })) {
+            return handleRequestToAskQuestion({
+              session,
+              targetQuestion: nextQ,
+              cleanAnswer: inquiryCandidateUtterance,
+              isEnglish: sep.detectedLanguage === "English",
+            });
+          }
+          const inquiry = await checkCandidateInquiry(nextQ.text, nextQ.id, inquiryCandidateUtterance);
+          const activeInquiryObj = inquiry || sep.counterQuestion || null;
+          const replyText = (
+            inquiry?.counterQuestionAnswer ||
+            inquiry?.responseText ||
+            inquiry?.clarificationQuestion ||
+            sep.counterQuestion?.reply ||
+            ""
+          ).trim();
+
+          return respondWithInquiry({
+            targetQuestion: nextQ,
+            inquiryObj: activeInquiryObj,
+            deterministicReply: replyText,
+            candidateUtterance: inquiryCandidateUtterance,
+          });
+        }
+
+        return {
+          status: 200,
+          body: {
+            success: true,
+            completed: false,
+            acknowledgement: getNaturalAcknowledgement(nextQ, session),
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: questions.length,
+            consentOutcome: session.consentOutcome || "accepted",
+            language: session.language,
+            question: nextQ,
+          },
+        };
+      }
+
+      // Check if candidate asked an inquiry without selecting language
+      const cq = detectCounterQuestion(
+        followUpAnswer,
+        currentPendingQ,
+        { language: session.language },
+      );
+      const isExplicitCandidateQuestion =
+        cq.isCounterQuestion ||
+        /[?]|(?:^|\b)(?:where|kahan|kidhar|why|kyun|kyu|how\s+far|kitn[aie]\s+door|kitna\s+distance|kaise|what\s+if|agar|compulsory|zaroori\s+hai|zaruri\s+hai|relocate\s+karna\s+hoga|shift\s+hona\s+hoga|kya|what|difference|explain|batao)\b/i.test(
+          followUpAnswer,
+        );
+
+      if (isExplicitCandidateQuestion) {
+        const inquiry = await checkCandidateInquiry(pending.prompt, currentPendingQ.id, followUpAnswer);
+        if (inquiry || cq.isCounterQuestion) {
+          const replyText = (
+            inquiry?.counterQuestionAnswer ||
+            inquiry?.responseText ||
+            inquiry?.clarificationQuestion ||
+            cq.reply ||
+            ""
+          ).trim();
+          const activeInquiryObj = inquiry || cq || null;
+          return respondWithInquiry({
+            targetQuestion: currentPendingQ,
+            inquiryObj: activeInquiryObj,
+            deterministicReply: replyText,
+            candidateUtterance: followUpAnswer,
+          });
+        }
+      }
+
+      const isEnglish = session.language === "English";
+      const reprompt = isEnglish
+        ? "Please let me know: would you like to speak in Hindi or English?"
+        : "Kripya batayein, aap Hindi mein baat karengi ya English mein?";
+      return askAgain(reprompt);
+    }
+
     const cq = detectCounterQuestion(
       followUpAnswer,
       currentPendingQ,
@@ -2234,45 +3020,6 @@ async function submitAnswer({
           deterministicReply: replyText,
         });
       }
-    }
-
-    if (pending.type === "language_preference") {
-      const detectedLang = classifyLanguage(followUpAnswer);
-      if (detectedLang) {
-        session.invalidAttempts = {};
-        session.language = detectedLang;
-        mergeShortTermMemoryFacts(session, { preferredLanguage: detectedLang });
-        session.answers.push({
-          questionId: "A0_LANGUAGE_PREFERENCE",
-          questionText: pending.prompt,
-          category: "Setup",
-          answer: followUpAnswer,
-          answeredAt: new Date().toISOString(),
-          language: detectedLang,
-        });
-        session.pendingFollowUp = null;
-        session.currentQuestionIndex += 1;
-        const nextQ = questions[session.currentQuestionIndex];
-        return {
-          status: 200,
-          body: {
-            success: true,
-            completed: false,
-            acknowledgement: getNaturalAcknowledgement(nextQ, session),
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: questions.length,
-            consentOutcome: session.consentOutcome || "accepted",
-            language: session.language,
-            question: nextQ,
-          },
-        };
-      }
-
-      const isEnglish = session.language === "English";
-      const reprompt = isEnglish
-        ? "Please let me know: would you like to speak in Hindi or English?"
-        : "Kripya batayein, aap Hindi mein baat karengi ya English mein?";
-      return askAgain(reprompt);
     }
 
     if (pending.type === "travel_clarification") {
@@ -2382,6 +3129,11 @@ async function submitAnswer({
 
       if (isReluctantOrUnsure && pending.probeGiven) {
         saveFollowUp();
+
+      const timelineFacts = extractFallbackFacts(followUpAnswer);
+      if (timelineFacts && Object.keys(timelineFacts).length > 0) {
+        mergeShortTermMemoryFacts(session, timelineFacts);
+      }
         session.travelWillingness = "uncertain";
         if (lastLocationAnswer) {
           lastLocationAnswer.travelWillingness = "uncertain";
@@ -2440,16 +3192,31 @@ async function submitAnswer({
 
       saveFollowUp();
 
-      session.travelWillingness = negative ? "no" : "yes";
+      const travelFacts = extractFallbackFacts(followUpAnswer);
+      if (travelFacts && Object.keys(travelFacts).length > 0) {
+        mergeShortTermMemoryFacts(session, travelFacts);
+      }
+
+      const effectiveTravelWillingness = travelFacts?.travelWillingness
+        ? travelFacts.travelWillingness
+        : (negative ? "no" : "yes");
+
+      session.travelWillingness = effectiveTravelWillingness;
+      if (travelFacts?.relocationWillingness) {
+        session.relocationWillingness = travelFacts.relocationWillingness;
+      }
+      if (travelFacts?.relocationCondition) {
+        session.relocationCondition = travelFacts.relocationCondition;
+      }
       if (lastLocationAnswer) {
-        lastLocationAnswer.travelWillingness = negative ? "no" : "yes";
+        lastLocationAnswer.travelWillingness = effectiveTravelWillingness;
       }
 
       if (lastCheck) {
-        lastCheck.travelWillingness = negative ? "no" : "yes";
+        lastCheck.travelWillingness = effectiveTravelWillingness;
       }
 
-      if (negative) {
+      if (negative || (travelFacts?.travelWillingness === "yes" && travelFacts?.relocationWillingness === "no")) {
         session.pendingFollowUp = null;
         session.currentQuestionIndex += 1;
 
@@ -2573,6 +3340,11 @@ async function submitAnswer({
         session.invalidAttempts = {};
         session.travelWillingness = "no";
         saveFollowUp();
+
+      const timelineFacts = extractFallbackFacts(followUpAnswer);
+      if (timelineFacts && Object.keys(timelineFacts).length > 0) {
+        mergeShortTermMemoryFacts(session, timelineFacts);
+      }
         if (lastCheck) {
           lastCheck.moveTimelineAnswer = followUpAnswer;
           lastCheck.travelWillingness = "no";
@@ -2628,6 +3400,11 @@ async function submitAnswer({
       }
 
       saveFollowUp();
+
+      const timelineFacts = extractFallbackFacts(followUpAnswer);
+      if (timelineFacts && Object.keys(timelineFacts).length > 0) {
+        mergeShortTermMemoryFacts(session, timelineFacts);
+      }
 
       if (lastCheck) {
         lastCheck.moveTimelineAnswer = followUpAnswer;
@@ -3008,8 +3785,62 @@ async function submitAnswer({
       };
     }
 
+    if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+      const isEnglish = session.language === "English" || classifyLanguage(cleanAnswer) === "English";
+      return handleRequestToAskQuestion({
+        session,
+        targetQuestion: question,
+        cleanAnswer,
+        isEnglish,
+      });
+    }
+
     const cq = detectCounterQuestion(cleanAnswer, question, { language: session.language });
     const consentOutcome = classifyConsent(cleanAnswer);
+    const sep = separateLanguageAndInquiry(cleanAnswer, {
+      question,
+      activeInquiry: session.activeInquiry,
+    });
+
+    if (consentOutcome !== "refused" && sep.hasLanguagePreference && sep.hasInquiry) {
+      session.invalidAttempts = {};
+      session.pendingConsentOnly = false;
+      session.consentOutcome = "accepted";
+      session.language = sep.detectedLanguage;
+      mergeShortTermMemoryFacts(session, { preferredLanguage: sep.detectedLanguage });
+      answerRecord.consentOutcome = "accepted";
+      answerRecord.language = sep.detectedLanguage;
+      session.answers.push(answerRecord);
+      recordShortTermMemoryTurn(session, answerRecord);
+      session.currentQuestionIndex += 1;
+      const nextQ = questions[session.currentQuestionIndex];
+
+      const inquiryCandidateUtterance = sep.cleanQuestion || sep.extractedQuestion || cleanAnswer;
+      if (isRequestToAskQuestion(inquiryCandidateUtterance, { language: sep.detectedLanguage })) {
+        return handleRequestToAskQuestion({
+          session,
+          targetQuestion: nextQ,
+          cleanAnswer: inquiryCandidateUtterance,
+          isEnglish: sep.detectedLanguage === "English",
+        });
+      }
+      const inquiry = await checkCandidateInquiry(nextQ.text, nextQ.id, inquiryCandidateUtterance);
+      const activeInquiryObj = inquiry || sep.counterQuestion || null;
+      const replyText = (
+        inquiry?.counterQuestionAnswer ||
+        inquiry?.responseText ||
+        inquiry?.clarificationQuestion ||
+        sep.counterQuestion?.reply ||
+        ""
+      ).trim();
+
+      return respondWithInquiry({
+        targetQuestion: nextQ,
+        inquiryObj: activeInquiryObj,
+        deterministicReply: replyText,
+        candidateUtterance: inquiryCandidateUtterance,
+      });
+    }
 
     if (cq.isCounterQuestion || consentOutcome === "unclear") {
       const inquiry = await checkCandidateInquiry(question.text, question.id);
@@ -3132,6 +3963,16 @@ async function submitAnswer({
 
   // A1: Location and movement handling.
   if (question.id === "A1") {
+    if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+      const isEnglish = session.language === "English" || classifyLanguage(cleanAnswer) === "English";
+      return handleRequestToAskQuestion({
+        session,
+        targetQuestion: question,
+        cleanAnswer,
+        isEnglish,
+      });
+    }
+
     const cq = detectCounterQuestion(cleanAnswer, question, { language: session.language });
     const isCandidateQuestion =
       cq.isCounterQuestion ||
@@ -3326,6 +4167,16 @@ async function submitAnswer({
       };
     }
 
+    if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+      const isEnglish = session.language === "English" || classifyLanguage(cleanAnswer) === "English";
+      return handleRequestToAskQuestion({
+        session,
+        targetQuestion: question,
+        cleanAnswer,
+        isEnglish,
+      });
+    }
+
     const cq = detectCounterQuestion(cleanAnswer, question, { language: session.language });
     const result = evaluateAge(cleanAnswer);
 
@@ -3432,6 +4283,16 @@ async function submitAnswer({
 
   // A2_NAME captures the candidate's name without applying eligibility rules.
   if (question.id === "A2_NAME") {
+    if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+      const isEnglish = session.language === "English" || classifyLanguage(cleanAnswer) === "English";
+      return handleRequestToAskQuestion({
+        session,
+        targetQuestion: question,
+        cleanAnswer,
+        isEnglish,
+      });
+    }
+
     const nameClassification = classifyNameAnswer(cleanAnswer);
     const nameIsClear = nameClassification.clear;
     console.info("[UC Interview Diagnostics] name_validation", {
@@ -3959,6 +4820,16 @@ async function submitAnswer({
       }
     }
 
+    if (isRequestToAskQuestion(cleanAnswer, { language: session.language })) {
+      const isEnglish = session.language === "English" || classifyLanguage(cleanAnswer) === "English";
+      return handleRequestToAskQuestion({
+        session,
+        targetQuestion: question,
+        cleanAnswer,
+        isEnglish,
+      });
+    }
+
     const isIrrelevantUtterance =
       /\b(?:biryani|pizza|burger|maggi|cricket|football|movie|movies|cinema|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|blah\s+blah|asdf|qwerty|cat|dog|billi|kutta|weather|mausam|barish|rain|favourite\s+colou?r|favorite\s+colou?r)\b/i.test(
         cleanAnswer,
@@ -4074,6 +4945,21 @@ async function submitAnswer({
       const unifiedIntent =
         interpretation.unifiedIntent ||
         normalizeIntent(interpretation.intent, interpretation.answerStatus);
+
+      if (
+        unifiedIntent === UNIFIED_INTENTS.REQUEST_TO_ASK_QUESTION ||
+        interpretation.intent === "REQUEST_TO_ASK_QUESTION" ||
+        interpretation.answerStatus === "request_to_ask_question" ||
+        isRequestToAskQuestion(cleanAnswer, { language: session.language })
+      ) {
+        const isEnglish = session.language === "English";
+        return handleRequestToAskQuestion({
+          session,
+          targetQuestion: question,
+          cleanAnswer,
+          isEnglish,
+        });
+      }
 
       if (
         unifiedIntent === UNIFIED_INTENTS.CANDIDATE_QUESTION ||
@@ -4306,21 +5192,38 @@ async function submitAnswer({
         answerRecord,
         retryAnswers: [],
       };
-      const rateLimited = error?.code === "AI_RATE_LIMIT" || error?.name === "RateLimitError" || error?.status === 429 || error?.statusCode === 429;
+      const rateLimited = error?.code === "AI_RATE_LIMIT" || error?.name === "RateLimitError" || error?.status === 429 || error?.statusCode === 429 || isQuotaExhaustedError(error);
+      if (rateLimited) {
+        console.warn("[UC Diagnostics] GEMINI_FREE_TIER_QUOTA_EXHAUSTED", {
+          sessionKey,
+          questionId: question.id,
+          errorName: error?.name || "Error",
+        });
+      }
+      session.pendingInterpretation = pendingInterpretation || {
+        questionId: question.id,
+        answerRecord,
+        retryAnswers: [],
+      };
       session.pendingInterpretation.failureCode = rateLimited
         ? "AI_RATE_LIMIT"
         : "AI_INTERPRETATION_UNAVAILABLE";
       session.pendingInterpretation.failedAt = new Date().toISOString();
+      const isEnglish = session.language === "English";
+      const quotaMessage = isEnglish
+        ? "I'm sorry, I am currently facing a technical issue with answering. Your interview question is safe. We can try again in a little while."
+        : "Maaf kijiye, abhi mujhe jawab dene mein technical dikkat aa rahi hai. Aapka interview question safe hai. Hum thodi der baad dobara koshish kar sakte hain.";
       return {
         status: 200,
         body: {
           success: true,
           completed: false,
           clarificationRequired: true,
+          quotaExhausted: rateLimited,
           interpretationUnavailable: true,
           code: session.pendingInterpretation.failureCode,
           message: rateLimited
-            ? "AI service abhi busy hai. Aapka jawab save hai. Kripya kuch der baad isi sawal ka jawab dobara dein."
+            ? quotaMessage
             : "माफ़ कीजिए, आपका जवाब सुरक्षित है, लेकिन अभी समझा नहीं जा सका। कृपया इसी सवाल का जवाब दोबारा दें।",
           questionNumber: session.currentQuestionIndex + 1,
           totalQuestions: questions.length,

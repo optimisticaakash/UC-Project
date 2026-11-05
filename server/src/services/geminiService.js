@@ -1,5 +1,6 @@
 const {
   detectCounterQuestion,
+  isRequestToAskQuestion,
   isGenericAcknowledgement,
   isExplicitContinueRequest,
 } = require("./counterQuestions");
@@ -7,6 +8,7 @@ const {
 const UNIFIED_INTENTS = Object.freeze({
   ASSESSMENT_ANSWER: "ASSESSMENT_ANSWER",
   CANDIDATE_QUESTION: "CANDIDATE_QUESTION",
+  REQUEST_TO_ASK_QUESTION: "REQUEST_TO_ASK_QUESTION",
   CLARIFICATION_REQUEST: "CLARIFICATION_REQUEST",
   AMBIGUOUS_RESPONSE: "AMBIGUOUS_RESPONSE",
   IRRELEVANT_RESPONSE: "IRRELEVANT_RESPONSE",
@@ -18,6 +20,7 @@ const UNIFIED_INTENTS = Object.freeze({
 function normalizeIntent(rawIntent, answerStatus = null) {
   if (!rawIntent || typeof rawIntent !== "string") {
     if (answerStatus === "counter_question") return UNIFIED_INTENTS.CANDIDATE_QUESTION;
+    if (answerStatus === "request_to_ask_question") return UNIFIED_INTENTS.REQUEST_TO_ASK_QUESTION;
     if (answerStatus === "irrelevant") return UNIFIED_INTENTS.IRRELEVANT_RESPONSE;
     if (answerStatus === "unclear") return UNIFIED_INTENTS.AMBIGUOUS_RESPONSE;
     return UNIFIED_INTENTS.ASSESSMENT_ANSWER;
@@ -27,6 +30,8 @@ function normalizeIntent(rawIntent, answerStatus = null) {
     case "ASSESSMENT_ANSWER":
     case "INTERVIEW_ANSWER":
       return UNIFIED_INTENTS.ASSESSMENT_ANSWER;
+    case "REQUEST_TO_ASK_QUESTION":
+      return UNIFIED_INTENTS.REQUEST_TO_ASK_QUESTION;
     case "CANDIDATE_QUESTION":
     case "RELEVANT_COUNTER_QUESTION":
     case "QUESTION_RATIONALE_INQUIRY":
@@ -52,7 +57,11 @@ function normalizeIntent(rawIntent, answerStatus = null) {
 }
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-const INTERPRETATION_TIMEOUT_MS = 15000;
+const DEFAULT_INTERPRETATION_TIMEOUT_MS = 15000;
+const INTERPRETATION_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.GEMINI_INTERPRETATION_TIMEOUT_MS) || DEFAULT_INTERPRETATION_TIMEOUT_MS,
+);
 const INTERPRETATION_REQUEST_OPTIONS = Object.freeze({
   retries: Object.freeze({ strategy: "none" }),
   timeout_ms: INTERPRETATION_TIMEOUT_MS,
@@ -68,6 +77,37 @@ const IRRELEVANT_PATTERNS =
   /\b(aaloo|aloo|potato|biryani|pizza|burger|maggi|cricket|football|movie|movies|cinema|anime|song|songs|dance|gaana|habba\s+jabba|bla\s+bla|blah\s+blah|asdf|qwerty|chair|table|desk|bottle|cat|dog|billi|kutta|weather|mausam|barish|rain|politics|election|chutkula|joke|favourite|favorite|colour|color|blue|red|green|yellow)\b/i;
 
 let clientPromise;
+
+let quotaExhaustedUntil = 0;
+
+function isQuotaExhaustedError(error) {
+  if (!error) return false;
+  const message = error.message || (typeof error === "string" ? error : "");
+  return Boolean(
+    error.isQuotaExhausted ||
+    error.code === "AI_RATE_LIMIT" ||
+    error.status === 429 ||
+    error.statusCode === 429 ||
+    error.name === "RateLimitError" ||
+    /\b429\b|resource_exhausted|quota|rate.?limit/i.test(message)
+  );
+}
+
+function markQuotaExhausted(retryDelayMs = 60000) {
+  quotaExhaustedUntil = Date.now() + Math.max(retryDelayMs, 30000);
+  console.warn("[UC Diagnostics] GEMINI_FREE_TIER_QUOTA_EXHAUSTED", {
+    quotaExhaustedUntil,
+    cooldownMs: Math.max(retryDelayMs, 30000),
+  });
+}
+
+function isQuotaExhausted() {
+  return Date.now() < quotaExhaustedUntil;
+}
+
+function resetQuotaExhaustion() {
+  quotaExhaustedUntil = 0;
+}
 
 async function getClient() {
   if (!process.env.GEMINI_API_KEY) {
@@ -90,23 +130,44 @@ async function generateText(input) {
     throw new Error("Input must be a non-empty string");
   }
 
-  const ai = await getClient();
-
-  const response = await ai.interactions.create(
-    {
-      model: MODEL,
-      input: input.trim(),
-    },
-    INTERPRETATION_REQUEST_OPTIONS,
-  );
-
-  const text = response.output_text;
-
-  if (typeof text !== "string" || !text.trim()) {
-    throw new Error("Gemini returned an empty response");
+  if (isQuotaExhausted()) {
+    const error = new Error("GEMINI_FREE_TIER_QUOTA_EXHAUSTED: Request blocked by quota exhaustion circuit-breaker.");
+    error.name = "RateLimitError";
+    error.code = "AI_RATE_LIMIT";
+    error.status = 429;
+    error.isQuotaExhausted = true;
+    console.warn("[UC Diagnostics] GEMINI_FREE_TIER_QUOTA_EXHAUSTED", {
+      action: "generateText_blocked_by_circuit_breaker",
+    });
+    throw error;
   }
 
-  return text.trim();
+  const ai = await getClient();
+
+  try {
+    const response = await ai.interactions.create(
+      {
+        model: MODEL,
+        input: input.trim(),
+      },
+      INTERPRETATION_REQUEST_OPTIONS,
+    );
+
+    const text = response.output_text;
+
+    if (typeof text !== "string" || !text.trim()) {
+      throw new Error("Gemini returned an empty response");
+    }
+
+    return text.trim();
+  } catch (error) {
+    if (isQuotaExhaustedError(error)) {
+      error.code = "AI_RATE_LIMIT";
+      error.isQuotaExhausted = true;
+      markQuotaExhausted();
+    }
+    throw error;
+  }
 }
 
 function fallbackInterpretation(firstArg, ...rest) {
@@ -175,16 +236,23 @@ function computeFallbackInterpretation({ question = "", answer = "", questionId 
   );
   if (cq.isCounterQuestion) {
     const isClarificationIntent = cq.intent === "CLARIFICATION_REQUEST";
+    const isRequestToAskIntent = cq.intent === "REQUEST_TO_ASK_QUESTION";
     const mappedIntent = cq.intent || "RELEVANT_COUNTER_QUESTION";
     return {
       intent: mappedIntent,
-      unifiedIntent: isClarificationIntent ? UNIFIED_INTENTS.CLARIFICATION_REQUEST : UNIFIED_INTENTS.CANDIDATE_QUESTION,
+      unifiedIntent: isRequestToAskIntent
+        ? UNIFIED_INTENTS.REQUEST_TO_ASK_QUESTION
+        : isClarificationIntent
+          ? UNIFIED_INTENTS.CLARIFICATION_REQUEST
+          : UNIFIED_INTENTS.CANDIDATE_QUESTION,
       confidence: 0.95,
       understoodAnswer: "",
       responseText: cq.reply,
-      shouldRepeatPendingQuestion: true,
-      understanding: `Candidate asked a ${isClarificationIntent ? "clarification" : "counter-question"} about ${cq.topic}.`,
-      answerStatus: "counter_question",
+      shouldRepeatPendingQuestion: isRequestToAskIntent ? false : true,
+      understanding: isRequestToAskIntent
+        ? "Candidate requested permission to ask a question."
+        : `Candidate asked a ${isClarificationIntent ? "clarification" : "counter-question"} about ${cq.topic}.`,
+      answerStatus: isRequestToAskIntent ? "request_to_ask_question" : "counter_question",
       needsClarification: true,
       counterQuestionAnswer: cq.reply,
       clarificationQuestion: cq.reply,
@@ -349,16 +417,16 @@ function computeFallbackInterpretation({ question = "", answer = "", questionId 
   const answerHasContext = questionKeywords.some((word) => a.includes(word));
   const isCandidateQuestion =
     /[?]$/.test(trimmed) ||
-    /^(?:what\s+is|who\s+is|who\s+won|what\s+are|where\s+is|how\s+many|capital\s+of|weather\s+kaisa|score\s+kya)\b/i.test(a);
+    /^(?:what\s+is|who\s+is|what\s+are|where\s+is|how\s+many|why\s+is|how\s+do|can\s+you|could\s+you|tell\s+me)\b/i.test(a);
 
-  const isOffTopicQuestion =
-    isCandidateQuestion &&
-    !cq.isCounterQuestion &&
-    !answerHasContext;
+  const isOffTopicTriviaQuestion =
+    /^(?:who\s+won|who\s+is\s+(?:modi|rahul|actor|president)|capital\s+of|weather\s+kaisa|score\s+kya|cricket\s+score)\b/i.test(a) ||
+    (/\b(?:cricket|ipl|match|football|weather|mausam|barish|score|movie|cinema)\b/i.test(a) && /[?]$/.test(trimmed));
 
   const isLikelyIrrelevant =
-    (irrelevantPatterns.test(a) || isOffTopicQuestion) &&
+    (irrelevantPatterns.test(a) || isOffTopicTriviaQuestion) &&
     !answerHasContext &&
+    !isCandidateQuestion &&
     !SHORT_DIRECT_ANSWER_PATTERNS.test(trimmed);
 
   const isOpenEnded =
@@ -633,7 +701,9 @@ function extractFallbackFacts(answer) {
     const tgt = target.toLowerCase();
     return (
       new RegExp(String.raw`\b(?:agar|if|maybe|shayad|might)\b[^.!?।]{0,100}\b${tgt}\b`, "i").test(lower) ||
-      new RegExp(String.raw`\b${tgt}\b[^.!?।]{0,100}\b(?:agar|if|maybe|shayad|might)\b`, "i").test(lower)
+      new RegExp(String.raw`\b${tgt}\b[^.!?।]{0,100}\b(?:agar|if|maybe|shayad|might)\b`, "i").test(lower) ||
+      new RegExp(String.raw`\b${tgt}\b[^.!?।]{0,40}\b(?:relocate|shift|move|aana|jana|jaana|travel)\b`, "i").test(lower) ||
+      new RegExp(String.raw`\b(?:relocate|shift|move|aana|jana|jaana|travel|to)\b[^.!?।]{0,40}\b${tgt}\b`, "i").test(lower)
     );
   };
 
@@ -687,6 +757,44 @@ function extractFallbackFacts(answer) {
     facts.vehicle = vehicleMatch[1].toLowerCase();
   }
 
+  // Travel & Relocation Willingness, Conditions, and City Preference
+  if (/\b(?:travel\s+kar\s+sakt[aei]|can\s+travel|ready\s+to\s+travel|willing\s+to\s+travel|door\s+bhi\s+ja)\b/i.test(lower)) {
+    facts.travelWillingness = "yes";
+  } else if (/\b(?:travel\s+nahi\s+kar\s+sakt[aei]|cannot\s+travel|can't\s+travel|not\s+willing\s+to\s+travel|door\s+nahi\s+ja)\b/i.test(lower)) {
+    facts.travelWillingness = "no";
+  }
+
+  if (/\b(?:agar\s+[^.!?।]{0,40}(?:accommodation|rehne\s+ki\s+jagah|opportunity|offer)|consider\s+kar\s+sakt|can\s+consider|(?:if|provided)\s+[^.!?।]{0,40}accommodation)\b/i.test(lower) || (/\b(?:accommodation|rehne\s+ki\s+jagah)\b/i.test(lower) && /\b(?:relocate|shift|travel)\b/i.test(lower))) {
+    facts.relocationWillingness = "conditional";
+  } else if (/\b(?:shift\s+nahi\s+ho\s+sakt[aei]|shift\s+nahi|relocate\s+nahi|cannot\s+relocate|cannot\s+shift|can't\s+shift|not\s+willing\s+to\s+relocate|won't\s+relocate)\b/i.test(lower)) {
+    facts.relocationWillingness = "no";
+  } else if (/\b(?:shift\s+ho\s+sakt[aei]|relocate\s+kar\s+sakt[aei]|ready\s+to\s+relocate|willing\s+to\s+relocate|can\s+relocate|can\s+shift)\b/i.test(lower)) {
+    facts.relocationWillingness = "yes";
+  }
+
+  if (/\b(?:accommodation|rehne\s+ki\s+jagah)\b/i.test(lower)) {
+    facts.relocationCondition = "accommodation";
+  } else if (/\b(?:opportunity|offer)\b/i.test(lower)) {
+    facts.relocationCondition = "opportunity";
+  }
+
+  const prefMatch = lower.match(/(?:main|mai|i|prefer)\s+(delhi|new\s+delhi|noida|gurgaon|gurugram|bangalore|bengaluru|mumbai|pune)\s*(?:mein\s+hi|me\s+hi|\s+hi)?\s*(?:kaam\s+karna|rehna|prefer)/i) ||
+    lower.match(/\b(delhi|new\s+delhi|noida|gurgaon|gurugram|bangalore|bengaluru|mumbai|pune)\s*(?:mein\s+hi|me\s+hi)\s+(?:kaam\s+karna|rehna)\b/i);
+  if (prefMatch) {
+    const rawPref = prefMatch[1].toLowerCase();
+    facts.cityPreference = rawPref === "new delhi" ? "New Delhi" : rawPref.charAt(0).toUpperCase() + rawPref.slice(1);
+  } else if (/\b(?:apne\s+sheher|current\s+city)\s*(?:mein\s+hi|me\s+hi)\b/i.test(lower)) {
+    facts.cityPreference = "Current city preferred";
+  }
+
+  if (negatedCity) {
+    const rawNegated = negatedCity[1].toLowerCase();
+    facts.targetCity = rawNegated === "new delhi" ? "New Delhi" : rawNegated.charAt(0).toUpperCase() + rawNegated.slice(1);
+  } else if (/\b(bangalore|bengaluru|delhi|mumbai|pune)\b/i.test(lower) && isHypotheticalTarget(lower.match(/\b(bangalore|bengaluru|delhi|mumbai|pune)\b/i)[1])) {
+    const rawTarget = lower.match(/\b(bangalore|bengaluru|delhi|mumbai|pune)\b/i)[1].toLowerCase();
+    facts.targetCity = rawTarget.charAt(0).toUpperCase() + rawTarget.slice(1);
+  }
+
   return facts;
 }
 
@@ -737,6 +845,30 @@ function sanitizeExtractedFacts(raw, utterance = "") {
 
   if (isValidString(raw.candidateName)) {
     cleaned.candidateName = raw.candidateName.trim();
+  }
+
+  if (isValidString(raw.travelWillingness)) {
+    cleaned.travelWillingness = raw.travelWillingness.trim();
+  }
+
+  if (isValidString(raw.relocationWillingness)) {
+    cleaned.relocationWillingness = raw.relocationWillingness.trim();
+  }
+
+  if (isValidString(raw.cityPreference)) {
+    cleaned.cityPreference = raw.cityPreference.trim();
+  }
+
+  if (isValidString(raw.relocationCondition)) {
+    cleaned.relocationCondition = raw.relocationCondition.trim();
+  }
+
+  if (isValidString(raw.targetCity)) {
+    cleaned.targetCity = raw.targetCity.trim();
+  }
+
+  if (typeof raw.notInTargetCity === "boolean") {
+    cleaned.notInTargetCity = raw.notInTargetCity;
   }
 
   if (Array.isArray(raw.skills)) {
@@ -802,10 +934,25 @@ function formatMemoryContext(sessionMemory) {
   if (typeof facts.hasChildren === "boolean") {
     items.push(`Has Children: ${facts.hasChildren ? "Yes" : "No"}`);
   }
+  if (facts.cityPreference && typeof facts.cityPreference === "string" && facts.cityPreference.trim()) {
+    items.push(`City Preference: ${facts.cityPreference.trim()}`);
+  }
+  if (facts.targetCity && typeof facts.targetCity === "string" && facts.targetCity.trim()) {
+    items.push(`Target City: ${facts.targetCity.trim()}`);
+  }
+  if (facts.travelWillingness && typeof facts.travelWillingness === "string" && facts.travelWillingness.trim()) {
+    items.push(`Travel Willingness: ${facts.travelWillingness.trim()}`);
+  }
+  if (facts.relocationWillingness && typeof facts.relocationWillingness === "string" && facts.relocationWillingness.trim()) {
+    items.push(`Relocation Willingness: ${facts.relocationWillingness.trim()}`);
+  }
+  if (facts.relocationCondition && typeof facts.relocationCondition === "string" && facts.relocationCondition.trim()) {
+    items.push(`Relocation Condition: ${facts.relocationCondition.trim()}`);
+  }
 
   for (const [key, val] of Object.entries(facts)) {
     if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
-    if (["candidateName", "preferredLanguage", "currentCity", "localArea", "experience", "skills", "vehicle", "age", "hasChildren"].includes(key)) continue;
+    if (["candidateName", "preferredLanguage", "currentCity", "localArea", "experience", "skills", "vehicle", "age", "hasChildren", "cityPreference", "targetCity", "travelWillingness", "relocationWillingness", "relocationCondition", "notInTargetCity"].includes(key)) continue;
     if (typeof val === "string" && val.trim() && !/^(?:unknown|none|n\/a|null|undefined)$/i.test(val.trim())) {
       items.push(`${key}: ${val.trim()}`);
     } else if (typeof val === "number" || typeof val === "boolean") {
@@ -884,7 +1031,15 @@ Your task is to classify the candidate's utterance into EXACTLY ONE of the follo
    - Provide a brief, natural, varied naturalAcknowledgement (e.g. "Achha, 2 saal ka anubhav hai.", "Theek hai, samajh gayi.", "Bahut badhiya.", "Understood, noted.") recognizing what they said. Avoid repeating identical phrases on every turn.
 
 2. "RELEVANT_COUNTER_QUESTION" (or "CANDIDATE_QUESTION")
-   The candidate asks ANY legitimate question about the job, question purpose, salon equipment/samaan, safety, customer situations, training, earnings, travel requirements, relocation, or the interview process.
+   The candidate asks ANY legitimate question, doubt, curiosity, or request for advice or explanation at any point.
+   This includes NEW, UNEXPECTED, or UNSEEN questions, such as:
+   - General knowledge and concepts (e.g. "Cloud computing kya hai?", "What is an API?", "AI kaise kaam karta hai?")
+   - Professional communication & customer experience (e.g. "Why is communication important?", "What is customer satisfaction?", "How do I handle a difficult customer?", "What happens if a customer refuses to pay?", "What should I do if a customer is unhappy?")
+   - Salon practices & service quality (e.g. "How can I improve my service quality?", "What if I am unable to complete a service?", "What is the difference between two salon services?")
+   - Interview process & guidance (e.g. "Can you explain this interview process?", "Why does UC require this skill?", "What if I am nervous during an interview?", "Agar mujhe answer nahi pata toh?")
+   - Practical situations, tools, safety, travel, earnings, or company policies.
+   - Conversational follow-ups to prior answers (e.g. "Iska kya matlab hai?", "Aur kyun?", "Uske baad kya hoga?", "Woh kaise karenge?").
+   - Do NOT restrict candidate questions to Urban Company topics. General knowledge questions, professional questions, and conversational follow-ups MUST ALWAYS be classified as RELEVANT_COUNTER_QUESTION (or CANDIDATE_QUESTION), NEVER as IRRELEVANT_OR_NONRESPONSIVE or ASSESSMENT_ANSWER.
    - The candidate may ask unexpected questions that are NOT in any fixed list (e.g. asking why a question matters, asking where/how far they have to travel like "Where would I need to travel?" or "Kitni door jana hoga?", asking if they have to shift like "Does this mean I have to shift cities?", asking what happens if they cannot travel daily like "What if I cannot travel every day?", asking about equipment like "Kya mujhe apna samaan khud lana padega?", asking about safety like "Agar mujhe client ke ghar unsafe feel ho toh main kya karun?", challenging an assumption, or asking about earnings/policy).
    - Approved Grounded Facts (DO NOT invent company policy, salary figures, guarantees, or unsupported features):
      * Role: You are the AI screening assistant conducting preliminary qualification for Urban Company's salon-at-home services.
@@ -913,9 +1068,10 @@ Your task is to classify the candidate's utterance into EXACTLY ONE of the follo
    - NEVER issue an irrelevant-answer warning for a partial, hesitant, or conditional answer.
 
 5. "IRRELEVANT_OR_NONRESPONSIVE" (or "IRRELEVANT_RESPONSE")
-   The utterance is genuinely completely off-topic, unrelated conversation (e.g. "The weather is nice today, what did you eat?", "My favourite colour is blue", talking about a cricket match, asking off-topic trivia like who won a sports match, or meaningless gibberish like "habba jabba", "asdf qwerty", food items, random objects).
+   The utterance is genuinely completely non-responsive banter or off-topic conversation (e.g. "The weather is nice today, what did you eat?", "My favourite colour is blue", unprompted poetry, talking about a cricket match or asking sports scores, movie gossip, or meaningless gibberish like "habba jabba", "asdf qwerty", random food items).
    - STRICT RULES:
-     * NEVER classify a relevant interview- or job-related candidate question as irrelevant. However, completely off-topic questions (e.g. sports scores, movie trivia, weather, political questions, general trivia) that have nothing to do with the interview or job should be classified as IRRELEVANT_OR_NONRESPONSIVE.
+     * Candidate questions (including general knowledge, technical concepts, travel/relocation inquiries, or follow-ups) are CANDIDATE QUESTIONS and MUST NEVER be classified as IRRELEVANT_OR_NONRESPONSIVE.
+     * NEVER classify a relevant interview- or job-related candidate question as irrelevant.
      * NEVER classify a short or grammatically imperfect Hindi/Hinglish answer as irrelevant if it relates to the question.
      * NEVER classify silence, breathing, or background noise as irrelevant.
      * Do NOT infer irrelevance merely because the answer differs from an expected keyword.
@@ -939,7 +1095,12 @@ Your task is to classify the candidate's utterance into EXACTLY ONE of the follo
    - In responseText: ask the candidate to repeat or type their response.
    - NEVER issue a warning penalty.
 
-9. "extractedFacts" (Optional structured facts about the candidate):
+9. "REQUEST_TO_ASK_QUESTION"
+   The candidate explicitly requests permission to ask a question, raises a doubt, or asks if they can clarify something without having asked the question yet (e.g. 'Mujhe ek question poochhna tha', 'Ek baat poochhni thi', 'Mujhe kuch poochhna hai', 'Ek doubt hai', 'Can I ask something?', 'I have a question', 'I wanted to ask something', 'Can you clarify something?').
+   - In responseText: generate a polite invitation: "Ji haan, bilkul poochiye, aap apna question poochhiye. Main aapki madad karti hoon." (or English: "Sure, please go ahead and ask your question. I am here to help.").
+   - Set shouldRepeatPendingQuestion to false.
+
+10. "extractedFacts" (Optional structured facts about the candidate):
    Extract ONLY clear, factual attributes EXPLICITLY stated by the candidate about themselves in this utterance.
    - Do NOT guess, assume, or infer missing details.
    - Do NOT store hypothetical or conditional statements (e.g. "If I relocate...", "Agar car ho toh...", "Maybe", "Shayad").
@@ -956,7 +1117,7 @@ Your task is to classify the candidate's utterance into EXACTLY ONE of the follo
 
 Output MUST be strictly valid JSON without markdown wrapping:
 {
-  "intent": "INTERVIEW_ANSWER" | "RELEVANT_COUNTER_QUESTION" | "CLARIFICATION_REQUEST" | "PARTIAL_OR_AMBIGUOUS_ANSWER" | "IRRELEVANT_OR_NONRESPONSIVE" | "ACKNOWLEDGEMENT" | "CONTINUE_INTERVIEW" | "UNINTELLIGIBLE_OR_NO_INPUT",
+  "intent": "INTERVIEW_ANSWER" | "REQUEST_TO_ASK_QUESTION" | "RELEVANT_COUNTER_QUESTION" | "CLARIFICATION_REQUEST" | "PARTIAL_OR_AMBIGUOUS_ANSWER" | "IRRELEVANT_OR_NONRESPONSIVE" | "ACKNOWLEDGEMENT" | "CONTINUE_INTERVIEW" | "UNINTELLIGIBLE_OR_NO_INPUT",
   "confidence": 0.95,
   "understoodAnswer": "summary of answer or empty string",
   "responseText": "conversational response to speak to candidate",
@@ -988,6 +1149,20 @@ Output MUST be strictly valid JSON without markdown wrapping:
         ? diagnosticSessionGeneration
         : null,
   };
+
+  if (generateTextImpl === generateText && isQuotaExhausted()) {
+    const error = new Error("GEMINI_FREE_TIER_QUOTA_EXHAUSTED: Request blocked by quota exhaustion circuit-breaker.");
+    error.name = "RateLimitError";
+    error.code = "AI_RATE_LIMIT";
+    error.status = 429;
+    error.isQuotaExhausted = true;
+    console.warn("[UC Diagnostics] GEMINI_FREE_TIER_QUOTA_EXHAUSTED", {
+      ...diagnosticMetadata,
+      action: "interpretAnswer_blocked_by_circuit_breaker",
+    });
+    throw error;
+  }
+
   console.info("[UC Answer Interpretation] model_request_started", diagnosticMetadata);
 
   try {
@@ -1001,11 +1176,12 @@ Output MUST be strictly valid JSON without markdown wrapping:
       ),
     });
     const message = error?.message || "";
-    if (
-      error?.name === "RateLimitError" || error?.status === 429 ||
-      error?.statusCode === 429 || message.includes("429") || /rate.?limit|quota/i.test(message)
-    ) {
+    if (isQuotaExhaustedError(error)) {
       error.code = "AI_RATE_LIMIT";
+      error.isQuotaExhausted = true;
+      if (generateTextImpl === generateText) {
+        markQuotaExhausted();
+      }
     } else if (/temporarily unavailable|503|timeout/i.test(message)) {
       error.code = "AI_INTERPRETATION_UNAVAILABLE";
     }
@@ -1047,9 +1223,9 @@ Output MUST be strictly valid JSON without markdown wrapping:
     if (cq.isCounterQuestion) {
       const wasIrrelevant = intent === "IRRELEVANT_OR_NONRESPONSIVE" || result.intent === "IRRELEVANT_OR_NONRESPONSIVE" || intent === "IRRELEVANT_RESPONSE";
       intent = cq.intent || "RELEVANT_COUNTER_QUESTION";
-      result.answerStatus = "counter_question";
+      result.answerStatus = cq.intent === "REQUEST_TO_ASK_QUESTION" ? "request_to_ask_question" : "counter_question";
       result.needsClarification = true;
-      result.shouldRepeatPendingQuestion = true;
+      result.shouldRepeatPendingQuestion = cq.intent === "REQUEST_TO_ASK_QUESTION" ? false : true;
       if (!result.responseText || !result.responseText.trim() || wasIrrelevant) {
         result.responseText = cq.reply;
         result.counterQuestionAnswer = cq.reply;
@@ -1104,6 +1280,7 @@ Output MUST be strictly valid JSON without markdown wrapping:
     const answerStatus =
       result.answerStatus ||
       (intent === "INTERVIEW_ANSWER" ? "sufficient" :
+       intent === "REQUEST_TO_ASK_QUESTION" ? "request_to_ask_question" :
        intent === "RELEVANT_COUNTER_QUESTION" ? "counter_question" :
        intent === "CLARIFICATION_REQUEST" ? "clarification" :
        intent === "PARTIAL_OR_AMBIGUOUS_ANSWER" ? "partial" :
@@ -1166,7 +1343,11 @@ Output MUST be strictly valid JSON without markdown wrapping:
   }
 }
 
-const INQUIRY_TIMEOUT_MS = 6000;
+const DEFAULT_INQUIRY_TIMEOUT_MS = 15000;
+const INQUIRY_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.GEMINI_INQUIRY_TIMEOUT_MS) || DEFAULT_INQUIRY_TIMEOUT_MS,
+);
 
 const UC_GROUNDED_FACTS = Object.freeze([
   "Urban Company operates a salon-at-home service platform where partners visit clients at their homes.",
@@ -1292,6 +1473,12 @@ async function withTimeout(promise, timeoutMs, timeoutMessage = "Model request t
     }, timeoutMs);
   });
 
+  // Attach a silent error sink to the original promise so if it rejects after timeout,
+  // it does not trigger an UnhandledPromiseRejection in Node.js.
+  if (promise && typeof promise.catch === "function") {
+    promise.catch(() => {});
+  }
+
   try {
     return await Promise.race([promise, timeoutPromise]);
   } finally {
@@ -1365,20 +1552,55 @@ RESPONSE RULES:
    - On follow-ups, build naturally on the prior explanation. Do NOT restart the same explanation from the beginning.
    - If candidate changes topic (e.g. from training to earnings or customer handling), answer the new question while maintaining conversational coherence.
 
-3. NATURAL TONE & LANGUAGE:
-   - Match candidate language: English, Hindi, or conversational Hinglish (Roman script).
-   - Sound conversational, warm, and professional. Avoid robotic, canned, or unnecessarily formal wording.
-   - Keep answers concise (1-2 sentences). Do not be excessively verbose.
-   - Include probeQuestion only if clarification is genuinely needed to guide the candidate. If the answer resolves the question, leave probeQuestion empty ("") and set suggestedNextAction to "RESOLVE_AND_PROMPT_QUESTION".
-4. Return JSON ONLY with no Markdown formatting or code blocks.
+3. DYNAMIC FOLLOW-UP REASONING & INTERVIEW ORIENTATION:
+   You are an intelligent human interviewer conducting a preliminary qualification screening for Urban Company's salon-at-home professionals.
+   Do not behave like a robotic, keyword-driven chatbot or a search engine that merely spits out an answer.
+   Maintain an intelligent, relevant, adaptive conversation around the interview:
+   - Answer the candidate's question first with genuine substance and clarity.
+   - Understand the candidate's underlying concern.
+   - When appropriate, connect general concepts (e.g. communication, customer satisfaction, problem solving, hygiene) to salon work, customer experience, or partner professionalism. Avoid forcing connections when it would sound unnatural.
+   - Decide dynamically among the following actions (set 'followUpDecision'):
+     * "DIRECT_ANSWER": Candidate asked a simple factual or policy doubt. Provide a direct, warm, concise answer. Set probeQuestion to "".
+     * "SIMPLER_EXPLANATION": Candidate asked for simplification or sounded confused. Explain in simpler everyday words. Set probeQuestion to "".
+     * "CONTEXTUAL_FOLLOW_UP": Candidate asked about a professional or service concept. Answer their question first, and ask one relevant contextual follow-up. Set probeQuestion to that follow-up question.
+     * "PRACTICAL_EXAMPLE": Candidate asked about a concept or practice. Provide a concrete salon or customer handling example in replyText.
+     * "SCENARIO_DISCUSSION": Pose a realistic customer scenario to explore how the candidate would respond (e.g. "Suppose a customer is still unhappy after the service. Aap us situation ko kaise handle karengi?"). Set probeQuestion to that scenario question.
+     * "CLARIFICATION_FROM_CANDIDATE": If candidate's question was genuinely ambiguous or incomplete, ask one focused clarifying question in probeQuestion.
+     * "TRANSITION_TO_ASSESSMENT": The inquiry is complete, understood, or resolved. Answer clearly, set probeQuestion to "", and set suggestedNextAction to "RESOLVE_AND_PROMPT_QUESTION".
+   - Avoid robotic repetition: NEVER repeatedly ask "Kya aapka doubt clear ho gaya?" or "Do you have another question?".
+   - Avoid turning every single answer into another question. Vary your approach naturally.
+   - NEVER ask or advance any official assessment question. Assessment questions are strictly controlled by the backend.
+
+4. MULTIPLE QUESTIONS IN ONE UTTERANCE:
+   - If the candidate asks multiple questions in one utterance (e.g. "Customer satisfaction kya hai aur agar client naraz ho toh kya karein?"):
+     Identify each question, address each separately and distinctly in order within 'replyText', without skipping any question.
+
+5. ONE-QUESTION-AT-A-TIME OUTPUT RULE:
+   - 'replyText' MUST contain only the direct answer, explanation, or examples. Do NOT embed a question inside 'replyText'.
+   - If a follow-up or scenario question is appropriate (when followUpDecision is 'CONTEXTUAL_FOLLOW_UP', 'SCENARIO_DISCUSSION', or 'CLARIFICATION_FROM_CANDIDATE'), put that single question into 'probeQuestion'. Otherwise, keep 'probeQuestion' as "".
+   - Never output more than one question in a turn.
 
 REQUIRED JSON FORMAT:
 {
   "topic": "<brief inquiry topic string>",
-  "replyText": "<concise, natural answer in candidate language>",
-  "probeQuestion": "<optional follow-up probe question or empty string>",
+  "conversationalReasoning": "<brief explanation of dynamic follow-up decision>",
+  "followUpDecision": "<'DIRECT_ANSWER' | 'SIMPLER_EXPLANATION' | 'CONTEXTUAL_FOLLOW_UP' | 'PRACTICAL_EXAMPLE' | 'SCENARIO_DISCUSSION' | 'CLARIFICATION_FROM_CANDIDATE' | 'TRANSITION_TO_ASSESSMENT'>",
+  "replyText": "<concise, natural answer in candidate language, connecting to salon context if appropriate>",
+  "probeQuestion": "<optional follow-up or scenario question, or empty string>",
   "suggestedNextAction": "<'CONTINUE_INQUIRY' | 'RESOLVE_AND_PROMPT_QUESTION' | 'DEFER_TO_ONBOARDING'>"
 }`;
+
+  if (generateTextImpl === generateText && isQuotaExhausted()) {
+    const error = new Error("GEMINI_FREE_TIER_QUOTA_EXHAUSTED: Request blocked by quota exhaustion circuit-breaker.");
+    error.name = "RateLimitError";
+    error.code = "AI_RATE_LIMIT";
+    error.status = 429;
+    error.isQuotaExhausted = true;
+    console.warn("[UC Diagnostics] GEMINI_FREE_TIER_QUOTA_EXHAUSTED", {
+      action: "generateInquiryResponse_blocked_by_circuit_breaker",
+    });
+    throw error;
+  }
 
   let raw;
   try {
@@ -1389,11 +1611,12 @@ REQUIRED JSON FORMAT:
     );
   } catch (error) {
     const message = error?.message || "";
-    if (
-      error?.name === "RateLimitError" || error?.status === 429 ||
-      error?.statusCode === 429 || message.includes("429") || /rate.?limit|quota/i.test(message)
-    ) {
+    if (isQuotaExhaustedError(error)) {
       error.code = "AI_RATE_LIMIT";
+      error.isQuotaExhausted = true;
+      if (generateTextImpl === generateText) {
+        markQuotaExhausted();
+      }
     } else if (/temporarily unavailable|503/i.test(message)) {
       error.code = "AI_INTERPRETATION_UNAVAILABLE";
     }
@@ -1446,6 +1669,14 @@ REQUIRED JSON FORMAT:
     ? parsed.suggestedNextAction
     : "RESOLVE_AND_PROMPT_QUESTION";
 
+  const followUpDecision = typeof parsed.followUpDecision === "string"
+    ? parsed.followUpDecision.trim()
+    : "DIRECT_ANSWER";
+
+  const conversationalReasoning = typeof parsed.conversationalReasoning === "string"
+    ? parsed.conversationalReasoning.trim()
+    : "";
+
   // Safety Hardening: block unsupported policy claims or invented promises
   if (isUnsupportedPolicyClaim(replyText) || isUnsupportedPolicyClaim(probeQuestion)) {
     const policyErr = new Error("Model generated unsupported policy claim or guarantee");
@@ -1457,6 +1688,8 @@ REQUIRED JSON FORMAT:
     topic,
     replyText,
     probeQuestion,
+    followUpDecision,
+    conversationalReasoning,
     suggestedNextAction,
   };
 }
@@ -1479,5 +1712,10 @@ module.exports = {
   UC_GROUNDED_FACTS,
   INQUIRY_POLICY_CONSTRAINTS,
   ALLOWED_NEXT_ACTIONS,
+  DEFAULT_INQUIRY_TIMEOUT_MS,
   INQUIRY_TIMEOUT_MS,
+  isQuotaExhaustedError,
+  isQuotaExhausted,
+  markQuotaExhausted,
+  resetQuotaExhaustion,
 };

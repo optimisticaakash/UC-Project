@@ -75,119 +75,170 @@ function classifyLocation(answer) {
   }
 
   // Do not infer exact distance or proximity from the answer.
-  const unwillingPatterns = [
+  const unwillingTravelPatterns = [
     /sirf apne area mein/,
     /sirf apne area tak/,
     /door nahi ja/,
     /travel nahi kar/,
-    /shift nahi kar/,
-    /move nahi kar/,
     /nahi ja sakti/,
     /nahi ja sakta/,
-    /nahi kar sakti/,
-    /nahi kar sakta/,
-    /^(नहीं|नही)[.!?।]*$/,
-    /नहीं.*(जा|कर|शिफ्ट|ट्रैवल|यात्रा|रिलोकेट)/,
-    /नही.*(जा|कर|शिफ्ट|ट्रैवल|यात्रा|रिलोकेट)/,
-    /relocate nahi kar/,
-    /shift nahi ho sakti/,
     /travel karna possible nahi/,
     /not willing to travel/,
     /cannot travel/,
     /can't travel/,
+    /won't travel/,
+    /no,?\s+i\s+can(?:not|'t)\s+travel/,
+    /^(नहीं|नही)[.!?।]*$/,
+    /नहीं.*(जा|कर|ट्रैवल|यात्रा)/,
+    /नही.*(जा|कर|ट्रैवल|यात्रा)/,
+    /ट्रैवल nahi/,
+  ];
+
+  const willingTravelPatterns = [
+    /travel kar sak/,
+    /door bhi ja/,
+    /ready to travel/,
+    /willing to travel/,
+    /can travel/,
+    /yes,?\s+i\s+can\s+travel/,
+    /haan.*(kar sakti|kar sakta|ja sakti|ja sakta)/,
+    /han.*(kar sakti|kar sakta|ja sakti|ja sakta)/,
+    /हाँ.*(कर सकती|कर सकता|जा सकती|जा सकता)/,
+    /हां.*(कर सकती|कर सकता|जा सकती|जा सकता)/,
+    /ट्रैवल कर सकती/,
+    /ट्रैवल कर सकता/,
+  ];
+
+  const unwillingRelocatePatterns = [
+    /shift nahi kar/,
+    /move nahi kar/,
+    /relocate nahi kar/,
+    /shift nahi ho sakti/,
+    /shift nahi ho sakta/,
+    /shift nahi/,
+    /relocate nahi/,
     /not willing to move/,
     /not willing to relocate/,
     /cannot relocate/,
     /can't relocate/,
     /cannot shift/,
     /can't shift/,
-    /won't travel/,
     /won't relocate/,
     /won't shift/,
-    /no,?\s+i\s+can(?:not|'t)\s+(?:travel|relocate|shift|move)/,
-    /no,?\s+cannot\s+(?:travel|relocate|shift|move)/,
+    /no,?\s+i\s+can(?:not|'t)\s+(?:relocate|shift|move)/,
+    /नहीं.*(शिफ्ट|रिलोकेट)/,
+    /नही.*(शिफ्ट|रिलोकेट)/,
   ];
 
-  const willingPatterns = [
-    /travel kar sak/,
-    /door bhi ja/,
+  const willingRelocatePatterns = [
     /shift ho sak/,
     /shift kar sak/,
     /move kar sak/,
-    /ready to travel/,
-    /willing to travel/,
+    /relocate kar sak/,
     /willing to move/,
-    /can travel/,
     /can relocate/,
     /can shift/,
     /ready to relocate/,
     /willing to relocate/,
     /ready to shift/,
     /willing to shift/,
-    /yes,?\s+i\s+can\s+(?:travel|relocate|shift|move)/,
-
-    // Hindi / Hinglish affirmative answers
-    /haan.*(kar sakti|kar sakta|ja sakti|ja sakta)/,
-    /han.*(kar sakti|kar sakta|ja sakti|ja sakta)/,
-    /हाँ.*(कर सकती|कर सकता|जा सकती|जा सकता)/,
-    /हां.*(कर सकती|कर सकता|जा सकती|जा सकता)/,
-    /ज़रूरत पड़ने पर.*(जा सकती|जा सकता|शिफ्ट)/,
-    /जरूरत पड़ने पर.*(जा सकती|जा सकता|शिफ्ट)/,
-    /आवश्यकता पड़ने पर.*(जा सकती|जा सकता|शिफ्ट)/,
+    /yes,?\s+i\s+can\s+(?:relocate|shift|move)/,
+    /ज़रूरत पड़ने पर.*(शिफ्ट|रिलोकेट)/,
+    /जरूरत पड़ने पर.*(शिफ्ट|रिलोकेट)/,
+    /आवश्यकता पड़ने पर.*(शिफ्ट|रिलोकेट)/,
     /शिफ्ट हो सकती/,
     /शिफ्ट हो सकता/,
     /रिलोकेट कर सकती/,
     /रिलोकेट कर सकता/,
-    /ट्रैवल कर सकती/,
-    /ट्रैवल कर सकता/,
   ];
 
-  const unwilling = unwillingPatterns.some((pattern) => pattern.test(text));
-  const willing = willingPatterns.some((pattern) => pattern.test(text));
+  const conditionalRelocatePatterns = [
+    /agar\s+(?:accommodation|rehne\s+ki\s+jagah|opportunity|offer)\s+(?:mile|ho|de)\s*toh/i,
+    /consider\s+kar\s+sakt/i,
+    /if\s+(?:accommodation|opportunity)\s+is\s+provided/i,
+    /can\s+consider/i,
+  ];
 
-  if (unwilling && willing) {
+  const cityPreferencePatterns = [
+    /(?:main|mai|hum|i\s+want\s+to\s+work\s+in|prefer\s+to\s+work\s+in|prefer)\s+([a-z\s]+?)\s*(?:mein\s+hi|me\s+hi)\s+(?:kaam\s+karna|rehna)/i,
+    /(?:apne\s+sheher|current\s+city)\s+(?:mein\s+hi)/i,
+    /prefer\s+(?:delhi|bangalore|my\s+current\s+city)/i,
+  ];
+
+  const unwillingTravel = unwillingTravelPatterns.some((pattern) => pattern.test(text));
+  const willingTravel = willingTravelPatterns.some((pattern) => pattern.test(text));
+  const unwillingRelocate = unwillingRelocatePatterns.some((pattern) => pattern.test(text));
+  const willingRelocate = willingRelocatePatterns.some((pattern) => pattern.test(text));
+  const conditionalRelocate = conditionalRelocatePatterns.some((pattern) => pattern.test(text));
+  const hasCityPreference = cityPreferencePatterns.some((pattern) => pattern.test(text));
+
+  // Determine travel willingness:
+  let travelWillingness = "unknown";
+  if (unwillingTravel && willingTravel) {
+    travelWillingness = "unclear";
+  } else if (unwillingTravel) {
+    travelWillingness = "no";
+  } else if (willingTravel) {
+    travelWillingness = "yes";
+  }
+
+  // Determine relocation willingness:
+  let relocationWillingness = "unknown";
+  if (unwillingRelocate && willingRelocate) {
+    relocationWillingness = "unclear";
+  } else if (conditionalRelocate) {
+    relocationWillingness = "conditional";
+  } else if (unwillingRelocate) {
+    relocationWillingness = "no";
+  } else if (willingRelocate) {
+    relocationWillingness = "yes";
+  } else if (hasCityPreference) {
+    relocationWillingness = "preference_current_city";
+  }
+
+  // Contradiction on travel specifically
+  if (travelWillingness === "unclear") {
     return {
       outcome: "clarification",
       area: answer.trim(),
       travelWillingness: "unclear",
+      relocationWillingness,
       followUp: null,
       manualReviewRequired: false,
-      message:
-        "Could you clarify whether you are willing to travel or relocate?",
+      message: "Could you clarify whether you are willing to travel?",
     };
   }
 
-  if (unwilling) {
+  // Contradiction on relocation specifically
+  if (relocationWillingness === "unclear") {
     return {
-      outcome: "manual_review",
+      outcome: "clarification",
       area: answer.trim(),
-      travelWillingness: "no",
+      travelWillingness,
+      relocationWillingness: "unclear",
       followUp: null,
-      manualReviewRequired: true,
-      message:
-        "Location and travel preference captured for manual proximity review.",
+      manualReviewRequired: false,
+      message: "Could you clarify whether you are willing to relocate?",
     };
   }
 
-  if (willing) {
-    return {
-      outcome: "manual_review",
-      area: answer.trim(),
-      travelWillingness: "yes",
-      followUp: "move_timeline",
-      manualReviewRequired: true,
-      message:
-        "Location captured. Ask when the candidate could relocate if needed.",
-    };
+  let followUp = null;
+  if (willingRelocate || travelWillingness === "yes") {
+    followUp = "move_timeline";
+  } else if (travelWillingness === "no" || hasCityPreference) {
+    followUp = null;
+  } else if (travelWillingness === "unknown") {
+    followUp = "travel_clarification";
   }
 
   return {
     outcome: "manual_review",
     area: answer.trim(),
-    travelWillingness: "unknown",
-    followUp: "travel_clarification",
+    travelWillingness,
+    relocationWillingness,
+    followUp,
     manualReviewRequired: true,
-    message: "Location captured. Clarify travel or relocation willingness.",
+    message: "Location and travel preference captured for manual proximity review.",
   };
 }
 

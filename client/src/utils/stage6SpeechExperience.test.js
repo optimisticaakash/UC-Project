@@ -4,8 +4,10 @@ import {
   buildCandidateQuestionAnswerPrompt,
   buildCandidateQuestionFollowUpPrompt,
   buildCandidateQuestionInvitationPrompt,
+  buildInquiryResponsePrompt,
   buildQuestionHandoffPrompt,
 } from "./liveDialoguePrompt.js";
+import { resolvePromptHandoff } from "./interviewResponse.js";
 import { createPlaybackQueue, waitForPlaybackAndPause } from "./playbackCompletion.js";
 import { BACKEND_WAIT_ANNOUNCEMENT_MS } from "../config/geminiConfig.js";
 import { createRequestWaitAnnouncement } from "./requestWaitAnnouncement.js";
@@ -113,4 +115,34 @@ test("Stage 6: candidate dialogue prompt builders enforce natural transitions an
 
   const followUpPrompt = buildCandidateQuestionFollowUpPrompt("Are shifts flexible?", "Hindi");
   assert.match(followUpPrompt, /Avoid robotic filler clichés or repetitive closure phrases/i);
+});
+
+test("Stage 6: buildInquiryResponsePrompt instructs Gemini Live to speak complete inquiry answer and check aloud", () => {
+  const replyMessage = "Cloud computing ek aisi technology hai jisme internet ke zariye storage provide hoti hai. Kya aapka doubt clear ho gaya, ya aap kuch aur poochna chahenge?";
+  const prompt = buildInquiryResponsePrompt(replyMessage, "Hindi");
+  assert.match(prompt, /Speak the following answer and follow-up clearly, warmly, and completely aloud/i);
+  assert.match(prompt, /Do not omit or change any words/i);
+  assert.ok(prompt.includes(replyMessage));
+
+  const englishPrompt = buildInquiryResponsePrompt("Cloud computing provides services over the internet. Does that clarify your doubt?", "English");
+  assert.match(englishPrompt, /Conduct this in English as requested/i);
+  assert.match(englishPrompt, /completely aloud/i);
+});
+
+test("Stage 6: resolvePromptHandoff preserves counterQuestionHandled and inquiryState", () => {
+  const handoff = resolvePromptHandoff(200, {
+    success: true,
+    counterQuestionHandled: true,
+    inquiryState: "clarification_check",
+    clarificationRequired: true,
+    message: "Cloud computing explanation...",
+    question: { id: "A1", text: "Aap kis sheher mein rehte hain?" },
+  });
+
+  assert.ok(handoff);
+  assert.equal(handoff.counterQuestionHandled, true);
+  assert.equal(handoff.inquiryState, "clarification_check");
+  assert.equal(handoff.clarificationRequired, true);
+  assert.equal(handoff.prompt, "Cloud computing explanation...");
+  assert.equal(handoff.questionId, "A1");
 });
